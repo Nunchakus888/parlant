@@ -404,6 +404,50 @@ class SessionUpdateParamsDTO(
     mode: Optional[SessionModeField] = None
 
 
+chat_request_example: ExampleJson = {
+    "message": "Hello, I need help with my order",
+    "agent_id": None,
+    "customer_id": None,
+    "session_title": "Chat Session",
+    "timeout": 30,
+}
+
+
+class ChatRequestDTO(
+    DefaultBaseModel,
+    json_schema_extra={"example": chat_request_example},
+):
+    """Parameters for simplified chat endpoint."""
+    
+    message: Annotated[
+        str,
+        Field(
+            description="The message to send to the AI agent",
+            examples=["Hello, I need help", "What can you do?"],
+        ),
+    ]
+    agent_id: Optional[AgentId] = Field(
+        default=None,
+        description="ID of the agent to chat with. If not provided, uses default or first available agent.",
+        examples=[None, "ag_123xyz"],
+    )
+    customer_id: Optional[CustomerId] = Field(
+        default=None,
+        description="ID of the customer. If not provided, uses guest customer.",
+        examples=[None, "cust_123xy"],
+    )
+    session_title: Optional[str] = Field(
+        default=None,
+        description="Title for new sessions. Defaults to 'Chat Session'.",
+        examples=["Product Support", "General Inquiry"],
+    )
+    timeout: Optional[int] = Field(
+        default=30,
+        description="Maximum seconds to wait for AI response.",
+        examples=[30, 60],
+    )
+
+
 ToolResultDataField: TypeAlias = Annotated[
     JSONSerializableDTO,
     Field(
@@ -1986,5 +2030,129 @@ def create_router(
             )
             for tc in tool_calls
         ]
+
+    # Simple chat endpoint
+    @router.post(
+        "/chat",
+        operation_id="chat",
+        response_model=EventDTO,
+        responses={
+            status.HTTP_200_OK: {
+                "description": "AI response to the chat message",
+                "content": {"application/json": {"example": event_example}},
+            },
+            status.HTTP_504_GATEWAY_TIMEOUT: {
+                "description": "Request timeout waiting for AI response"
+            },
+        },
+        **apigen_config(group_name=API_GROUP, method_name="chat"),
+    )
+    async def chat(
+        request: Request,
+        params: ChatRequestDTO,
+    ) -> EventDTO:
+        """Simple chat endpoint that handles session management automatically.
+        
+        This endpoint simplifies the chat flow by:
+        1. Automatically finding or creating a session for the customer
+        2. Sending the customer message
+        3. Waiting for and returning the AI response
+        
+        The client only needs to send the message and optionally specify the agent.
+        If no agent is specified, it uses the default agent or the first available agent.
+        """
+        await authorization_policy.authorize(request=request, operation=Operation.CREATE_EVENT)
+        
+        # Get customer_id (default to guest if not provided)
+        customer_id = params.customer_id
+        if not customer_id:
+            # Get or create guest customer
+            customers = await customer_store.list_customers()
+            guest_customer = next((c for c in customers if c.name == "Guest"), None)
+            if guest_customer:
+                customer_id = guest_customer.id
+            else:
+                guest_customer = await customer_store.create_customer(name="Guest")
+                customer_id = guest_customer.id
+        
+        # Get agent_id
+        agent_id = params.agent_id
+        if not agent_id:
+            # Use default agent or first available
+            agents = await agent_store.list_agents()
+            if not agents:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="No agents available. Please create an agent first."
+                )
+            # Prefer agent named "Default" or use first
+            default_agent = next((a for a in agents if a.name == "Default"), agents[0])
+            agent_id = default_agent.id
+        
+        # Find active session or create new one
+        sessions = await session_store.list_sessions(
+            agent_id=agent_id,
+            customer_id=customer_id,
+        )
+        
+        # Get most recent session or create new
+        session = None
+        if sessions:
+            # Sort by creation time and get the most recent
+            sorted_sessions = sorted(sessions, key=lambda s: s.creation_utc, reverse=True)
+            session = sorted_sessions[0]
+        else:
+            # Create new session
+            session = await session_store.create_session(
+                customer_id=customer_id,
+                agent_id=agent_id,
+                title=params.session_title or "Chat Session",
+            )
+        
+        # Send customer message
+        customer_event = await application.post_event(
+            session_id=session.id,
+            kind=EventKind.MESSAGE,
+            data={"message": params.message},
+            source=EventSource.CUSTOMER,
+            trigger_processing=True,
+        )
+        
+        # Wait for AI response
+        timeout = params.timeout or 30
+        if await session_listener.wait_for_events(
+            session_id=session.id,
+            min_offset=customer_event.offset + 1,
+            source=EventSource.AI_AGENT,
+            kinds=[EventKind.MESSAGE],
+            timeout=Timeout(timeout),
+        ):
+            # Get the AI response
+            ai_events = await session_store.list_events(
+                session_id=session.id,
+                min_offset=customer_event.offset + 1,
+                source=EventSource.AI_AGENT,
+                kinds=[EventKind.MESSAGE],
+            )
+            
+            if ai_events:
+                # Return the first AI message event
+                ai_event = ai_events[0]
+                return EventDTO(
+                    id=ai_event.id,
+                    source=_event_source_to_event_source_dto(ai_event.source),
+                    kind=_event_kind_to_event_kind_dto(ai_event.kind),
+                    offset=ai_event.offset,
+                    creation_utc=ai_event.creation_utc,
+                    correlation_id=ai_event.correlation_id,
+                    data=cast(JSONSerializableDTO, ai_event.data),
+                    deleted=ai_event.deleted,
+                )
+        
+        # Timeout
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Request timed out waiting for AI response",
+        )
 
     return router
