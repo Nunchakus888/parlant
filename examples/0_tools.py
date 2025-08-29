@@ -275,9 +275,11 @@ async def setup_agent_guidelines(agent) -> None:
     logger.info("工具指导原则添加完成")
 
 async def main() -> None:
+    # 使用mongodb存储会话
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
-        log_level=LogLevel.DEBUG
+        log_level=LogLevel.DEBUG,
+        session_store=os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
     ) as server:
         # 获取Parlant SDK的日志器
         global logger
