@@ -216,6 +216,8 @@ INTEGRATED_TOOL_SERVICE_NAME = "built-in"
 
 T = TypeVar("T")
 
+# Type alias for the agent factory function
+AgentFactory: TypeAlias = Callable[[CustomerId], Awaitable[AgentId]]
 
 JourneyStateId: TypeAlias = JourneyNodeId
 JourneyTransitionId: TypeAlias = JourneyEdgeId
@@ -2041,6 +2043,9 @@ class Server:
         configure_hooks: A callable to configure engine hooks.
         configure_container: A callable to configure the dependency injection container.
         initialize_container: A callable to perform additional initialization after the container is set up.
+        agent_factory: A callable to create agents dynamically based on customer. 
+                       It receives CustomerId and returns AgentId. The factory can capture 
+                       the container or any other dependencies in its closure.
     """
 
     def __init__(
@@ -2056,6 +2061,7 @@ class Server:
         configure_hooks: Callable[[EngineHooks], Awaitable[EngineHooks]] | None = None,
         configure_container: Callable[[Container], Awaitable[Container]] | None = None,
         initialize_container: Callable[[Container], Awaitable[None]] | None = None,
+        agent_factory: Callable[[CustomerId], Awaitable[AgentId]] | None = None,
     ) -> None:
         self.port = port
         self.tool_service_port = tool_service_port
@@ -2070,6 +2076,7 @@ class Server:
         self._configure_hooks = configure_hooks
         self._configure_container = configure_container
         self._initialize = initialize_container
+        self._agent_factory = agent_factory
         self._retrievers: dict[
             AgentId,
             dict[str, Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]]],
@@ -2946,6 +2953,10 @@ class Server:
             if self._configure_hooks:
                 hooks = await self._configure_hooks(c[EngineHooks])
                 latest_container[EngineHooks] = hooks
+
+            # Register agent factory if provided
+            if self._agent_factory:
+                latest_container[AgentFactory] = self._agent_factory
 
             return latest_container
 

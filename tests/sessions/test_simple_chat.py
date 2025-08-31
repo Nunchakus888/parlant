@@ -78,17 +78,15 @@ async def test_simple_chat_with_server():
 class SimpleChatClient:
     """简化的聊天客户端 - 展示如何使用新接口"""
     
-    def __init__(self, base_url="http://localhost:8000"):
+    def __init__(self, base_url="http://localhost:8000", customer_id="default_customer"):
         self.base_url = base_url
-        self.agent_id = None
-        self.customer_id = None
+        self.customer_id = customer_id
     
     def chat(self, message, **kwargs):
         """发送消息并获取AI回复 - 一次调用完成"""
         
         data = {
             "message": message,
-            "agent_id": self.agent_id,
             "customer_id": self.customer_id,
             **kwargs
         }
@@ -105,10 +103,6 @@ class SimpleChatClient:
             return "⏰ AI响应超时"
         else:
             return f"❌ 错误: {response.text}"
-    
-    def set_agent(self, agent_id):
-        """设置要对话的代理"""
-        self.agent_id = agent_id
     
     def set_customer(self, customer_id):
         """设置客户ID"""
