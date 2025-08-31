@@ -275,12 +275,57 @@ async def setup_agent_guidelines(agent) -> None:
     logger.info("工具指导原则添加完成")
 
 async def main() -> None:
+    # 定义智能体工厂函数（需要在Server创建后才能使用）
+    server_ref = None  # 用于存储server引用
+    
+    async def create_agent_for_customer(customer_id: p.CustomerId) -> p.AgentId:
+        """动态创建智能体的工厂函数
+        
+        这个函数会在创建会话时被调用，可以根据客户信息动态创建个性化的智能体。
+        注意：这个函数通过闭包捕获了 server 实例，可以访问所有需要的服务。
+        """
+        logger.info(f"为客户 {customer_id} 创建个性化智能体...")
+        
+        # 可以根据客户ID查询客户信息，决定智能体配置
+        # 例如：从数据库加载客户偏好、行业信息等
+        customer_config = {
+            "name": f"Agent for {customer_id}",
+            "description": f"Personalized agent for customer {customer_id}",
+            "max_engine_iterations": 3,
+        }
+        
+        # 也可以根据客户类型选择不同的智能体模板
+        # if is_vip_customer(customer_id):
+        #     customer_config["description"] = "VIP customer service agent with priority support"
+        
+        # 创建智能体
+        agent = await server_ref.create_agent(
+            name=customer_config["name"],
+            description=customer_config["description"],
+            max_engine_iterations=customer_config.get("max_engine_iterations", 3),
+        )
+        
+        # 为智能体设置工具指导原则
+        await setup_agent_guidelines(agent)
+        
+        # 可以根据客户特征添加特定的指导原则
+        # if customer_needs_technical_support(customer_id):
+        #     await agent.create_guideline(
+        #         condition="User asks technical questions",
+        #         action="Provide detailed technical explanations"
+        #     )
+        
+        logger.info(f"成功创建智能体 {agent.id} for customer {customer_id}")
+        return agent.id
+    
     # 使用mongodb存储会话
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
         log_level=LogLevel.DEBUG,
-        session_store=os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
+        session_store=os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017"),
+        agent_factory=create_agent_for_customer  # 传入智能体工厂函数
     ) as server:
+        server_ref = server  # 保存server引用供factory使用
         # 获取Parlant SDK的日志器
         global logger
         logger = server._container[p.Logger]
@@ -290,16 +335,15 @@ async def main() -> None:
         # 初始化工具
         await initialize_tools()
         
-        # 创建智能体
-        logger.info("创建智能体...")
-        agent = await server.create_agent(
-            name="Greeting Agent",
-            description="支持基本的问候语，并根据用户的问题调用外部工具，使用与输入相同的语言回复",
-        )
-        logger.info("智能体创建成功")
+        # 注意：使用 agent_factory 后，不需要在这里创建智能体
+        # 智能体会在第一次创建会话时自动创建
+        # 这样的好处是：
+        # 1. 可以根据不同客户创建个性化的智能体
+        # 2. 延迟创建，节省资源
+        # 3. 智能体配置与框架解耦，保持在用户代码中
         
-        # 设置工具指导原则
-        await setup_agent_guidelines(agent)
+        logger.info("服务器已启动，等待客户请求...")
+        logger.info("当客户发起会话时，将自动创建个性化智能体")
         
 
 

@@ -17,13 +17,13 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from itertools import chain
 from pydantic import Field
-from typing import Annotated, Mapping, Optional, Sequence, Set, TypeAlias, cast
+from typing import Annotated, Any, Mapping, Optional, Sequence, Set, TypeAlias, cast
 
 
 from parlant.api.authorization import AuthorizationPolicy, Operation
 from parlant.api.common import GuidelineIdField, ExampleJson, JSONSerializableDTO, apigen_config
 from parlant.api.glossary import TermSynonymsField, TermIdPath, TermNameField, TermDescriptionField
-from parlant.core.agents import AgentId, AgentStore
+from parlant.core.agents import AgentId, AgentStore, CompositionMode
 from parlant.core.application import Application
 from parlant.core.async_utils import Timeout
 from parlant.core.common import DefaultBaseModel
@@ -406,8 +406,7 @@ class SessionUpdateParamsDTO(
 
 chat_request_example: ExampleJson = {
     "message": "Hello, I need help with my order",
-    "agent_id": None,
-    "customer_id": None,
+    "customer_id": "cust_123xy",
     "session_title": "Chat Session",
     "timeout": 30,
 }
@@ -426,16 +425,13 @@ class ChatRequestDTO(
             examples=["Hello, I need help", "What can you do?"],
         ),
     ]
-    agent_id: Optional[AgentId] = Field(
-        default=None,
-        description="ID of the agent to chat with. If not provided, uses default or first available agent.",
-        examples=[None, "ag_123xyz"],
-    )
-    customer_id: Optional[CustomerId] = Field(
-        default=None,
-        description="ID of the customer. If not provided, uses guest customer.",
-        examples=[None, "cust_123xy"],
-    )
+    customer_id: Annotated[
+        CustomerId,
+        Field(
+            description="ID of the customer",
+            examples=["cust_123xy"],
+        ),
+    ]
     session_title: Optional[str] = Field(
         default=None,
         description="Title for new sessions. Defaults to 'Chat Session'.",
@@ -1274,6 +1270,7 @@ def create_router(
     session_store: SessionStore,
     session_listener: SessionListener,
     nlp_service: NLPService,
+    agent_factory: Optional[Callable[[CustomerId], Awaitable[AgentId]]] = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -2031,6 +2028,49 @@ def create_router(
             for tc in tool_calls
         ]
 
+    async def _load_user_agent_config(customer_id: CustomerId) -> dict[str, Any]:
+        """Load user agent configuration from remote service.
+        
+        Returns a dictionary with agent configuration.
+        In a real implementation, this would call an external API.
+        """
+        # TODO: Replace with actual remote API call
+        # For now, return a default configuration
+        return {
+            "name": f"Agent for {customer_id}",
+            "description": f"Personalized agent for customer {customer_id}",
+            "composition_mode": CompositionMode.FLUID,
+            "max_engine_iterations": 3,
+        }
+    
+    async def _get_or_create_agent_for_customer(
+        customer_id: CustomerId,
+        agent_store: AgentStore,
+    ) -> AgentId:
+        """Get existing agent or create new one based on customer configuration."""
+        # First, check if there's already an agent for this customer
+        agents = await agent_store.list_agents()
+        customer_agent = next(
+            (a for a in agents if a.name == f"Agent for {customer_id}"),
+            None
+        )
+        
+        if customer_agent:
+            return customer_agent.id
+        
+        # Load configuration from remote service
+        config = await _load_user_agent_config(customer_id)
+        
+        # Create new agent with loaded configuration
+        agent = await agent_store.create_agent(
+            name=config["name"],
+            description=config.get("description"),
+            composition_mode=config.get("composition_mode", CompositionMode.FLUID),
+            max_engine_iterations=config.get("max_engine_iterations", 3),
+        )
+        
+        return agent.id
+    
     # Simple chat endpoint
     @router.post(
         "/chat",
@@ -2054,16 +2094,15 @@ def create_router(
         """Simple chat endpoint that handles session management automatically.
         
         This endpoint simplifies the chat flow by:
-        1. Automatically finding or creating a session for the customer
-        2. Sending the customer message
-        3. Waiting for and returning the AI response
+        1. Finding or creating a personalized agent for the customer
+        2. Finding or creating a session
+        3. Sending the customer message
+        4. Waiting for and returning the AI response
         
-        The client only needs to send the message and optionally specify the agent.
-        If no agent is specified, it uses the default agent or the first available agent.
+        The client only needs to provide customer_id and the message.
         """
         await authorization_policy.authorize(request=request, operation=Operation.CREATE_EVENT)
         
-        # Get customer_id (default to guest if not provided)
         customer_id = params.customer_id
         if not customer_id:
             # Get or create guest customer
@@ -2075,33 +2114,24 @@ def create_router(
                 guest_customer = await customer_store.create_customer(name="Guest")
                 customer_id = guest_customer.id
         
-        # Get agent_id
-        agent_id = params.agent_id
-        if not agent_id:
-            # Use default agent or first available
-            agents = await agent_store.list_agents()
-            if not agents:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="No agents available. Please create an agent first."
-                )
-            # Prefer agent named "Default" or use first
-            default_agent = next((a for a in agents if a.name == "Default"), agents[0])
-            agent_id = default_agent.id
+        # Find existing sessions for this customer
+        all_sessions = await session_store.list_sessions(customer_id=customer_id)
         
-        # Find active session or create new one
-        sessions = await session_store.list_sessions(
-            agent_id=agent_id,
-            customer_id=customer_id,
-        )
-        
-        # Get most recent session or create new
         session = None
-        if sessions:
-            # Sort by creation time and get the most recent
-            sorted_sessions = sorted(sessions, key=lambda s: s.creation_utc, reverse=True)
+        if all_sessions:
+            # Get the most recent session
+            sorted_sessions = sorted(all_sessions, key=lambda s: s.creation_utc, reverse=True)
             session = sorted_sessions[0]
+            agent_id = session.agent_id
         else:
+            # No existing session - need to create agent and session
+            if agent_factory:
+                # Use the provided agent factory
+                agent_id = await agent_factory(customer_id)
+            else:
+                # Fallback to default behavior
+                agent_id = await _get_or_create_agent_for_customer(customer_id, agent_store)
+            
             # Create new session
             session = await session_store.create_session(
                 customer_id=customer_id,
@@ -2154,5 +2184,6 @@ def create_router(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="Request timed out waiting for AI response",
         )
+
 
     return router

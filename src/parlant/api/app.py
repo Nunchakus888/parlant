@@ -262,6 +262,10 @@ async def create_api_app(container: Container) -> ASGIApplication:
         router=agent_router,
     )
 
+    # Get agent factory from container if available
+    from parlant.sdk import AgentFactory
+    agent_factory = container.get(AgentFactory) if AgentFactory in container.defined_types else None
+    
     api_app.include_router(
         prefix="/sessions",
         router=sessions.create_router(
@@ -273,6 +277,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
             session_store=session_store,
             session_listener=session_listener,
             nlp_service=nlp_service,
+            agent_factory=agent_factory,
         ),
     )
 

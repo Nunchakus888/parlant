@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 
 
 class ParlantDirectClient:
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8800"):
         self.base_url = base_url
         self.session_id = None
         self.last_offset = 0
