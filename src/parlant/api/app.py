@@ -221,6 +221,142 @@ async def create_api_app(container: Container) -> ASGIApplication:
     static_dir = os.path.join(os.path.dirname(__file__), "chat/dist")
     api_app.mount("/chat", StaticFiles(directory=static_dir, html=True), name="static")
 
+    @api_app.get("/chat-test", include_in_schema=False)
+    async def chat_test_page() -> Response:
+        html = """
+<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"UTF-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+  <title>Parlant Chat Test</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, \"Apple Color Emoji\", \"Segoe UI Emoji\"; margin: 24px; color: #1f2937; }
+    .card { max-width: 780px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    label { width: 140px; color: #6b7280; font-weight: 600; }
+    input[type="text"], input[type="number"], textarea { flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; font-size: 14px; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { background: linear-gradient(90deg, #6366f1, #22d3ee); color: white; border: 0; border-radius: 10px; padding: 10px 16px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .output { white-space: pre-wrap; background: #0b1020; color: #e5e7eb; padding: 14px; border-radius: 10px; overflow: auto; }
+    .muted { color: #9ca3af; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class=\"card\">
+    <h2>Parlant Chat Test</h2>
+    <p class=\"muted\">Sends a request to <code>/sessions/chat</code> and displays the AI reply.</p>
+
+    <div class=\"row\">
+      <label for=\"customer_id\">Customer ID</label>
+      <input id=\"customer_id\" type=\"text\" placeholder=\"cust_123xy (or leave to auto-create Guest)\" />
+    </div>
+
+    <div class=\"row\">
+      <label for=\"session_title\">Session Title</label>
+      <input id=\"session_title\" type=\"text\" placeholder=\"Chat Session\" />
+    </div>
+
+    <div class=\"row\">
+      <label for=\"timeout\">Timeout (s)</label>
+      <input id=\"timeout\" type=\"number\" value=\"30\" min=\"1\" />
+    </div>
+
+    <div class=\"row\" style=\"align-items:flex-start\">
+      <label for=\"message\">Message</label>
+      <textarea id=\"message\" placeholder=\"Hello, I need help with my order\"></textarea>
+    </div>
+
+    <div class=\"row\">
+      <div style=\"width:140px\"></div>
+      <button id=\"send\">Send</button>
+      <button id=\"clear\" style=\"background:#e5e7eb;color:#111827;\">Clear</button>
+    </div>
+
+    <h3>Response</h3>
+    <div id=\"status\" class=\"muted\"></div>
+    <div id=\"answer\" class=\"output\"></div>
+    <h3>Raw JSON</h3>
+    <pre id=\"raw\" class=\"output\"></pre>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const sendBtn = $("send");
+    const clearBtn = $("clear");
+
+    function setBusy(busy) {
+      sendBtn.disabled = busy;
+      sendBtn.textContent = busy ? "Sending..." : "Send";
+    }
+
+    clearBtn.addEventListener('click', () => {
+      $("message").value = "";
+      $("answer").textContent = "";
+      $("raw").textContent = "";
+      $("status").textContent = "";
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      setBusy(true);
+      $("status").textContent = "";
+      $("answer").textContent = "";
+      $("raw").textContent = "";
+
+      const customerId = $("customer_id").value.trim();
+      const message = $("message").value.trim();
+      const sessionTitle = $("session_title").value.trim();
+      const timeout = parseInt($("timeout").value, 10) || 30;
+
+      if (!message) {
+        $("status").textContent = "Please type a message first.";
+        setBusy(false);
+        return;
+      }
+
+      const body = {
+        message,
+        customer_id: customerId,
+        session_title: sessionTitle || undefined,
+        timeout,
+      };
+
+      try {
+        const res = await fetch('/sessions/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        const text = await res.text();
+        $("raw").textContent = text;
+
+        if (!res.ok) {
+          $("status").textContent = `Error ${res.status}: ${res.statusText}`;
+          return;
+        }
+
+        try {
+          const json = JSON.parse(text);
+          const aiMsg = json && json.data && json.data.message ? json.data.message : JSON.stringify(json, null, 2);
+          $("answer").textContent = aiMsg;
+          $("status").textContent = "OK";
+        } catch (e) {
+          $("status").textContent = "Received non-JSON response";
+        }
+      } catch (e) {
+        $("status").textContent = `Network error: ${e}`;
+      } finally {
+        setBusy(false);
+      }
+    });
+  </script>
+</body>
+</html>
+"""
+        return Response(content=html, media_type="text/html")
+
     @api_app.get("/", include_in_schema=False)
     async def root() -> Response:
         return RedirectResponse("/chat")
