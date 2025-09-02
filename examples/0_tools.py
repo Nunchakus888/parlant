@@ -318,12 +318,15 @@ async def main() -> None:
         logger.info(f"成功创建智能体 {agent.id} for customer {customer_id}")
         return agent.id
     
-    # 使用mongodb存储会话
+    # 使用mongodb存储会话和智能体
+    mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
         log_level=LogLevel.DEBUG,
-        session_store=os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017"),
-        agent_factory=create_agent_for_customer  # 传入智能体工厂函数
+        session_store=mongodb_url,
+        customer_store=mongodb_url,  # 使用相同的 MongoDB 存储客户
+        agent_store=mongodb_url,      # 使用相同的 MongoDB 存储智能体
+        agent_factory=create_agent_for_customer
     ) as server:
         server_ref = server  # 保存server引用供factory使用
         # 获取Parlant SDK的日志器
@@ -333,7 +336,15 @@ async def main() -> None:
         logger.info("启动 Parlant 服务器...")
         
         # 初始化工具
-        await initialize_tools()
+        # await initialize_tools()
+
+        # 创建一个默认智能体
+        # default_agent = await server_ref.create_agent(
+        #     name="Default Agent",
+        #     description="Default agent for testing",
+        #     max_engine_iterations=3,
+        # )
+        # await setup_agent_guidelines(default_agent)
         
         # 注意：使用 agent_factory 后，不需要在这里创建智能体
         # 智能体会在第一次创建会话时自动创建
