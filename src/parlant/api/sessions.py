@@ -17,7 +17,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from itertools import chain
 from pydantic import Field
-from typing import Annotated, Any, Mapping, Optional, Sequence, Set, TypeAlias, cast
+from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, cast
 
 
 from parlant.api.authorization import AuthorizationPolicy, Operation
@@ -1274,6 +1274,32 @@ def create_router(
 ) -> APIRouter:
     router = APIRouter()
 
+    # Normalize agent factory into a consistent callable accepting (customer_id)
+    async def _agent_creator(customer_id: CustomerId) -> AgentId:
+        if agent_factory is None:
+            raise RuntimeError("Agent factory not configured")
+
+        import inspect
+        factory_obj = agent_factory
+
+        # If the injected object is an awaitable (misconfigured as coroutine object), await it once
+        if inspect.isawaitable(factory_obj):
+            factory_obj = await factory_obj  # type: ignore[assignment]
+
+        # If the object itself is an AgentId, accept as static agent mapping (warn)
+        if isinstance(factory_obj, str):
+            logger.warning("AgentFactory is a static AgentId; expected a callable(customer_id)->AgentId. Using as-is.")
+            return factory_obj  # type: ignore[return-value]
+
+        # If it's a callable, call with customer_id
+        if callable(factory_obj):
+            result = factory_obj(customer_id)
+            return await result if inspect.isawaitable(result) else result  # type: ignore[no-any-return]
+
+        raise TypeError(
+            "AgentFactory must be a callable accepting (customer_id) and returning AgentId or Awaitable[AgentId]"
+        )
+
     @router.post(
         "",
         status_code=status.HTTP_201_CREATED,
@@ -1301,6 +1327,9 @@ def create_router(
         If no customer_id is provided, a guest customer will be created.
         """
         _ = await agent_store.read_agent(agent_id=params.agent_id)
+
+        logger.info(f"👤 Creating session, customer: {params.customer_id}, agent: {params.agent_id}, read_agent: {_}")
+
 
         if params.customer_id:
             await authorization_policy.authorize(
@@ -2028,48 +2057,7 @@ def create_router(
             for tc in tool_calls
         ]
 
-    async def _load_user_agent_config(customer_id: CustomerId) -> dict[str, Any]:
-        """Load user agent configuration from remote service.
-        
-        Returns a dictionary with agent configuration.
-        In a real implementation, this would call an external API.
-        """
-        # TODO: Replace with actual remote API call
-        # For now, return a default configuration
-        return {
-            "name": f"Agent for {customer_id}",
-            "description": f"Personalized agent for customer {customer_id}",
-            "composition_mode": CompositionMode.FLUID,
-            "max_engine_iterations": 3,
-        }
-    
-    async def _get_or_create_agent_for_customer(
-        customer_id: CustomerId,
-        agent_store: AgentStore,
-    ) -> AgentId:
-        """Get existing agent or create new one based on customer configuration."""
-        # First, check if there's already an agent for this customer
-        agents = await agent_store.list_agents()
-        customer_agent = next(
-            (a for a in agents if a.name == f"Agent for {customer_id}"),
-            None
-        )
-        
-        if customer_agent:
-            return customer_agent.id
-        
-        # Load configuration from remote service
-        config = await _load_user_agent_config(customer_id)
-        
-        # Create new agent with loaded configuration
-        agent = await agent_store.create_agent(
-            name=config["name"],
-            description=config.get("description"),
-            composition_mode=config.get("composition_mode", CompositionMode.FLUID),
-            max_engine_iterations=config.get("max_engine_iterations", 3),
-        )
-        
-        return agent.id
+
     
     # Simple chat endpoint
     @router.post(
@@ -2101,89 +2089,264 @@ def create_router(
         
         The client only needs to provide customer_id and the message.
         """
-        await authorization_policy.authorize(request=request, operation=Operation.CREATE_EVENT)
+        logger.info(f"🚀 Chat request started - customer_id: {params.customer_id}, message: '{params.message[:50]}...'")
         
-        customer_id = params.customer_id
-        if not customer_id:
-            # Get or create guest customer
-            customers = await customer_store.list_customers()
-            guest_customer = next((c for c in customers if c.name == "Guest"), None)
-            if guest_customer:
-                customer_id = guest_customer.id
-            else:
-                guest_customer = await customer_store.create_customer(name="Guest")
-                customer_id = guest_customer.id
-        
-        # Find existing sessions for this customer
-        all_sessions = await session_store.list_sessions(customer_id=customer_id)
-        
-        session = None
-        if all_sessions:
-            # Get the most recent session
-            sorted_sessions = sorted(all_sessions, key=lambda s: s.creation_utc, reverse=True)
-            session = sorted_sessions[0]
-            agent_id = session.agent_id
-        else:
-            # No existing session - need to create agent and session
-            if agent_factory:
-                # Use the provided agent factory
-                agent_id = await agent_factory(customer_id)
-            else:
-                # Fallback to default behavior
-                agent_id = await _get_or_create_agent_for_customer(customer_id, agent_store)
+        try:
+            # Step 1: Authorization
+            logger.info("🔐 Step 1: Authorization check")
+            await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
+            logger.info("✅ Authorization successful")
             
-            # Create new session
-            session = await session_store.create_session(
-                customer_id=customer_id,
-                agent_id=agent_id,
-                title=params.session_title or "Chat Session",
-            )
-        
-        # Send customer message
-        customer_event = await application.post_event(
-            session_id=session.id,
-            kind=EventKind.MESSAGE,
-            data={"message": params.message},
-            source=EventSource.CUSTOMER,
-            trigger_processing=True,
-        )
-        
-        # Wait for AI response
-        timeout = params.timeout or 30
-        if await session_listener.wait_for_events(
-            session_id=session.id,
-            min_offset=customer_event.offset + 1,
-            source=EventSource.AI_AGENT,
-            kinds=[EventKind.MESSAGE],
-            timeout=Timeout(timeout),
-        ):
-            # Get the AI response
-            ai_events = await session_store.list_events(
-                session_id=session.id,
-                min_offset=customer_event.offset + 1,
-                source=EventSource.AI_AGENT,
-                kinds=[EventKind.MESSAGE],
-            )
+            # Step 2: Customer management
+            logger.info("👤 Step 2: Customer management")
+            customer_id = params.customer_id
             
-            if ai_events:
-                # Return the first AI message event
-                ai_event = ai_events[0]
-                return EventDTO(
-                    id=ai_event.id,
-                    source=_event_source_to_event_source_dto(ai_event.source),
-                    kind=_event_kind_to_event_kind_dto(ai_event.kind),
-                    offset=ai_event.offset,
-                    creation_utc=ai_event.creation_utc,
-                    correlation_id=ai_event.correlation_id,
-                    data=cast(JSONSerializableDTO, ai_event.data),
-                    deleted=ai_event.deleted,
+            # Step 3: Session management
+            logger.info("💬 Step 3: Session management")
+            all_sessions = await session_store.list_sessions(customer_id=customer_id)
+            logger.info(f"📊 Found {len(all_sessions)} existing sessions for customer")
+            
+            session = None
+            agent_id = None
+            
+            if all_sessions:
+                # Use existing session
+                sorted_sessions = sorted(all_sessions, key=lambda s: s.creation_utc, reverse=True)
+                session = sorted_sessions[0]
+                agent_id = session.agent_id
+                logger.info(f"✅ Using existing session: {session.id} with agent: {agent_id}")
+            else:
+                # Create new session
+                logger.info("🆕 No existing session found, creating new one")
+
+                # Ensure customer exists (avoid ItemNotFoundError during processing)
+                try:
+                    _ = await customer_store.read_customer(customer_id)
+                except Exception:
+                    logger.info(f"👤 Creating missing customer: {customer_id}")
+                    await customer_store.create_customer(name=str(customer_id))
+
+                # Agent factory is required for chat endpoint
+                agent_id = await _agent_creator(customer_id)
+                logger.info(f"✅ Agent factory returned agent: {agent_id}")
+
+                # Create new session
+                logger.info(f"📝 Creating new session for customer: {customer_id}, agent: {agent_id}")
+                session = await session_store.create_session(
+                    customer_id=customer_id,
+                    agent_id=agent_id,
+                    title=params.session_title or "Chat Session",
                 )
-        
-        # Timeout
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Request timed out waiting for AI response",
-        )
+                logger.info(f"✅ Created new session: {session.id}")
+                
+                # Double-check the session was created correctly
+                created_session = await session_store.read_session(session.id)
+                logger.info(f"🔍 Verifying created session:")
+                logger.info(f"  - Session ID: {created_session.id}")
+                logger.info(f"  - Agent ID in session: {created_session.agent_id}")
+                logger.info(f"  - Customer ID: {created_session.customer_id}")
+                
+                if created_session.agent_id != agent_id:
+                    logger.error(f"❌ Agent ID mismatch! Expected: {agent_id}, Got: {created_session.agent_id}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Session creation error: agent ID mismatch"
+                    )
+            
+            # Step 4: Send customer message and trigger AI processing
+            logger.info("📤 Step 4: Sending customer message")
+            logger.info(f"📝 Message content: '{params.message}'")
+            logger.info(f"🔧 Triggering AI processing: trigger_processing=True")
+            
+            # Get customer display name
+            try:
+                customer = await customer_store.read_customer(customer_id)
+                customer_display_name = customer.name
+                logger.info(f"👤 Customer display name: {customer_display_name}")
+            except Exception:
+                customer_display_name = customer_id
+                logger.info(f"👤 Using customer ID as display name: {customer_display_name}")
+            
+            # Build proper message event data (same as create_event API)
+            message_data: MessageEventData = {
+                "message": params.message,
+                "participant": {
+                    "id": customer_id,
+                    "display_name": customer_display_name,
+                },
+                "flagged": False,
+                "tags": [],
+            }
+            
+            try:
+                logger.info(f"📨 Posting event with session_id: {session.id}, agent_id: {session.agent_id}")
+                customer_event = await application.post_event(
+                    session_id=session.id,
+                    kind=EventKind.MESSAGE,
+                    data=message_data,
+                    source=EventSource.CUSTOMER,
+                    trigger_processing=True,
+                )
+                logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
+                logger.info(f"✅ Correlation ID: {customer_event.correlation_id}")
+                
+
+                # Debug: Check if background task was actually started
+                logger.info("🔍 Debug: Checking if background task was started")
+                
+                # Check if background task has started processing
+                status_events_immediate = await session_store.list_events(
+                    session_id=session.id,
+                    kinds=[EventKind.STATUS],
+                )
+                logger.info(f"📊 Status events immediately after posting: {len(status_events_immediate)}")
+                for se in status_events_immediate:
+                    logger.info(f"  - Status: {se.data}")
+                
+                # Debug: Check if there are any error events
+                error_events = await session_store.list_events(
+                    session_id=session.id,
+                    kinds=[EventKind.STATUS],
+                )
+                logger.info(f"📊 Error events: {len(error_events)}")
+                for ee in error_events:
+                    if ee.data and isinstance(ee.data, dict) and ee.data.get("status") == "error":
+                        logger.error(f"❌ Error event detected: {ee.data}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to post customer message: {e}")
+                import traceback
+                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to process message: {str(e)}"
+                )
+            
+            # Step 5: Check AI engine status before waiting
+            logger.info("🔍 Step 5: Checking AI engine status")
+            try:
+                # Check if there are any AI events before waiting
+                ai_events_before = await session_store.list_events(
+                    session_id=session.id,
+                    source=EventSource.AI_AGENT,
+                    kinds=[EventKind.MESSAGE],
+                )
+                logger.info(f"📊 AI events before waiting: {len(ai_events_before)}")
+                
+                # Check if there are any status events (to see if AI is working)
+                status_events = await session_store.list_events(
+                    session_id=session.id,
+                    kinds=[EventKind.STATUS],
+                    correlation_id=customer_event.correlation_id,
+                )
+                logger.info(f"📊 Status events for correlation: {len(status_events)}")
+                for status_event in status_events:
+                    logger.info(f"📋 Status event: {status_event.data}")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Could not check AI engine status: {e}")
+            
+            # Step 6: Wait for AI response
+            logger.info("⏳ Step 6: Waiting for AI response")
+            timeout = params.timeout or 30
+            logger.info(f"⏰ Timeout set to: {timeout} seconds")
+            
+            try:
+                wait_result = await session_listener.wait_for_events(
+                    session_id=session.id,
+                    min_offset=customer_event.offset + 1,
+                    source=EventSource.AI_AGENT,
+                    kinds=[EventKind.MESSAGE],
+                    timeout=Timeout(timeout),
+                )
+                logger.info(f"⏳ Wait result: {wait_result}")
+                
+                if wait_result:
+                    logger.info("✅ AI response detected, retrieving events")
+                    # Get the AI response
+                    ai_events = await session_store.list_events(
+                        session_id=session.id,
+                        min_offset=customer_event.offset + 1,
+                        source=EventSource.AI_AGENT,
+                        kinds=[EventKind.MESSAGE],
+                    )
+                    logger.info(f"📊 Retrieved {len(ai_events)} AI events")
+                    
+                    if ai_events:
+                        # Return the first AI message event
+                        ai_event = ai_events[0]
+                        logger.info(f"✅ Returning AI response - event_id: {ai_event.id}, message: '{ai_event.data.get('message', '')[:50]}...'")
+                        
+                        return EventDTO(
+                            id=ai_event.id,
+                            source=_event_source_to_event_source_dto(ai_event.source),
+                            kind=_event_kind_to_event_kind_dto(ai_event.kind),
+                            offset=ai_event.offset,
+                            creation_utc=ai_event.creation_utc,
+                            correlation_id=ai_event.correlation_id,
+                            data=cast(JSONSerializableDTO, ai_event.data),
+                            deleted=ai_event.deleted,
+                        )
+                    else:
+                        logger.warning("⚠️ Wait returned True but no AI events found")
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="AI response detected but no events found"
+                        )
+                else:
+                    logger.warning("⏰ Wait returned False - timeout or no events")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error during AI response wait: {e}")
+                if "timeout" in str(e).lower():
+                    raise HTTPException(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        detail="Request timed out waiting for AI response"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Error waiting for AI response: {str(e)}"
+                    )
+            
+            # Step 7: Timeout handling
+            logger.warning("⏰ Step 7: Handling timeout")
+            
+            # Before throwing 504, let's check what actually happened
+            try:
+                final_ai_events = await session_store.list_events(
+                    session_id=session.id,
+                    source=EventSource.AI_AGENT,
+                    kinds=[EventKind.MESSAGE],
+                )
+                logger.warning(f"⚠️ Final AI events count: {len(final_ai_events)}")
+                
+                all_events = await session_store.list_events(session.id)
+                logger.warning(f"⚠️ Total events in session: {len(all_events)}")
+                for i, event in enumerate(all_events):
+                    logger.warning(f"⚠️ Event {i}: {event.kind} from {event.source} - {event.data}")
+                
+            except Exception as e:
+                logger.error(f"❌ Could not retrieve final event status: {e}")
+            
+            # Now throw the timeout
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Request timed out waiting for AI response. Check AI engine configuration and logs."
+            )
+            
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"❌ Unexpected error in chat endpoint: {e}")
+            logger.error(f"❌ Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal server error: {str(e)}"
+            )
 
 
     return router
