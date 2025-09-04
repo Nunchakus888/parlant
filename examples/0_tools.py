@@ -324,9 +324,8 @@ async def main() -> None:
         nlp_service=p.NLPServices.openrouter,
         log_level=LogLevel.DEBUG,
         session_store=mongodb_url,
-        customer_store=mongodb_url,  # 使用相同的 MongoDB 存储客户
-        agent_store=mongodb_url,      # 使用相同的 MongoDB 存储智能体
-        agent_factory=create_agent_for_customer
+        # customer_store=mongodb_url,  # 使用相同的 MongoDB 存储客户
+        # agent_factory=create_agent_for_customer
     ) as server:
         server_ref = server  # 保存server引用供factory使用
         # 获取Parlant SDK的日志器
