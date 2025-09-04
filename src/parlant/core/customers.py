@@ -53,6 +53,7 @@ class CustomerStore(ABC):
         self,
         name: str,
         extra: Mapping[str, str] = {},
+        id: Optional[CustomerId] = None,
         creation_utc: Optional[datetime] = None,
         tags: Optional[Sequence[TagId]] = None,
     ) -> Customer: ...
@@ -229,6 +230,7 @@ class CustomerDocumentStore(CustomerStore):
         self,
         name: str,
         extra: Mapping[str, str] = {},
+        id: Optional[CustomerId] = None,
         creation_utc: Optional[datetime] = None,
         tags: Optional[Sequence[TagId]] = None,
     ) -> Customer:
@@ -238,7 +240,7 @@ class CustomerDocumentStore(CustomerStore):
             customer_checksum = md5_checksum(f"{name}{extra}{tags}")
 
             customer = Customer(
-                id=CustomerId(self._id_generator.generate(customer_checksum)),
+                id=CustomerId(id or self._id_generator.generate(customer_checksum)),
                 name=name,
                 extra=extra,
                 creation_utc=creation_utc,

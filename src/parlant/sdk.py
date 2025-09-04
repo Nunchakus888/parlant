@@ -2061,7 +2061,7 @@ class Server:
         configure_hooks: Callable[[EngineHooks], Awaitable[EngineHooks]] | None = None,
         configure_container: Callable[[Container], Awaitable[Container]] | None = None,
         initialize_container: Callable[[Container], Awaitable[None]] | None = None,
-        agent_factory: Callable[[CustomerId], Awaitable[AgentId]] | None = None,
+        # agent_factory: Callable[[CustomerId], Awaitable[AgentId]] | None = None,
     ) -> None:
         self.port = port
         self.tool_service_port = tool_service_port
@@ -2076,7 +2076,7 @@ class Server:
         self._configure_hooks = configure_hooks
         self._configure_container = configure_container
         self._initialize = initialize_container
-        self._agent_factory = agent_factory
+        # self._agent_factory = agent_factory
         self._retrievers: dict[
             AgentId,
             dict[str, Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]]],
@@ -2954,9 +2954,6 @@ class Server:
                 hooks = await self._configure_hooks(c[EngineHooks])
                 latest_container[EngineHooks] = hooks
 
-            # Register agent factory if provided
-            if self._agent_factory:
-                latest_container[AgentFactory] = self._agent_factory
 
             return latest_container
 

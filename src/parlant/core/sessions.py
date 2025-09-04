@@ -288,6 +288,7 @@ class SessionStore(ABC):
         self,
         customer_id: CustomerId,
         agent_id: AgentId,
+        session_id: Optional[str] = None,
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
     ) -> Session: ...
@@ -1072,6 +1073,7 @@ class SessionDocumentStore(SessionStore):
         self,
         customer_id: CustomerId,
         agent_id: AgentId,
+        session_id: Optional[str] = None,
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
         mode: Optional[SessionMode] = None,
@@ -1082,7 +1084,7 @@ class SessionDocumentStore(SessionStore):
             consumption_offsets: dict[ConsumerId, int] = {"client": 0}
 
             session = Session(
-                id=SessionId(generate_id()),
+                id=SessionId(session_id or generate_id()),
                 creation_utc=creation_utc,
                 customer_id=customer_id,
                 agent_id=agent_id,
