@@ -425,6 +425,11 @@ class ChatRequestDTO(
             examples=["cust_123xy"],
         ),
     ]
+    session_id: Optional[str] = Field(
+        default=None,
+        description="ID of the session. If not provided, a new session will be created.",
+        examples=["ses_123xyz"],
+    )
     session_title: Optional[str] = Field(
         default=None,
         description="Title for new sessions. Defaults to 'Chat Session'.",
@@ -1181,6 +1186,103 @@ KindsQuery: TypeAlias = Annotated[
 ]
 
 
+async def _ensure_session_and_customer(
+    session_id: SessionId,
+    customer_id: CustomerId,
+    session_title: str,
+    application: Application,
+    customer_store: CustomerStore,
+    session_store: SessionStore,
+    agent_store: AgentStore,
+    logger: Logger,
+) -> tuple[Any, Any, AgentId]:
+    """
+    Unified session and customer management logic.
+    
+    This function handles the complex logic of ensuring both session and customer exist,
+    creating them if necessary, and returning the appropriate instances for chat interaction.
+    
+    Args:
+        session_id: The session ID to check/create
+        customer_id: The customer ID to check/create
+        session_title: Title for the session if creating new
+        application: Application instance for creating sessions
+        customer_store: Customer store for customer operations
+        session_store: Session store for session operations
+        agent_store: Agent store for agent operations
+        logger: Logger instance for logging
+        
+    Returns:
+        Tuple of (session, customer, agent_id) ready for chat interaction
+    """
+    from parlant.core.agents import AgentId
+    from parlant.core.customers import Customer
+    from parlant.core.sessions import Session
+    
+    # Step 1: Ensure customer exists
+    try:
+        customer = await customer_store.read_customer(customer_id)
+        logger.info(f"👤 Customer found: {customer.id}")
+    except Exception:
+        logger.info(f"👤 Customer not found: {customer_id}, creating...")
+        customer = await customer_store.create_customer(
+            id=customer_id,
+            name=customer_id,
+        )
+        logger.info(f"👤 Created new customer: {customer.id}")
+    
+    # Step 2: Create agent for customer (always create new agent for each customer)
+    customer_config = {
+        "name": f"Agent for {customer_id}",
+        "description": f"Personalized agent for customer {customer_id}",
+        "max_engine_iterations": 3,
+    }
+
+    agent = await agent_store.create_agent(
+        name=customer_config["name"],
+        description=customer_config["description"],
+        max_engine_iterations=customer_config.get("max_engine_iterations", 3),
+    )
+    agent_id = agent.id
+    logger.info(f"🤖 Created/retrieved agent: {agent_id}")
+    
+    # Step 3: Ensure session exists
+    try:
+        session = await session_store.read_session(session_id)
+        logger.info(f"🔍 Session found: {session.id}")
+        
+        # Update existing session with current customer and agent info
+        session = await session_store.update_session(
+            session_id=session_id,
+            params={
+                "agent_id": agent_id,
+                "customer_id": customer_id,
+                "title": session_title,
+                "allow_greeting": False,
+            },
+        )
+        logger.info(f"🔍 Updated existing session: {session.id}")
+        
+    except Exception:
+        logger.info(f"🔍 Session not found: {session_id}, creating...")
+        session = await application.create_customer_session(
+            session_id=session_id,
+            customer_id=customer_id,
+            agent_id=agent_id,
+            title=session_title,
+            allow_greeting=False,
+        )
+        logger.info(f"🔍 Created new session: {session.id}")
+    
+    return session, customer, agent_id
+
+
+def _get_jailbreak_moderation_service(logger: Logger) -> ModerationService:
+    from parlant.adapters.nlp.lakera import LakeraGuard
+
+    return LakeraGuard(logger)
+
+
 def agent_message_guideline_dto_to_utterance_request(
     guideline: AgentMessageGuidelineDTO,
 ) -> UtteranceRequest:
@@ -1276,35 +1378,27 @@ def create_router(
     session_store: SessionStore,
     session_listener: SessionListener,
     nlp_service: NLPService,
-    agent_factory: Optional[Callable[[CustomerId], Awaitable[AgentId]]] = None,
+    # agent_factory: Optional[Callable[[CustomerId], Awaitable[AgentId]]] = None,
 ) -> APIRouter:
     router = APIRouter()
 
-    # Normalize agent factory into a consistent callable accepting (customer_id)
-    async def _agent_creator(customer_id: CustomerId) -> AgentId:
-        if agent_factory is None:
-            raise RuntimeError("Agent factory not configured")
+    # Agent factory creates or retrieves agents for customers
+    async def _agent_creator(customer_id: CustomerId) -> any:
+        customer_config = {
+            "name": f"Agent for {customer_id}",
+            "description": f"Personalized agent for customer {customer_id}",
+            "max_engine_iterations": 3,
+        }
 
-        import inspect
-        factory_obj = agent_factory
-
-        # If the injected object is an awaitable (misconfigured as coroutine object), await it once
-        if inspect.isawaitable(factory_obj):
-            factory_obj = await factory_obj  # type: ignore[assignment]
-
-        # If the object itself is an AgentId, accept as static agent mapping (warn)
-        if isinstance(factory_obj, str):
-            logger.warning("AgentFactory is a static AgentId; expected a callable(customer_id)->AgentId. Using as-is.")
-            return factory_obj  # type: ignore[return-value]
-
-        # If it's a callable, call with customer_id
-        if callable(factory_obj):
-            result = factory_obj(customer_id)
-            return await result if inspect.isawaitable(result) else result  # type: ignore[no-any-return]
-
-        raise TypeError(
-            "AgentFactory must be a callable accepting (customer_id) and returning AgentId or Awaitable[AgentId]"
+        agent = await agent_store.create_agent(
+            name=customer_config["name"],
+            description=customer_config["description"],
+            max_engine_iterations=customer_config.get("max_engine_iterations", 3),
         )
+
+        logger.info(f"👤 Created dynamic agent: {agent}")
+
+        return agent
 
     @router.post(
         "",
@@ -1930,16 +2024,9 @@ def create_router(
         params: ChatRequestDTO,
     ) -> EventDTO:
         """Simple chat endpoint that handles session management automatically.
-        
-        This endpoint simplifies the chat flow by:
-        1. Finding or creating a personalized agent for the customer
-        2. Finding or creating a session
-        3. Sending the customer message
-        4. Waiting for and returning the AI response
-        
-        The client only needs to provide customer_id and the message.
+        If session_id is provided, it will be used, otherwise a new session will be created.
         """
-        logger.info(f"🚀 Chat request started - customer_id: {params.customer_id}, message: '{params.message[:50]}...'")
+        logger.info(f"🚀 Chat request started - {params}")
         
         try:
             # Step 1: Authorization
@@ -1947,82 +2034,36 @@ def create_router(
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
             logger.info("✅ Authorization successful")
             
-            # Step 2: Customer management
-            logger.info("👤 Step 2: Customer management")
+            # Step 2: Session and Customer management
+            logger.info("👤 Step 2: Session and Customer management")
+            
             customer_id = params.customer_id
+            session_id = params.session_id
             
-            # Step 3: Session management
-            logger.info("💬 Step 3: Session management")
-            all_sessions = await session_store.list_sessions(customer_id=customer_id)
-            logger.info(f"📊 Found {len(all_sessions)} existing sessions for customer")
+            # Get or create session and customer in one unified flow
+            session, customer, agent_id = await _ensure_session_and_customer(
+                session_id=session_id,
+                customer_id=customer_id,
+                session_title=params.session_title or "Chat Session",
+                application=application,
+                customer_store=customer_store,
+                session_store=session_store,
+                agent_store=agent_store,
+                logger=logger,
+            )
             
-            session = None
-            agent_id = None
-            
-            if all_sessions:
-                # Use existing session
-                sorted_sessions = sorted(all_sessions, key=lambda s: s.creation_utc, reverse=True)
-                session = sorted_sessions[0]
-                agent_id = session.agent_id
-                logger.info(f"✅ Using existing session: {session.id} with agent: {agent_id}")
-            else:
-                # Create new session
-                logger.info("🆕 No existing session found, creating new one")
+            logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
 
-                # Ensure customer exists (avoid ItemNotFoundError during processing)
-                try:
-                    _ = await customer_store.read_customer(customer_id)
-                except Exception:
-                    logger.info(f"👤 Creating missing customer: {customer_id}")
-                    await customer_store.create_customer(name=str(customer_id))
 
-                # Agent factory is required for chat endpoint
-                agent_id = await _agent_creator(customer_id)
-                logger.info(f"✅ Agent factory returned agent: {agent_id}")
-
-                # Create new session
-                logger.info(f"📝 Creating new session for customer: {customer_id}, agent: {agent_id}")
-                session = await session_store.create_session(
-                    customer_id=customer_id,
-                    agent_id=agent_id,
-                    title=params.session_title or "Chat Session",
-                )
-                logger.info(f"✅ Created new session: {session.id}")
-                
-                # Double-check the session was created correctly
-                created_session = await session_store.read_session(session.id)
-                logger.info(f"🔍 Verifying created session:")
-                logger.info(f"  - Session ID: {created_session.id}")
-                logger.info(f"  - Agent ID in session: {created_session.agent_id}")
-                logger.info(f"  - Customer ID: {created_session.customer_id}")
-                
-                if created_session.agent_id != agent_id:
-                    logger.error(f"❌ Agent ID mismatch! Expected: {agent_id}, Got: {created_session.agent_id}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Session creation error: agent ID mismatch"
-                    )
-            
-            # Step 4: Send customer message and trigger AI processing
             logger.info("📤 Step 4: Sending customer message")
             logger.info(f"📝 Message content: '{params.message}'")
-            logger.info(f"🔧 Triggering AI processing: trigger_processing=True")
-            
-            # Get customer display name
-            try:
-                customer = await customer_store.read_customer(customer_id)
-                customer_display_name = customer.name
-                logger.info(f"👤 Customer display name: {customer_display_name}")
-            except Exception:
-                customer_display_name = customer_id
-                logger.info(f"👤 Using customer ID as display name: {customer_display_name}")
             
             # Build proper message event data (same as create_event API)
             message_data: MessageEventData = {
                 "message": params.message,
                 "participant": {
                     "id": customer_id,
-                    "display_name": customer_display_name,
+                    "display_name": customer_id,
                 },
                 "flagged": False,
                 "tags": [],
@@ -2038,13 +2079,8 @@ def create_router(
                     trigger_processing=True,
                 )
                 logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
-                logger.info(f"✅ Correlation ID: {customer_event.correlation_id}")
-                
 
-                # Debug: Check if background task was actually started
-                logger.info("🔍 Debug: Checking if background task was started")
                 
-                # Check if background task has started processing
                 status_events_immediate = await session_store.list_events(
                     session_id=session.id,
                     kinds=[EventKind.STATUS],
@@ -2100,6 +2136,7 @@ def create_router(
             logger.info("⏳ Step 6: Waiting for AI response")
             timeout = params.timeout or 30
             logger.info(f"⏰ Timeout set to: {timeout} seconds")
+            logger.info(f"🔍 Waiting for events with: session_id={session.id}, min_offset={customer_event.offset + 1}, source={EventSource.AI_AGENT}, kinds={[EventKind.MESSAGE]}")
             
             try:
                 wait_result = await session_listener.wait_for_events(
