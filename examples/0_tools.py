@@ -12,6 +12,7 @@ from parlant.core.tools import ToolParameterOptions
 from parlant.core.loggers import Logger, LogLevel, StdoutLogger
 from parlant.core.contextual_correlator import ContextualCorrelator
 from parlant.core.agents import AgentStore
+from initialize_agent_factory import initialize_agent_factory
 
 # load env
 from dotenv import load_dotenv
@@ -221,115 +222,64 @@ def create_dynamic_tool(tool_config: Dict[str, Any]):
     return p.tool(dynamic_tool_func)
 
 
-# 全局变量声明
-tools_list = []
-dynamic_tools = {}
-
-
-async def initialize_tools() -> None:
-    """初始化动态工具"""
-    global tools_list, dynamic_tools
+async def setup_agent_with_tools(agent) -> None:
+    """为智能体初始化工具和设置指导原则
     
-    logger.info("开始初始化动态工具...")
+    这个函数整合了工具初始化和指导原则设置，避免了全局变量的使用。
+    每次调用都会重新加载工具配置，确保工具配置的实时性。
+    """
+    logger.info("开始为智能体设置工具和指导原则...")
     
-    # 加载配置
-    tools_list = load_tools_config()
+    # 加载工具配置
+    tools_config = load_tools_config()
+    if not tools_config:
+        logger.warning("没有找到工具配置，跳过工具设置")
+        return
     
-    # 创建动态工具
-    logger.info("开始创建动态工具...")
-    for tool_config in tools_list:
-        try:
-            tool_func = create_dynamic_tool(tool_config)
-            dynamic_tools[tool_config["name"]] = tool_func
-            logger.debug(f"成功创建工具: {tool_config['name']}")
-        except Exception as e:
-            logger.error(f"创建工具 {tool_config.get('name', 'unknown')} 失败: {str(e)}")
+    # 创建动态工具并设置指导原则
+    dynamic_tools = {}
+    successful_tools = 0
     
-    logger.info(f"动态工具创建完成，共创建 {len(dynamic_tools)} 个工具")
-
-async def setup_agent_guidelines(agent) -> None:
-    """为智能体设置工具指导原则"""
-    logger.info("开始为智能体添加工具指导原则...")
-    
-    for tool_name, tool_func in dynamic_tools.items():
-        # 根据工具配置生成条件和动作描述
-        tool_config = next(
-            (config for config in tools_list 
-             if config["name"] == tool_name), 
-            None
-        )
-        
-        if tool_config:
-            action = f"Use the {tool_name} tool: {tool_config['description']}"
+    for tool_config in tools_config:
+        tool_name = tool_config.get("name")
+        if not tool_name:
+            logger.warning(f"跳过无效的工具配置: {tool_config}")
+            continue
             
-            try:
-                await agent.create_guideline(
-                    # todo 根据工具类型生成更精准的条件描述
-                    condition=tool_config['description'],
-                    action=action,
-                    tools=[tool_func],
-                )
-                logger.debug(f"成功为工具 {tool_name} 添加指导原则")
-            except Exception as e:
-                logger.error(f"为工具 {tool_name} 添加指导原则失败: {str(e)}")
+        try:
+            # 创建动态工具
+            tool_func = create_dynamic_tool(tool_config)
+            dynamic_tools[tool_name] = tool_func
+            
+            # 设置指导原则
+            # action = f"Use the {tool_name} tool: {tool_config['description']}"
+            # await agent.create_guideline(
+            #     condition=tool_config['description'],
+            #     action=action,
+            #     tools=[tool_func],
+            # )
+            
+            successful_tools += 1
+            logger.debug(f"✅ 成功设置工具: {tool_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ 设置工具 {tool_name} 失败: {str(e)}")
     
-    logger.info("工具指导原则添加完成")
+    logger.info(f"工具设置完成，成功设置 {successful_tools}/{len(tools_config)} 个工具")
+
 
 async def main() -> None:
     # 使用mongodb存储会话和智能体
     mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
+
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
         log_level=LogLevel.DEBUG,
         session_store=mongodb_url,
+        initialize_container=initialize_agent_factory
     ) as server:
-        
-        async def create_agent_for_customer(customer_id: p.CustomerId) -> p.Agent:
-            """动态创建智能体的工厂函数
-            
-            这个函数会在创建会话时被调用，可以根据客户信息动态创建个性化的智能体。
-            注意：这个函数通过闭包捕获了 server 实例，可以访问所有需要的服务。
-            """
-            logger.info(f"为客户 {customer_id} 创建个性化智能体...")
-            
-            # 通过闭包访问 server 的 agent_store
-            agent_store = server._container[AgentStore]
-            
-            # 可以根据客户ID查询客户信息，决定智能体配置
-            # 例如：从数据库加载客户偏好、行业信息等
-            customer_config = {
-                "name": f"Agent for {customer_id}",
-                "description": f"Personalized agent for customer {customer_id}",
-                "max_engine_iterations": 3,
-            }
-            
-            # 也可以根据客户类型选择不同的智能体模板
-            # if is_vip_customer(customer_id):
-            #     customer_config["description"] = "VIP customer service agent with priority support"
-            
-            # 创建智能体
-            agent = await agent_store.create_agent(
-                name=customer_config["name"],
-                description=customer_config["description"],
-                max_engine_iterations=customer_config.get("max_engine_iterations", 3),
-            )
-            
-            # 为智能体设置工具指导原则
-            await setup_agent_guidelines(agent)
-              
-              # 可以根据客户特征添加特定的指导原则
-              # if customer_needs_technical_support(customer_id):
-              #     await agent.create_guideline(
-              #         condition="User asks technical questions",
-              #         action="Provide detailed technical explanations"
-              #     )
-              
-            logger.info(f"成功创建智能体 {agent.id} for customer {customer_id}")
-            return agent
-        
-        # 注入 agent_factory 到容器中
-        server._container[p.AgentFactory] = create_agent_for_customer
-        # 获取Parlant SDK的日志器
+
+
         global logger
         logger = server._container[p.Logger]
         

@@ -69,6 +69,7 @@ from parlant.core.services.indexing.behavioral_change_evaluation import (
 from parlant.core.loggers import LogLevel, Logger
 from parlant.core.application import Application
 from parlant.core.tags import TagStore
+from parlant.core.agent_factory import AgentFactory
 
 ASGIApplication: TypeAlias = Callable[
     [
@@ -121,6 +122,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
     service_registry = container[ServiceRegistry]
     nlp_service = container[NLPService]
     application = container[Application]
+    agent_factory = container[AgentFactory]
 
     api_app = FastAPI()
 
@@ -277,9 +279,6 @@ async def create_api_app(container: Container) -> ASGIApplication:
         router=agent_router,
     )
 
-    # Get agent factory from container if available
-    from parlant.sdk import AgentFactory
-    agent_factory = container[AgentFactory] if AgentFactory in container.defined_types else None
     
     api_app.include_router(
         prefix="/sessions",

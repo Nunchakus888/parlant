@@ -353,7 +353,6 @@ class OpenRouterEmbedder(Embedder):
             api_key=self._embedding_api_key,
             base_url=self._embedding_base_url,
         )
-        self._logger.info(f"Initialized OpenRouterEmbedder with model: {self._embedding_model}")
 
     @property
     @override
