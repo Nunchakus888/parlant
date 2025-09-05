@@ -292,6 +292,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
             session_store=session_store,
             session_listener=session_listener,
             nlp_service=nlp_service,
+            agent_factory=agent_factory,
         ),
     )
 
