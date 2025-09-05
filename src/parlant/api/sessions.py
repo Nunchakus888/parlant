@@ -1382,17 +1382,25 @@ def create_router(
     session_store: SessionStore,
     session_listener: SessionListener,
     nlp_service: NLPService,
-    agent_factory: AgentFactory,
+    agent_factory: AgentFactory | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
     # Agent factory creates or retrieves agents for customers
     async def _agent_creator(customer_id: CustomerId) -> Agent:
-        logger.info(f"agent_factory: {agent_factory}")
-
-        agent = await agent_factory.create_agent_for_customer(customer_id)
-        logger.info(f"🤖 Created new agent via factory: {agent.id}")
-        return agent
+        if agent_factory:
+            logger.info(f"Using custom agent factory for customer: {customer_id}")
+            agent = await agent_factory.create_agent_for_customer(customer_id)
+            logger.info(f"🤖 Created new agent via factory: {agent.id}")
+            return agent
+        else:
+            logger.info(f"No agent factory provided, using default agent for customer: {customer_id}")
+            agent = await agent_store.create_agent(
+                name=f"Default Agent for {customer_id}",
+                description=f"Default agent for customer {customer_id}",
+            )
+            logger.info(f"🤖 Created default agent: {agent.id}")
+            return agent
 
 
     @router.post(

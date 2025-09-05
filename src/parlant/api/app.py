@@ -84,7 +84,10 @@ async def create_api_app(container: Container) -> ASGIApplication:
     correlator = container[ContextualCorrelator]
     authorization_policy = container[AuthorizationPolicy]
     application = container[Application]
-    agent_factory = container[AgentFactory]
+    if AgentFactory in container.defined_types:
+        agent_factory = container[AgentFactory]
+    else:
+        agent_factory = None
 
     api_app = FastAPI()
 
