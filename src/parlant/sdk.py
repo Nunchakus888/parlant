@@ -77,6 +77,7 @@ from parlant.core import async_utils
 from parlant.core.agents import (
     AgentDocumentStore,
     AgentId,
+    Agent,
     AgentStore,
     CompositionMode as _CompositionMode,
 )
@@ -217,7 +218,7 @@ INTEGRATED_TOOL_SERVICE_NAME = "built-in"
 T = TypeVar("T")
 
 # Type alias for the agent factory function
-AgentFactory: TypeAlias = Callable[[CustomerId], Awaitable[AgentId]]
+AgentFactory: TypeAlias = Callable[[CustomerId], Awaitable[Agent]]
 
 JourneyStateId: TypeAlias = JourneyNodeId
 JourneyTransitionId: TypeAlias = JourneyEdgeId
@@ -2061,7 +2062,7 @@ class Server:
         configure_hooks: Callable[[EngineHooks], Awaitable[EngineHooks]] | None = None,
         configure_container: Callable[[Container], Awaitable[Container]] | None = None,
         initialize_container: Callable[[Container], Awaitable[None]] | None = None,
-        # agent_factory: Callable[[CustomerId], Awaitable[AgentId]] | None = None,
+        agent_factory: Callable[[CustomerId], Awaitable[Agent]] | None = None,
     ) -> None:
         self.port = port
         self.tool_service_port = tool_service_port
@@ -2076,7 +2077,7 @@ class Server:
         self._configure_hooks = configure_hooks
         self._configure_container = configure_container
         self._initialize = initialize_container
-        # self._agent_factory = agent_factory
+        self._agent_factory = agent_factory
         self._retrievers: dict[
             AgentId,
             dict[str, Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]]],
@@ -2949,6 +2950,10 @@ class Server:
 
             if self._configure_container:
                 latest_container = await self._configure_container(latest_container.clone())
+
+            # Inject agent_factory into container if provided
+            if self._agent_factory:
+                latest_container[AgentFactory] = self._agent_factory
 
             if self._configure_hooks:
                 hooks = await self._configure_hooks(c[EngineHooks])
