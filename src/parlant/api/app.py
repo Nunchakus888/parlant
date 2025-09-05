@@ -122,7 +122,10 @@ async def create_api_app(container: Container) -> ASGIApplication:
     service_registry = container[ServiceRegistry]
     nlp_service = container[NLPService]
     application = container[Application]
-    agent_factory = container[AgentFactory]
+    if AgentFactory in container.defined_types:
+        agent_factory = container[AgentFactory]
+    else:
+        agent_factory = None
 
     api_app = FastAPI()
 
