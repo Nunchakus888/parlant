@@ -24,7 +24,7 @@ from parlant.api.common import GuidelineIdField, ExampleJson, JSONSerializableDT
 from parlant.api.glossary import TermSynonymsField, TermIdPath, TermNameField, TermDescriptionField
 from parlant.app_modules.sessions import Moderation
 from parlant.core.agents import AgentId
-from parlant.core.agents import AgentId, AgentStore, CompositionMode
+from parlant.core.agents import AgentId, AgentStore, CompositionMode, Agent
 from parlant.core.application import Application
 from parlant.core.async_utils import Timeout
 from parlant.core.common import DefaultBaseModel
@@ -1195,6 +1195,7 @@ async def _ensure_session_and_customer(
     session_store: SessionStore,
     agent_store: AgentStore,
     logger: Logger,
+    agent_creator: Callable[[CustomerId], Awaitable[Agent]],
 ) -> tuple[Any, Any, AgentId]:
     """
     Unified session and customer management logic.
@@ -1215,9 +1216,6 @@ async def _ensure_session_and_customer(
     Returns:
         Tuple of (session, customer, agent_id) ready for chat interaction
     """
-    from parlant.core.agents import AgentId
-    from parlant.core.customers import Customer
-    from parlant.core.sessions import Session
     
     # Step 1: Ensure customer exists
     try:
@@ -1230,41 +1228,46 @@ async def _ensure_session_and_customer(
             name=customer_id,
         )
         logger.info(f"👤 Created new customer: {customer.id}")
-    
-    # Step 2: Create agent for customer (always create new agent for each customer)
-    customer_config = {
-        "name": f"Agent for {customer_id}",
-        "description": f"Personalized agent for customer {customer_id}",
-        "max_engine_iterations": 3,
-    }
 
-    agent = await agent_store.create_agent(
-        name=customer_config["name"],
-        description=customer_config["description"],
-        max_engine_iterations=customer_config.get("max_engine_iterations", 3),
-    )
-    agent_id = agent.id
-    logger.info(f"🤖 Created/retrieved agent: {agent_id}")
     
-    # Step 3: Ensure session exists
+    # Step 2: Ensure session exists
     try:
         session = await session_store.read_session(session_id)
         logger.info(f"🔍 Session found: {session.id}")
         
-        # Update existing session with current customer and agent info
-        session = await session_store.update_session(
-            session_id=session_id,
-            params={
-                "agent_id": agent_id,
-                "customer_id": customer_id,
-                "title": session_title,
-                "allow_greeting": False,
-            },
-        )
-        logger.info(f"🔍 Updated existing session: {session.id}")
+        # ensure agent exists
+        try:
+            await agent_store.read_agent(session.agent_id)
+            agent_id = session.agent_id    
+            logger.info(f"🤖 Agent found: {agent_id}")
+        except Exception:
+            logger.info(f"🤖 Agent {session.agent_id} not found, creating new agent...")
+            # Create new agent for existing session
+            agent = await agent_creator(customer_id)
+            agent_id = agent.id
+            logger.info(f"🤖 Created new agent: {agent_id}")
+            
+            # Update session with new agent_id
+            session = await session_store.update_session(
+                session_id=session_id,
+                params={
+                    "agent_id": agent_id,
+                    "customer_id": customer_id,
+                    "title": session_title,
+                    "allow_greeting": False,
+                },
+            )
+            logger.info(f"🔍 Updated session with new agent: {session.id}")
         
     except Exception:
         logger.info(f"🔍 Session not found: {session_id}, creating...")
+
+        # Step 3: Create agent for customer using the agent factory
+        agent = await agent_creator(customer_id)
+        agent_id = agent.id
+        logger.info(f"🤖 Created new agent: {agent_id}")
+
+        # Step 4: Create session
         session = await application.create_customer_session(
             session_id=session_id,
             customer_id=customer_id,
@@ -1272,7 +1275,7 @@ async def _ensure_session_and_customer(
             title=session_title,
             allow_greeting=False,
         )
-        logger.info(f"🔍 Created new session: {session.id}")
+        logger.info(f"🔍 Created new session: {session.id} with agent: {agent_id}")
     
     return session, customer, agent_id
 
@@ -1378,27 +1381,30 @@ def create_router(
     session_store: SessionStore,
     session_listener: SessionListener,
     nlp_service: NLPService,
-    # agent_factory: Optional[Callable[[CustomerId], Awaitable[AgentId]]] = None,
+    agent_factory: Optional[Callable[[CustomerId], Awaitable[Agent]]] = None,
 ) -> APIRouter:
     router = APIRouter()
 
     # Agent factory creates or retrieves agents for customers
-    async def _agent_creator(customer_id: CustomerId) -> any:
-        customer_config = {
-            "name": f"Agent for {customer_id}",
-            "description": f"Personalized agent for customer {customer_id}",
-            "max_engine_iterations": 3,
-        }
-
-        agent = await agent_store.create_agent(
-            name=customer_config["name"],
-            description=customer_config["description"],
-            max_engine_iterations=customer_config.get("max_engine_iterations", 3),
-        )
-
-        logger.info(f"👤 Created dynamic agent: {agent}")
-
-        return agent
+    async def _agent_creator(customer_id: CustomerId) -> Agent:
+        if agent_factory:
+            agent = await agent_factory(customer_id)
+            logger.info(f"🤖 Created new agent via factory: {agent.id}")
+            return agent
+        else:
+            # Fallback to default agent creation
+            customer_config = {
+                "name": f"Agent for {customer_id}",
+                "description": f"Personalized agent for customer {customer_id}",
+                "max_engine_iterations": 3,
+            }
+            agent = await agent_store.create_agent(
+                name=customer_config["name"],
+                description=customer_config["description"],
+                max_engine_iterations=customer_config.get("max_engine_iterations", 3),
+            )
+            logger.info(f"🤖 Created default agent: {agent.id}")
+            return agent
 
     @router.post(
         "",
@@ -2050,6 +2056,7 @@ def create_router(
                 session_store=session_store,
                 agent_store=agent_store,
                 logger=logger,
+                agent_creator=_agent_creator,
             )
             
             logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
