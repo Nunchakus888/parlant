@@ -25,6 +25,7 @@ from parlant.api.glossary import TermSynonymsField, TermIdPath, TermNameField, T
 from parlant.app_modules.sessions import Moderation
 from parlant.core.agents import AgentId
 from parlant.core.agents import AgentId, AgentStore, CompositionMode, Agent
+from parlant.core.agent_factory import AgentFactory
 from parlant.core.application import Application
 from parlant.core.async_utils import Timeout
 from parlant.core.common import DefaultBaseModel
@@ -1381,30 +1382,18 @@ def create_router(
     session_store: SessionStore,
     session_listener: SessionListener,
     nlp_service: NLPService,
-    agent_factory: Optional[Callable[[CustomerId], Awaitable[Agent]]] = None,
+    agent_factory: AgentFactory,
 ) -> APIRouter:
     router = APIRouter()
 
     # Agent factory creates or retrieves agents for customers
     async def _agent_creator(customer_id: CustomerId) -> Agent:
-        if agent_factory:
-            agent = await agent_factory(customer_id)
-            logger.info(f"🤖 Created new agent via factory: {agent.id}")
-            return agent
-        else:
-            # Fallback to default agent creation
-            customer_config = {
-                "name": f"Agent for {customer_id}",
-                "description": f"Personalized agent for customer {customer_id}",
-                "max_engine_iterations": 3,
-            }
-            agent = await agent_store.create_agent(
-                name=customer_config["name"],
-                description=customer_config["description"],
-                max_engine_iterations=customer_config.get("max_engine_iterations", 3),
-            )
-            logger.info(f"🤖 Created default agent: {agent.id}")
-            return agent
+        logger.info(f"agent_factory: {agent_factory}")
+
+        agent = await agent_factory.create_agent_for_customer(customer_id)
+        logger.info(f"🤖 Created new agent via factory: {agent.id}")
+        return agent
+
 
     @router.post(
         "",

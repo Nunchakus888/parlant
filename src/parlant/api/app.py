@@ -49,6 +49,8 @@ from parlant.core.contextual_correlator import ContextualCorrelator
 from parlant.core.common import ItemNotFoundError, generate_id
 from parlant.core.loggers import LogLevel, Logger
 from parlant.core.application import Application
+from parlant.core.tags import TagStore
+from parlant.core.agent_factory import AgentFactory
 
 ASGIApplication: TypeAlias = Callable[
     [
@@ -82,6 +84,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
     correlator = container[ContextualCorrelator]
     authorization_policy = container[AuthorizationPolicy]
     application = container[Application]
+    agent_factory = container[AgentFactory]
 
     api_app = FastAPI()
 
@@ -215,9 +218,6 @@ async def create_api_app(container: Container) -> ASGIApplication:
         router=agent_router,
     )
 
-    # Get agent factory from container if available
-    from parlant.sdk import AgentFactory
-    agent_factory = container[AgentFactory] if AgentFactory in container.defined_types else None
     
     api_app.include_router(
         prefix="/sessions",
