@@ -1,0 +1,86 @@
+{
+  "basic_settings": {
+    "name": "Product Pricing and Availability",
+    "description": "Provide current price list and any active discounts",
+    "background": "The user is a customer of the product",
+    "language": "English",
+    "tone": "Friendly and professional"
+  },
+  "action_books": [
+    {
+      "condition": "user asks about product pricing",
+      "action": "provide current price list and any active discounts",
+      "tools": [
+        {
+          "name": "get_price_list",
+          "description": "Get price list for a specific product",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "product_id": {
+                "type": "integer",
+                "description": "The ID of the product"
+              },
+              "user_id": {
+                "type": "integer",
+                "description": "The ID of the user"
+              }
+            },
+            "required": ["product_id", "user_id"]
+          },
+          "endpoint": {
+            "url": "https://jsonplaceholder.typicode.com/posts/{product_id}/comments?id={user_id}",
+            "method": "GET",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "product_id": "xxx",
+              "user_id": "xxx"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "condition": "user asks about product availability",
+      "action": "provide current availability status",
+      "tools": [
+        "get_availability_status"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_post_comments",
+      "description": "Get comments for a specific post by a specific user (JSONPlaceholder - multiple path params)",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "postId": {
+            "type": "integer",
+            "description": "The ID of the post",
+            "examples": [1, 2, 3, 4, 5]
+          },
+          "id": {
+            "type": "integer",
+            "description": "The ID of the comment",
+            "examples": [1, 2, 3, 4, 5]
+          }
+        },
+        "required": ["postId", "id"]
+      },
+      "endpoint": {
+        "url": "https://jsonplaceholder.typicode.com/posts/{postId}/comments?id={id}",
+        "method": "GET",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "postId": "xxx",
+          "id": "xxx"
+        }
+      }
+    }
+  ]
+}
