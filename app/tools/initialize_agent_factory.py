@@ -1,6 +1,7 @@
 from parlant.core.agent_factory import AgentFactory
 import parlant.sdk as p
 from parlant.core.agents import AgentStore
+from app.tools import ToolManager
 
 class CustomAgentFactory(AgentFactory):
     async def create_agent_for_customer(self, customer_id: p.CustomerId) -> p.Agent:
@@ -8,8 +9,8 @@ class CustomAgentFactory(AgentFactory):
         self._logger.error(f"重写创建方法，添加个性化逻辑，为客户 {customer_id} 创建个性化智能体...")
         
         customer_config = {
-            "name": f"Agent for {customer_id}",
-            "description": f"Personalized agent for customer {customer_id}",
+            "name": f"Agent for personalized",
+            "description": f"agent for personalized",
             "max_engine_iterations": 3,
         }
 
@@ -19,7 +20,20 @@ class CustomAgentFactory(AgentFactory):
             max_engine_iterations=customer_config.get("max_engine_iterations", 3),
         )
         
-        # await setup_agent_with_tools(agent)
+        # 使用精简的工具管理器设置工具
+        tool_manager = ToolManager(
+            config_path="tools_config.json",
+            logger=self._logger,
+            timeout=30
+        )
+        await tool_manager.setup_tools(agent)
+
+        # tool_manager._tools
+        # agent.guideline_store.create_guideline(
+        #     condition="The user is a customer of the product",
+        #     action="Provide current price list and any active discounts",
+        #     tools=tool_manager._tools.keys()
+        # )
         
         self._logger.error(f"重写创建方法，添加个性化逻辑，成功创建智能体 {agent.id} for customer {customer_id}")
         return agent

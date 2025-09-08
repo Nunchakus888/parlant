@@ -271,6 +271,7 @@ class Session:
     title: Optional[str]
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
+    updated_utc: Optional[datetime] = datetime.now(timezone.utc)
 
 
 class SessionUpdateParams(TypedDict, total=False):
@@ -278,6 +279,7 @@ class SessionUpdateParams(TypedDict, total=False):
     agent_id: AgentId
     mode: SessionMode
     title: Optional[str]
+    updated_utc: Optional[datetime] = datetime.now(timezone.utc)
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
 
@@ -410,6 +412,7 @@ class _SessionDocument(TypedDict, total=False):
     title: Optional[str]
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[_AgentStateDocument]
+    updated_utc: str
 
 
 class _EventDocument(TypedDict, total=False):
@@ -869,6 +872,11 @@ class SessionDocumentStore(SessionStore):
             doc_params["mode"] = params["mode"]
         if "title" in params:
             doc_params["title"] = params["title"]
+        if "updated_utc" in params:
+            doc_params["updated_utc"] = params["updated_utc"].isoformat()
+        elif "updated_utc" not in params:
+            # 如果没有提供updated_utc，使用当前时间
+            doc_params["updated_utc"] = datetime.now(timezone.utc).isoformat()
         if "consumption_offsets" in params:
             doc_params["consumption_offsets"] = params["consumption_offsets"]
         if "agent_states" in params:
@@ -904,6 +912,7 @@ class SessionDocumentStore(SessionStore):
                 )
                 for s in session.agent_states
             ],
+            updated_utc=session.updated_utc.isoformat() if session.updated_utc else datetime.now(timezone.utc).isoformat(),
         )
 
     def _deserialize_session(
@@ -926,6 +935,7 @@ class SessionDocumentStore(SessionStore):
                 )
                 for s in session_document["agent_states"]
             ],
+            updated_utc=datetime.fromisoformat(session_document["updated_utc"]) if session_document.get("updated_utc") else datetime.now(timezone.utc),
         )
 
     def _serialize_event(

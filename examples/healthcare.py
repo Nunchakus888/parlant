@@ -3,6 +3,10 @@
 import parlant.sdk as p
 import asyncio
 from datetime import datetime
+import os
+
+from dotenv import load_dotenv
+load_dotenv()
 
 
 @p.tool
@@ -163,7 +167,12 @@ async def create_lab_results_journey(server: p.Server, agent: p.Agent) -> p.Jour
 
 
 async def main() -> None:
-    async with p.Server() as server:
+    mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
+    async with p.Server(
+        nlp_service=p.NLPServices.openrouter,
+        log_level=p.LogLevel.DEBUG,
+        session_store=mongodb_url,
+    ) as server:
         agent = await server.create_agent(
             name="Healthcare Agent",
             description="Is empathetic and calming to the patient.",
