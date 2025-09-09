@@ -23,8 +23,9 @@ class ToolConfig:
 class ToolManager:
     """工具管理器"""
     
-    def __init__(self, config_path: str = "tools_config.json", logger=None, timeout: int = 30):
+    def __init__(self, config_path: str = None, raw_configs: List[Dict[str, Any]] = None, logger=None, timeout: int = 30):
         self.config_path = config_path
+        self.raw_configs = raw_configs
         self.logger = logger
         self.timeout = timeout
         self._tools: Dict[str, Any] = {}
@@ -64,9 +65,17 @@ class ToolManager:
     async def _load_configs(self) -> List[ToolConfig]:
         """加载工具配置"""
         try:
-            self._log_info(f"加载工具配置文件: {self.config_path}")
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                raw_configs = json.load(f)
+            # 优先使用直接传入的配置
+            if self.raw_configs is not None:
+                self._log_info(f"使用直接传入的工具配置，共 {len(self.raw_configs)} 个工具")
+                raw_configs = self.raw_configs
+            elif self.config_path is not None:
+                self._log_info(f"从配置文件加载工具配置: {self.config_path}")
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    raw_configs = json.load(f)
+            else:
+                self._log_warning("没有提供工具配置（config_path 或 raw_configs）")
+                return []
             
             configs = []
             for raw_config in raw_configs:
@@ -155,7 +164,13 @@ class ToolManager:
                 result = await self._call_api(config, params)
                 
                 self._log_info(f"工具 {config.name} 执行成功")
-                return p.ToolResult(data=result)
+                
+                # 处理静态响应，支持 control 参数
+                if isinstance(result, dict) and "data" in result:
+                    control = result.get("control", {})
+                    return p.ToolResult(data=result["data"], control=control)
+                else:
+                    return p.ToolResult(data=result)
                 
             except Exception as e:
                 self._log_error(f"工具 {config.name} 执行失败: {str(e)}")
@@ -174,6 +189,13 @@ class ToolManager:
         params = {k: v for k, v in params.items() if v is not None}
         
         endpoint = config.endpoint
+        
+        # 检查是否为静态响应
+        if endpoint.get("url", "").startswith("static://"):
+            self._log_info(f"🔧 静态工具调用: {config.name}")
+            static_response = endpoint.get("response", {})
+            self._log_debug(f"📨 静态响应: {static_response}")
+            return static_response
         
         # 替换占位符
         url = self._replace_placeholders(endpoint["url"], params)

@@ -1,8 +1,8 @@
 {
   "basic_settings": {
-    "name": "Product Pricing and Availability",
-    "description": "Provide current price list and any active discounts",
-    "background": "The user is a customer of the product",
+    "name": "YCloud Customer Service",
+    "description": "",
+    "background": "YCloud is a leading WhatsApp business service provider, dedicated to helping businesses grow their businesses by leveraging WhatsApp, the world's most popular social app!",
     "language": "English",
     "tone": "Friendly and professional"
   },
@@ -43,43 +43,86 @@
       ]
     },
     {
-      "condition": "user asks about product availability",
-      "action": "provide current availability status",
+      "condition": "user asks about weather",
+      "action": "provide current weather status",
       "tools": [
-        "get_availability_status"
+        "get_weather"
+      ]
+    },
+    {
+      "condition": "如果客户要求对超过标准退款政策期限的订单进行退款，或者如果他们希望对于需要进一步审核的特殊情况进行退款",
+      "action": "Only output: [Translate \"Got it! Let me connect you with one of our team members who'll be happy to help you further.\" to the conversation language], Ensure correct format without additional text."
+    },
+    {
+      "condition": "如果客户提供了个人、企业相关的信息",
+      "action": "将其记录到客户信息库中，如果信息不完整，则请求客户提供更多信息",
+      "tools": [
+        "record_customer_info"
       ]
     }
   ],
   "tools": [
     {
-      "name": "get_post_comments",
-      "description": "Get comments for a specific post by a specific user (JSONPlaceholder - multiple path params)",
+      "name": "get_exchange_rate",
+      "description": "Get real-time currency exchange rates (using exchangerate-api.com free tier)",
       "parameters": {
         "type": "object",
         "properties": {
-          "postId": {
-            "type": "integer",
-            "description": "The ID of the post",
-            "examples": [1, 2, 3, 4, 5]
+          "base": {
+            "type": "string",
+            "description": "Base currency code (3-letter ISO code)",
+            "examples": ["USD", "EUR", "GBP", "CNY", "JPY"],
+            "default": "USD"
           },
-          "id": {
-            "type": "integer",
-            "description": "The ID of the comment",
-            "examples": [1, 2, 3, 4, 5]
+          "target": {
+            "type": "string",
+            "description": "Target currency code (3-letter ISO code)",
+            "examples": ["USD", "EUR", "GBP", "CNY", "JPY"],
+            "default": "CNY"
+          },
+          "amount": {
+            "type": "number",
+            "description": "The amount of money to convert",
+            "examples": [100, 200, 300],
+            "default": 1
           }
         },
-        "required": ["postId", "id"]
+        "required": ["base", "target", "amount"]
       },
       "endpoint": {
-        "url": "https://jsonplaceholder.typicode.com/posts/{postId}/comments?id={id}",
+        "url": "https://v6.exchangerate-api.com/v6/9dd0f717def0b44c86ecdd95/pair/{base}/{target}/{amount}",
         "method": "GET",
         "headers": {
           "Content-Type": "application/json"
-        },
-        "body": {
-          "postId": "xxx",
-          "id": "xxx"
         }
+      }
+    },
+    {
+      "name": "get_weather",
+      "description": "Get current weather information for a specific location",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "description": "The city name, state/country code (e.g., 'London,UK' or 'New York,NY,US')"
+          },
+          "units": {
+            "type": "string",
+            "description": "The unit of the temperature (e.g., 'metric' for Celsius or 'imperial' for Fahrenheit)",
+            "default": "metric"
+          },
+          "lang": {
+            "type": "string",
+            "description": "The language of the weather information",
+            "default": "en"
+          }
+        },
+        "required": ["q"]
+      },
+      "endpoint": {
+        "url": "https://api.openweathermap.org/data/2.5/weather?appid=377637a8a6633d518b0eae6391887dbc",
+        "method": "GET"
       }
     }
   ]
