@@ -24,6 +24,10 @@ async def main() -> None:
     # 使用mongodb存储会话和智能体
     mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
 
+    print("🚀 开始启动 Parlant 服务器...")
+    print(f"📁 配置文件路径: app/lead-acquistion.json")
+    print(f"🔧 初始化函数: {initialize_agent_factory}")
+
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
         log_level=LogLevel.DEBUG,
