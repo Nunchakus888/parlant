@@ -290,7 +290,7 @@ class SessionStore(ABC):
         self,
         customer_id: CustomerId,
         agent_id: AgentId,
-        session_id: Optional[str] = None,
+        session_id: Optional[SessionId] = None,
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
     ) -> Session: ...
@@ -1083,7 +1083,7 @@ class SessionDocumentStore(SessionStore):
         self,
         customer_id: CustomerId,
         agent_id: AgentId,
-        session_id: Optional[str] = None,
+        session_id: Optional[SessionId] = None,
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
         mode: Optional[SessionMode] = None,
