@@ -94,6 +94,7 @@ class Application:
         customer_id: CustomerId,
         agent_id: AgentId,
         title: Optional[str] = None,
+        session_id: Optional[SessionId] = None,
         allow_greeting: bool = False,
     ) -> Session:
         session = await self._session_store.create_session(
@@ -101,6 +102,7 @@ class Application:
             customer_id=customer_id,
             agent_id=agent_id,
             title=title,
+            session_id=session_id,
         )
 
         if allow_greeting:

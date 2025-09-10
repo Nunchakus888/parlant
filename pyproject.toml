@@ -24,7 +24,7 @@ coloredlogs = "^15.0.1"
 contextvars = "^2.4"
 croniter = "^5.0.1"
 fastapi = "0.115.12"
-httpx = "^0.28.1"
+httpx = { version = "^0.28.1", extras = ["socks"] }
 jsonfinder = "^0.4.2"
 jsonschema = "^4.23.0"
 lagom = "^2.6.0"
