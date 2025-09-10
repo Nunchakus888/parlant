@@ -4,7 +4,8 @@
     "description": "Initiate conversations with customers and qualify their interest.  Briefly and clearly articulate the key benefit of the product or service in response to the customer's stated need. Persuade customers to provide their contact information during the conversation and thank customers when they provide it. Never hallucinate information.",
     "background": "YCloud is a leading WhatsApp business service provider, dedicated to helping businesses grow their businesses by leveraging WhatsApp, the world's most popular social app!",
     "language": "English",
-    "tone": "Friendly and professional"
+    "tone": "Friendly and professional",
+    "chatbot_id": "67adb3abaa26c063de0f4bd9"
   },
   "action_books": [
     {
@@ -12,10 +13,72 @@
       "action": "1. Politely and briefly exchange greetings with the customer and ask how you can assist."
     },
     {
-      "condition": "Customers need to schedule a demo or inquire about detailed product or service information",
-      "action": "1. If the customer information has not been fully collected, persuade the customer to provide this information. Inform the customer that the Customer Manager will proactively reach out after information is provided. 2. If all needed information is collected, thank users for providing their information and use the hand_off tool to transfer to human agents",
+      "condition": "If the customer provides their contact information",
+      "action": "Persuade the customer to provide more information, then save the customer's information using the save_customer_information tool",
       "tools": [
-        "hand_off"
+        {
+          "name": "save_customer_information",
+          "description": "Save the customer's information",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the customer"
+              },
+              "email": {
+                "type": "string",
+                "description": "The email of the customer"
+              },
+              "phone": {
+                "type": "string",
+                "description": "The phone number of the customer"
+              },
+              "company": {
+                "type": "string",
+                "description": "The company of the customer"
+              }
+            },
+            "required": ["name", "email", "phone", "company"]
+          },
+          "endpoint": {
+            "url": "https://jsonplaceholder.typicode.com/users",
+            "method": "POST",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "name": "{name}",
+              "email": "{email}",
+              "phone": "{phone}",
+              "company": "{company}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "condition": "Customers need to schedule a demo or inquire about detailed product or service information",
+      "action": "1. If the customer information has not been fully collected, persuade the customer to provide this information. Inform the customer that the Customer Manager will proactively reach out after information is provided. 2. If all needed information is collected, thank users for providing their information and use the hand_off_assign_to tool",
+      "tools": [
+        {
+          "name": "hand_off_assign_to",
+          "description": "Transfer to a human agent and assign to a specific customer",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          },
+          "endpoint": {
+            "url": "https://jsonplaceholder.typicode.com/users/a1b2c3d4e5f6g7h8i9j0k",
+            "method": "GET",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body":{
+              "customer_id": "a1b2c3d4e5f6g7h8i9j0k"
+            }
+          }
+        }
       ]
     },
     {
@@ -31,10 +94,6 @@
       "tools": [
         "get_weather"
       ]
-    },
-    {
-      "condition": "For any other customer messages that don't match specific business scenarios",
-      "action": "1. Respond politely and warmly to simple greetings. 2. For other questions, explain that you specialize in WhatsApp business solutions and ask how you can help with their business needs."
     }
   ],
   "tools": [

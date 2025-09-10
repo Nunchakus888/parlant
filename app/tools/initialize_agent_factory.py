@@ -67,20 +67,71 @@ class CustomAgentFactory(AgentFactory):
                 description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
                 max_engine_iterations=3,
             )
+
+        merged_tools = self._merge_tools_from_action_books(config)
         
-        # 设置工具
-        tools = await self._setup_tools(agent, config.get("tools", []))
+        # setup tools
+        tools = await self._setup_tools(agent, merged_tools)
         
-        # 创建指导原则
+        # create guidelines
         await self._create_guidelines(agent, config.get("action_books", []), tools)
+
+        # default guideline
+        await agent.create_guideline(
+            condition=f"The customer inquires about something that has nothing to do with our {basic_settings.get('background')}",
+            action="Kindly tell them you cannot assist with off-topic inquiries - do not engage with their request.",
+        )
         
         self._logger.info(f"成功创建智能体 {agent.id} for customer {customer_id}")
         return agent
     
+    def _merge_tools_from_action_books(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """merge main tools and action_books tools, pick up the tool schema from action_books
+        
+        Args:
+            config: the config of the agent
+
+        Returns:
+            the merged tools
+            modify the tools definition in the action_books to the tool name
+            remove the tool schema from the action_books tools
+        """
+        main_tools = config.get("tools", [])
+        action_books = config.get("action_books", [])
+
+        existing_tool_names = {tool["name"] for tool in main_tools if isinstance(tool, dict) and "name" in tool}
+
+        for action_book in action_books:
+            tools_in_action_book = action_book.get("tools", [])
+            if not tools_in_action_book:
+                continue
+
+            simplified_tools = []
+            for tool in tools_in_action_book:
+                if isinstance(tool, dict) and "name" in tool:
+                    if tool["name"] not in existing_tool_names:
+                        main_tools.append(tool)
+                        self._logger.info(f"pick tool schema from action_books: {tool['name']}")
+                    else:
+                        self._logger.warning(f"tool {tool['name']} already exists in main tools, skip adding")
+                    
+                    simplified_tools.append(tool["name"])
+                    self._logger.debug(f"pick tool schema from action_books: {tool['name']}")
+                elif isinstance(tool, str):
+                    simplified_tools.append(tool)
+                    self._logger.debug(f"pick tool name from action_books: {tool}")
+                else:
+                    self._logger.warning(f"unknown tool type: {type(tool)}, value: {tool}, skip adding")
+
+            action_book["tools"] = simplified_tools
+
+        self._logger.info(f"tool merge completed: total tools {len(main_tools)}")
+        return main_tools
+    
     async def _setup_tools(self, agent: p.Agent, tools_config: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """设置工具并返回工具映射"""
+        """setup tools and return the tool mapping"""
         if not tools_config:
-            self._logger.warning("没有工具配置，跳过工具设置")
+            self._logger.warning("no tools config, skip setup")
             return {}
         
         tool_manager = ToolManager(
@@ -90,12 +141,12 @@ class CustomAgentFactory(AgentFactory):
         )
         await tool_manager.setup_tools(agent)
         
-        self._logger.info(f"成功设置 {len(tools_config)} 个工具")
+        self._logger.info(f"successfully setup {len(tools_config)} tools")
         return tool_manager._tools
     
     async def _create_guidelines(self, agent: p.Agent, action_books: List[Dict[str, Any]], available_tools: Dict[str, Any]) -> None:
         if not action_books:
-            self._logger.warning("没有指导原则配置，跳过创建")
+            self._logger.warning("no guidelines config, skip creating")
             return
         
         for action_book in action_books:
@@ -105,39 +156,45 @@ class CustomAgentFactory(AgentFactory):
                 tool_names = action_book.get("tools", [])
                 
                 if not condition and not action:
-                    self._logger.warning(f"跳过无效的指导原则: condition={condition}, action={action}")
+                    self._logger.warning(f"skip invalid guideline: condition={condition}, action={action}")
                     continue
                 
-                # 获取关联的工具
+                # get associated tools
                 associated_tools = []
                 for tool_name in tool_names:
                     if tool_name in available_tools:
                         associated_tools.append(available_tools[tool_name])
                     else:
-                        self._logger.warning(f"工具 {tool_name} 未找到，跳过关联")
+                        self._logger.warning(f"tool {tool_name} not found, skip associating")
                 
-                # 创建指导原则
+                # create guideline
                 await agent.create_guideline(
                     condition=condition,
                     action=action,
                     tools=associated_tools
                 )
                 
-                self._logger.debug(f"创建指导原则: {condition} -> {action} (关联 {len(associated_tools)} 个工具)")
+                self._logger.debug(f"create guideline: {condition} -> {action} (associated {len(associated_tools)} tools)")
                 
             except Exception as e:
-                self._logger.error(f"创建指导原则失败: {e}")
+                self._logger.error(f"create guideline failed: {e}")
                 continue
         
-        self._logger.info(f"成功创建 {len(action_books)} 个指导原则")
+        
+        self._logger.info(f"successfully created {len(action_books)} guidelines")
     
 
 
 
 
 async def initialize_agent_factory(container: p.Container) -> None:
+    logger = container[p.Logger]
+    logger.info("🚀 开始初始化 CustomAgentFactory...")
+    
     container[p.AgentFactory] = CustomAgentFactory(
         agent_store=container[AgentStore],
         container=container,
-        logger=container[p.Logger]
+        logger=logger
     )
+    
+    logger.info("✅ CustomAgentFactory 初始化完成！")
