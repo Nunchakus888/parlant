@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from typing import Dict, Any, List, Optional
 from parlant.core.agent_factory import AgentFactory
 import parlant.sdk as p
@@ -77,7 +78,11 @@ class CustomAgentFactory(AgentFactory):
 
         # _process_evaluations
         self._logger.info("🔍 处理评估..._process_evaluations")
+        start_time = time.time()
         await server._process_evaluations()
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        self._logger.info(f"⏱️ _process_evaluations 耗时: {elapsed_time:.3f} 秒")
         
         self._logger.info(f"成功创建智能体 {agent.id} for customer {customer_id}")
         return agent
