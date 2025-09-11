@@ -176,6 +176,8 @@ Expected output (JSON):
     ) -> GuidelineContinuousPropositionSchema:
         prompt = await self._build_prompt(guideline)
 
+        self._logger.debug(f"\nGuidelineContinuousProposer._generate_continuous ======")
+
         response = await self._schematic_generator.generate(
             prompt=prompt,
             hints={"temperature": temperature},

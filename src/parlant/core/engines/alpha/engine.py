@@ -545,6 +545,8 @@ class AlphaEngine(Engine):
                 await self._load_matched_guidelines_and_journeys(context)
             )
 
+            self._logger.debug(f"guideline_and_journey_matching_result: \n{guideline_and_journey_matching_result}")
+
             matching_finished = True
 
             context.state.journeys = guideline_and_journey_matching_result.journeys
@@ -813,6 +815,7 @@ class AlphaEngine(Engine):
 
     async def _get_preamble_task(self, context: LoadedContext) -> asyncio.Task[bool]:
         async def preamble_task() -> bool:
+            return True
             if (
                 # Only consider a preamble in the first iteration
                 len(context.state.iterations) == 0

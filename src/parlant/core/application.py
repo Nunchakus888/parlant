@@ -48,11 +48,13 @@ class Application:
         self,
         customer_id: CustomerId,
         agent_id: AgentId,
+        session_id: Optional[str] = None,
         title: Optional[str] = None,
         session_id: Optional[SessionId] = None,
         allow_greeting: bool = False,
     ) -> Session:
         session = await self._session_store.create_session(
+            session_id=session_id,
             creation_utc=datetime.now(timezone.utc),
             customer_id=customer_id,
             agent_id=agent_id,
@@ -88,27 +90,71 @@ class Application:
         return event
 
     async def dispatch_processing_task(self, session: Session) -> str:
-        with self._correlator.scope("process", {"session": session}):
-            await self._background_task_service.restart(
-                self._process_session(session),
-                tag=f"process-session({session.id})",
-            )
+        self._logger.info(f"🔍 Dispatching processing task for session: {session.id} agent_id: {session.agent_id} customer_id: {session.customer_id}")
 
-            return self._correlator.correlation_id
+        try:
+            with self._correlator.scope("process", {"session": session}):
+                self._logger.info(f"🔍 Restarting background task for session: {session.id}")
+                await self._background_task_service.restart(
+                    self._process_session(session),
+                    tag=f"process-session({session.id})",
+                )
+                self._logger.info(f"✅ Background task restarted successfully for session: {session.id}")
+
+                return self._correlator.correlation_id
+        except Exception as e:
+            self._logger.error(f"❌ Error in dispatch_processing_task: {e}")
+            import traceback
+            self._logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            raise
 
     async def _process_session(self, session: Session) -> None:
-        event_emitter = await self._event_emitter_factory.create_event_emitter(
-            emitting_agent_id=session.agent_id,
-            session_id=session.id,
-        )
-
-        await self._engine.process(
-            Context(
+        self._logger.info(f"🔍 Processing session: {session.id} agent_id: {session.agent_id} customer_id: {session.customer_id}")
+        
+        try:
+            self._logger.info(f"🔍 Creating event emitter for agent_id: {session.agent_id}, session_id: {session.id}")
+            event_emitter = await self._event_emitter_factory.create_event_emitter(
+                emitting_agent_id=session.agent_id,
                 session_id=session.id,
-                agent_id=session.agent_id,
-            ),
-            event_emitter=event_emitter,
-        )
+            )
+            self._logger.info(f"✅ Event emitter created successfully: {event_emitter}")
+
+            self._logger.info(f"🔍 Starting engine processing for session: {session.id}")
+            self._logger.info(f"🔍 Context: session_id={session.id}, agent_id={session.agent_id}")
+            
+            # Add more detailed logging for debugging content filtering issues
+            try:
+                await self._engine.process(
+                    Context(
+                        session_id=session.id,
+                        agent_id=session.agent_id,
+                    ),
+                    event_emitter=event_emitter,
+                )
+                self._logger.info(f"✅ Engine processing completed for session: {session.id}")
+            except Exception as engine_error:
+                self._logger.error(f"❌ Engine processing failed for session: {session.id}")
+                self._logger.error(f"❌ Engine error type: {type(engine_error).__name__}")
+                self._logger.error(f"❌ Engine error message: {str(engine_error)}")
+                
+                # Check if it's a content filtering error
+                if "content_filter" in str(engine_error).lower() or "jailbreak" in str(engine_error).lower():
+                    self._logger.error(f"🚫 Content filtering triggered - this may be due to:")
+                    self._logger.error(f"🚫 1. Agent guidelines containing sensitive content")
+                    self._logger.error(f"🚫 2. Customer message triggering content filters")
+                    self._logger.error(f"🚫 3. AI response being filtered by Azure OpenAI")
+                    self._logger.error(f"🚫 4. Prompt engineering issues")
+                
+                # Log the full error for debugging
+                import traceback
+                self._logger.error(f"❌ Full engine traceback: {traceback.format_exc()}")
+                raise
+            
+        except Exception as e:
+            self._logger.error(f"❌ Error in _process_session: {e}")
+            import traceback
+            self._logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            raise
 
     async def utter(
         self,
