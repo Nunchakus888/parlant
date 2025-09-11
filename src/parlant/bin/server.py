@@ -17,6 +17,7 @@
 import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack
 from dataclasses import dataclass
+from datetime import datetime
 import importlib
 import inspect
 import os
@@ -241,7 +242,14 @@ sys.path.append(".")
 
 CORRELATOR = ContextualCorrelator()
 
-LOGGER = FileLogger(PARLANT_HOME_DIR / "parlant.log", CORRELATOR, LogLevel.INFO)
+
+def generate_timestamped_log_filename() -> str:
+    """Generate a timestamped log filename in format: mm-dd-yy_hh-mm-ss.log"""
+    now = datetime.now()
+    return f"{now.strftime('%y-%m-%d_%H-%M-%S')}.log"
+
+
+LOGGER = FileLogger(PARLANT_HOME_DIR / generate_timestamped_log_filename(), CORRELATOR, LogLevel.INFO)
 
 BACKGROUND_TASK_SERVICE = BackgroundTaskService(LOGGER)
 

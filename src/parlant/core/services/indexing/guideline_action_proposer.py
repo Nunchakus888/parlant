@@ -325,6 +325,7 @@ Expected output (JSON):
     ) -> GuidelineActionPropositionSchema:
         prompt = await self._build_prompt(guideline, tools, tool_ids)
 
+        self._logger.debug(f"\nGuidelineActionProposer._generate_action ======")
         response = await self._schematic_generator.generate(
             prompt=prompt,
             hints={"temperature": temperature},

@@ -272,6 +272,11 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         openrouter_api_arguments = {k: v for k, v in hints.items() if k in self.supported_openrouter_params}
 
+        self._logger.debug(f"\nOpenRouterSchematicGenerator.generate ======")
+        self._logger.debug(f"\nprompt_start ======")
+        self._logger.debug(f"\n{prompt}")
+        self._logger.debug(f"\nprompt_end ======")
+        self._logger.debug(f"\narguments ======\n{openrouter_api_arguments}")
         t_start = time.time()
         try:
             response = await self._client.chat.completions.create(

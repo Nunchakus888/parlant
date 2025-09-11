@@ -419,13 +419,10 @@ class ChatRequestDTO(
             examples=["Hello, I need help", "What can you do?"],
         ),
     ]
-    customer_id: Annotated[
-        CustomerId,
-        Field(
-            description="ID of the customer",
-            examples=["cust_123xy"],
-        ),
-    ]
+    customer_id: Optional[CustomerId] = Field(
+      default=None,
+      description="customer id"
+    )
     session_id: Optional[str] = Field(
         default=None,
         description="ID of the session. If not provided, a new session will be created.",
