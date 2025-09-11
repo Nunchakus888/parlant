@@ -170,7 +170,7 @@ async def main() -> None:
     mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
-        log_level=p.LogLevel.DEBUG,
+        log_level=p.LogLevel.TRACE,
         session_store=mongodb_url,
     ) as server:
         agent = await server.create_agent(

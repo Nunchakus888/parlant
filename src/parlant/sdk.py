@@ -457,6 +457,9 @@ class _CachedEvaluator:
         journey_state_proposition: bool = False,
         properties_proposition: bool = True,
     ) -> _CachedEvaluator.GuidelineEvaluation:
+        
+        self._logger.debug(f"_evaluate_guideline start ======")
+
         # First check if we have a cached evaluation for this guideline
         _hash = self._hash_guideline_evaluation_request(
             g=g,

@@ -13,6 +13,14 @@
       "action": "1. Politely and briefly exchange greetings with the customer and ask how you can assist."
     },
     {
+      "type": "journey",
+      "title": "Schedule an Appointment",
+      "description": "Helps the patient find a time for their appointment.",
+      "conditions": ["The patient wants to schedule an appointment"],
+      "action": "# Appointment Scheduling Journey\n\n## 1. Initial State\n- **Action**: Determine the reason for the visit\n- **Type**: Chat State\n- **Description**: Welcome the patient and understand their specific needs\n\n## 2. Check Availability\n- **Action**: Load upcoming appointment slots into context\n- **Type**: Tool State\n- **Tool**: get_upcoming_slots\n- **Description**: Query available time slots from the system\n\n## 3. Present Options\n- **Action**: List available times and ask which ones work for them\n- **Type**: Chat State\n- **Description**: Show available slots and get patient's preference\n\n### 3.1 Happy Path - Patient Selects Time\n- **Condition**: The patient picks a time\n- **Action**: Confirm the details with the patient before scheduling\n- **Type**: Chat State\n\n#### 3.1.1 Final Confirmation\n- **Condition**: The patient confirms the details\n- **Action**: Schedule the appointment\n- **Type**: Tool State\n- **Tool**: schedule_appointment\n\n#### 3.1.2 Completion\n- **Action**: Confirm the appointment has been scheduled\n- **Type**: Chat State\n- **End**: Journey Complete\n\n### 3.2 Alternative Path - No Suitable Times\n- **Condition**: None of those times work for the patient\n- **Action**: Load later appointment slots\n- **Type**: Tool State\n- **Tool**: get_later_slots\n\n#### 3.2.1 Present Later Options\n- **Action**: List later times and ask if any of them work\n- **Type**: Chat State\n\n##### 3.2.1.1 Patient Accepts Later Time\n- **Condition**: The patient picks a time\n- **Transition**: Back to 3.1.1 (Final Confirmation)\n\n##### 3.2.1.2 No Suitable Later Times\n- **Condition**: None of those times work for the patient either\n- **Action**: Ask the patient to call the office to schedule an appointment\n- **Type**: Chat State\n- **End**: Journey Complete\n\n## Guidelines\n\n### Urgent Cases\n- **Condition**: The patient says their visit is urgent\n- **Action**: Tell them to call the office immediately\n- **Priority**: High\n\n## Journey Summary\n- **Total States**: 7 (4 Chat + 3 Tool)\n- **Transitions**: 8 conditional transitions\n- **End Points**: 2 (Success + Office Call)\n- **Tools Used**: get_upcoming_slots, get_later_slots, schedule_appointment",
+      "tools": []
+    },
+    {
       "condition": "If the customer provides their contact information",
       "action": "Persuade the customer to provide more information, then save the customer's information using the save_customer_information tool",
       "tools": [
