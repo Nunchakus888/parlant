@@ -5,6 +5,7 @@
 """
 
 import json
+import asyncio
 import aiohttp
 from typing import Dict, Any, List, Optional, Annotated
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ class ToolConfig:
 class ToolManager:
     """工具管理器"""
     
-    def __init__(self, config_path: str = None, raw_configs: List[Dict[str, Any]] = None, logger=None, timeout: int = 30):
+    def __init__(self, config_path: str = None, raw_configs: List[Dict[str, Any]] = None, logger=None, timeout: int = 60):
         self.config_path = config_path
         self.raw_configs = raw_configs
         self.logger = logger
@@ -183,8 +184,8 @@ class ToolManager:
         
         return p.tool(dynamic_tool_func)
     
-    async def _call_api(self, config: ToolConfig, params: Dict[str, Any]) -> Dict[str, Any]:
-        """调用API"""
+    async def _call_api(self, config: ToolConfig, params: Dict[str, Any], max_retries: int = 2) -> Dict[str, Any]:
+        """调用API，支持重试机制"""
         # 过滤掉 None 值
         params = {k: v for k, v in params.items() if v is not None}
         
@@ -228,25 +229,49 @@ class ToolManager:
         if body:
             self._log_debug(f"📦 请求体: {json.dumps(body, ensure_ascii=False, indent=2)}")
         
-        # 发送请求
-        timeout = aiohttp.ClientTimeout(total=self.timeout)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            try:
-                if method == "GET":
-                    async with session.get(url, params=query_params, headers=headers) as response:
-                        self._log_info(f"✅ 响应状态: {response.status}")
-                        result = await response.json()
-                        self._log_debug(f"📨 响应数据: {result}")
-                        return result
-                else:
-                    async with session.request(method, url, json=body, params=query_params, headers=headers) as response:
-                        self._log_info(f"✅ 响应状态: {response.status}")
-                        result = await response.json()
-                        self._log_debug(f"📨 响应数据: {result}")
-                        return result
-            except Exception as e:
-                self._log_error(f"❌ API调用失败: {str(e)}")
-                raise
+        # 重试机制
+        last_exception = None
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                self._log_info(f"🔄 重试第 {attempt} 次...")
+                await asyncio.sleep(1 * attempt)  # 递增延迟
+            
+            # 发送请求
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                try:
+                    if method == "GET":
+                        async with session.get(url, params=query_params, headers=headers) as response:
+                            self._log_info(f"✅ 响应状态: {response.status}")
+                            result = await response.json()
+                            self._log_debug(f"📨 响应数据: {result}")
+                            return result
+                    else:
+                        async with session.request(method, url, json=body, params=query_params, headers=headers) as response:
+                            self._log_info(f"✅ 响应状态: {response.status}")
+                            result = await response.json()
+                            self._log_debug(f"📨 响应数据: {result}")
+                            return result
+                except aiohttp.ClientTimeout as e:
+                    last_exception = e
+                    self._log_error(f"❌ API调用超时 ({self.timeout}秒) - 尝试 {attempt + 1}/{max_retries + 1}: {str(e)}")
+                    if attempt == max_retries:
+                        raise Exception(f"API调用超时，已重试 {max_retries} 次，请检查网络连接")
+                except aiohttp.ClientError as e:
+                    last_exception = e
+                    self._log_error(f"❌ API调用网络错误 - 尝试 {attempt + 1}/{max_retries + 1}: {str(e)}")
+                    if attempt == max_retries:
+                        raise Exception(f"网络连接错误，已重试 {max_retries} 次: {str(e)}")
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e) if str(e) else f"未知错误: {type(e).__name__}"
+                    self._log_error(f"❌ API调用失败 - 尝试 {attempt + 1}/{max_retries + 1}: {error_msg}")
+                    if attempt == max_retries:
+                        raise Exception(f"API调用失败，已重试 {max_retries} 次: {error_msg}")
+        
+        # 如果所有重试都失败了
+        if last_exception:
+            raise last_exception
     
     def _replace_placeholders(self, template: Any, params: Dict[str, Any]) -> Any:
         """递归替换模板中的占位符"""
