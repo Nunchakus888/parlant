@@ -545,7 +545,7 @@ class AlphaEngine(Engine):
                 await self._load_matched_guidelines_and_journeys(context)
             )
 
-            self._logger.debug(f"guideline_and_journey_matching_result: \n{guideline_and_journey_matching_result}")
+            self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
 
             matching_finished = True
 
@@ -1771,6 +1771,70 @@ class AlphaEngine(Engine):
             journey_paths[j] = [None]
 
         return journey_paths
+
+    def _format_guideline_and_journey_matching_result(
+        self, result: _GuidelineAndJourneyMatchingResult
+    ) -> str:
+        """格式化输出 guideline_and_journey_matching_result 对象，使其更易读"""
+        output = []
+        output.append("=" * 80)
+        output.append("GUIDELINE AND JOURNEY MATCHING RESULT")
+        output.append("=" * 80)
+        
+        # 匹配结果统计
+        output.append(f"\n📊 MATCHING STATISTICS:")
+        output.append(f"  • Total Duration: {result.matching_result.total_duration:.3f}s")
+        output.append(f"  • Batch Count: {result.matching_result.batch_count}")
+        output.append(f"  • Total Matches: {len(result.matching_result.matches)}")
+        output.append(f"  • Resolved Guidelines: {len(result.resolved_guidelines)}")
+        output.append(f"  • Active Journeys: {len(result.journeys)}")
+        
+        # 批次生成信息
+        if result.matching_result.batch_generations:
+            output.append(f"\n🔄 BATCH GENERATIONS:")
+            for i, gen in enumerate(result.matching_result.batch_generations):
+                output.append(f"  Batch {i+1}: {gen.model} - {gen.duration:.3f}s")
+        
+        # 匹配的指导原则
+        if result.matches_guidelines:
+            output.append(f"\n✅ MATCHED GUIDELINES ({len(result.matches_guidelines)}):")
+            for i, match in enumerate(result.matches_guidelines, 1):
+                output.append(f"  {i}. [{match.score}] {match.guideline.id}")
+                output.append(f"     Condition: {match.guideline.content.condition}")
+                if match.guideline.content.action:
+                    output.append(f"     Action: {match.guideline.content.action}")
+                output.append(f"     Rationale: {match.rationale}")
+                if match.metadata:
+                    output.append(f"     Metadata: {match.metadata}")
+                output.append("")
+        
+        # 解析的指导原则
+        if result.resolved_guidelines:
+            output.append(f"\n🔍 RESOLVED GUIDELINES ({len(result.resolved_guidelines)}):")
+            for i, match in enumerate(result.resolved_guidelines, 1):
+                output.append(f"  {i}. [{match.score}] {match.guideline.id}")
+                output.append(f"     Condition: {match.guideline.content.condition}")
+                if match.guideline.content.action:
+                    output.append(f"     Action: {match.guideline.content.action}")
+                output.append(f"     Rationale: {match.rationale}")
+                if match.metadata:
+                    output.append(f"     Metadata: {match.metadata}")
+                output.append("")
+        
+        # 活跃的旅程
+        if result.journeys:
+            output.append(f"\n🗺️  ACTIVE JOURNEYS ({len(result.journeys)}):")
+            for i, journey in enumerate(result.journeys, 1):
+                output.append(f"  {i}. {journey.id}")
+                output.append(f"     Title: {journey.title}")
+                output.append(f"     Description: {journey.description}")
+                output.append(f"     Conditions: {len(journey.conditions)} conditions")
+                output.append(f"     Tags: {len(journey.tags)} tags")
+                output.append(f"     Created: {journey.creation_utc}")
+                output.append("")
+        
+        output.append("=" * 80)
+        return "\n".join(output)
 
 
 # This is module-level and public for isolated testability purposes.
