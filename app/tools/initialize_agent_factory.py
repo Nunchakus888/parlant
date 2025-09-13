@@ -177,7 +177,9 @@ class CustomAgentFactory(AgentFactory):
                     tools=associated_tools
                 )
                 
-                self._logger.debug(f"create guideline: {condition} -> {action} (associated {len(associated_tools)} tools)")
+                # print tool names
+                tool_names = [tool.tool.name for tool in associated_tools] if associated_tools else []
+                self._logger.debug(f"create guideline: {condition} -> (associated {tool_names} tools)")
                 
             except Exception as e:
                 self._logger.error(f"create guideline failed: {e}")
