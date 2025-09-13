@@ -54,13 +54,9 @@ class CustomAgentFactory(AgentFactory):
             )
             self._logger.info("✅ 使用 server.create_agent() 创建 Agent（完整功能）")
         else:
-            # 回退到使用 agent_store（兼容性）
-            self._logger.warning("⚠️ 无法获取 Server 对象，使用 agent_store 创建 Agent（功能受限）")
-            agent = await self._agent_store.create_agent(
-                name=basic_settings.get("name"),
-                description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
-                max_engine_iterations=3,
-            )
+            # 回退到使用 agent_store，但需要手动创建完整的 Agent 对象
+            self._logger.error("❌ 无法获取 Server 对象，这会导致 Agent 功能受限")
+            raise RuntimeError("Server 对象不可用，无法创建具有完整功能的 Agent")
 
         merged_tools = self._merge_tools_from_action_books(config)
         
