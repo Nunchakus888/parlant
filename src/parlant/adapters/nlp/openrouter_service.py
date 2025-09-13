@@ -41,6 +41,10 @@ Required Environment Variables:
 Optional Environment Variables:
     OPENROUTER_BASE_URL: Base URL for OpenRouter API (default: https://openrouter.ai/api/v1)
 
+Default Model Configuration (for all non-specified schemas):
+    OPENROUTER_DEFAULT_MODEL: Default model for all schemas (default: openai/gpt-4o)
+    OPENROUTER_DEFAULT_MAX_TOKENS: Default max tokens for all schemas (default: 131072)
+
 Schema-Specific Model Configuration:
     OPENROUTER_SINGLE_TOOL_MODEL: Model for SingleToolBatchSchema (default: openai/gpt-4o)
     OPENROUTER_SINGLE_TOOL_MAX_TOKENS: Max tokens for SingleToolBatchSchema (default: 131072)
@@ -63,8 +67,14 @@ Embedding Configuration (Third-party provider required):
 Example Usage:
     # OpenRouter API for LLM
     export OPENROUTER_API_KEY="your-openrouter-api-key"
-    export OPENROUTER_SINGLE_TOOL_MODEL="openai/gpt-4o-mini"
-    export OPENROUTER_SINGLE_TOOL_MAX_TOKENS=65536
+    
+    # Set default model for all schemas
+    export OPENROUTER_DEFAULT_MODEL="openai/gpt-4o-mini"
+    export OPENROUTER_DEFAULT_MAX_TOKENS=65536
+    
+    # Override specific schemas if needed
+    export OPENROUTER_SINGLE_TOOL_MODEL="openai/gpt-4o"
+    export OPENROUTER_SINGLE_TOOL_MAX_TOKENS=131072
     
     # Third-party embedding provider (e.g., OpenAI)
     export OPENROUTER_EMBEDDING_BASE_URL="https://api.openai.com/v1"
@@ -116,6 +126,10 @@ from parlant.core.nlp.policies import policy, retry
 ENV_API_KEY = "OPENROUTER_API_KEY"
 ENV_BASE_URL = "OPENROUTER_BASE_URL"
 
+# Default model configuration (for all non-specified schemas)
+ENV_DEFAULT_MODEL = "OPENROUTER_DEFAULT_MODEL"
+ENV_DEFAULT_MAX_TOKENS = "OPENROUTER_DEFAULT_MAX_TOKENS"
+
 # Schema-specific model configuration
 ENV_SINGLE_TOOL_MODEL = "OPENROUTER_SINGLE_TOOL_MODEL"
 ENV_SINGLE_TOOL_MAX_TOKENS = "OPENROUTER_SINGLE_TOOL_MAX_TOKENS"
@@ -153,15 +167,20 @@ def get_env_int(key: str, default: int) -> int:
 
 def get_model_config_for_schema(schema_type: type) -> ModelConfig:
     """Get model configuration for a specific schema type from environment variables."""
-    # Default configurations
-    defaults = {
-        SingleToolBatchSchema: ModelConfig("openai/gpt-4o", 128 * 1024),
-        JourneyNodeSelectionSchema: ModelConfig("anthropic/claude-3.5-sonnet", 200 * 1024),
-        CannedResponseDraftSchema: ModelConfig("anthropic/claude-3.5-sonnet", 200 * 1024),
-        CannedResponseSelectionSchema: ModelConfig("anthropic/claude-3-haiku", 200 * 1024),
+    # Get default model configuration from environment variables
+    default_model = os.environ.get(ENV_DEFAULT_MODEL, "openai/gpt-4o")
+    default_max_tokens = get_env_int(ENV_DEFAULT_MAX_TOKENS, 128 * 1024)
+    default_config = ModelConfig(default_model, default_max_tokens)
+
+    # Schema-specific default configurations (fallback to global default)
+    schema_defaults = {
+        SingleToolBatchSchema: ModelConfig(default_model, default_max_tokens),
+        JourneyNodeSelectionSchema: ModelConfig(default_model, default_max_tokens),
+        CannedResponseDraftSchema: ModelConfig(default_model, default_max_tokens),
+        CannedResponseSelectionSchema: ModelConfig(default_model, default_max_tokens),
     }
     
-    # Environment variable mappings
+    # Environment variable mappings for schema-specific overrides
     env_mappings = {
         SingleToolBatchSchema: (ENV_SINGLE_TOOL_MODEL, ENV_SINGLE_TOOL_MAX_TOKENS),
         JourneyNodeSelectionSchema: (ENV_JOURNEY_NODE_MODEL, ENV_JOURNEY_NODE_MAX_TOKENS),
@@ -169,12 +188,12 @@ def get_model_config_for_schema(schema_type: type) -> ModelConfig:
         CannedResponseSelectionSchema: (ENV_CANNED_RESPONSE_SELECTION_MODEL, ENV_CANNED_RESPONSE_SELECTION_MAX_TOKENS),
     }
     
-    default_config = defaults.get(schema_type, defaults[SingleToolBatchSchema])
+    schema_default = schema_defaults.get(schema_type, default_config)
     
     if schema_type in env_mappings:
         model_env, tokens_env = env_mappings[schema_type]
-        model = os.environ.get(model_env, default_config.model)
-        max_tokens = get_env_int(tokens_env, default_config.max_tokens)
+        model = os.environ.get(model_env, schema_default.model)
+        max_tokens = get_env_int(tokens_env, schema_default.max_tokens)
         return ModelConfig(model, max_tokens)
     
     return default_config
@@ -442,6 +461,8 @@ Please set {ENV_API_KEY} in your environment before running Parlant.
     async def get_schematic_generator(self, t: type[T]) -> SchematicGenerator[T]:
         # Get the specific model config for the requested schema type
         model_config = get_model_config_for_schema(t)
+
+        self._logger.debug(f"\n{t.__name__}: {model_config}")
         
         # Create generator instance with the appropriate config
         return OpenRouter_Default[t](  # type: ignore
