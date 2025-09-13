@@ -244,9 +244,15 @@ CORRELATOR = ContextualCorrelator()
 
 
 def generate_timestamped_log_filename() -> str:
-    """Generate a timestamped log filename in format: mm-dd-yy_hh-mm-ss.log"""
+    """Generate a timestamped log filename with folder structure: YYYY/MM/DD/HH-MM-SS.log"""
     now = datetime.now()
-    return f"{now.strftime('%y-%m-%d_%H-%M-%S')}.log"
+    # Create folder structure: YYYY/MM/DD/
+    folder_path = now.strftime('%Y/%m/%d')
+    # Create the folder if it doesn't exist
+    log_dir = PARLANT_HOME_DIR / folder_path
+    log_dir.mkdir(parents=True, exist_ok=True)
+    # Return relative path with simplified filename
+    return f"{folder_path}/{now.strftime('%H-%M-%S')}.log"
 
 
 LOGGER = FileLogger(PARLANT_HOME_DIR / generate_timestamped_log_filename(), CORRELATOR, LogLevel.INFO)
