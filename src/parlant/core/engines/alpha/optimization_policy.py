@@ -78,6 +78,7 @@ class BasicOptimizationPolicy(OptimizationPolicy):
         guideline_count: int,
         hints: Mapping[str, Any] = {},
     ) -> int:
+        return 10
         if guideline_count <= 10:
             return 1
         elif guideline_count <= 20:

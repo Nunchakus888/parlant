@@ -68,8 +68,8 @@ class CustomAgentFactory(AgentFactory):
 
         # default guideline
         await agent.create_guideline(
-            condition=f"The customer inquires about something that has nothing to do with our {basic_settings.get('background')}",
-            action="Kindly tell them you cannot assist with off-topic inquiries - do not engage with their request.",
+            condition=f"The customer inquires about something that is not related to our [extract main topic from {basic_settings.get('background')}] business",
+            action=f"Politely explain that you specialize business and would be happy to help with related questions instead.",
         )
 
         # _process_evaluations

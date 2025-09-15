@@ -9,10 +9,6 @@
   },
   "action_books": [
     {
-      "condition": "When a customer greets, such as hi or hello",
-      "action": "1. Politely and briefly exchange greetings with the customer and ask how you can assist."
-    },
-    {
       "type": "journey",
       "title": "Schedule an Appointment",
       "description": "Helps the patient find a time for their appointment.",
@@ -21,7 +17,7 @@
       "tools": []
     },
     {
-      "condition": "If the customer provides their contact information",
+      "condition": "If the customer say hello and provides their contact information",
       "action": "Persuade the customer to provide more information, then save the customer's information using the save_customer_information tool",
       "tools": [
         {
@@ -30,7 +26,7 @@
           "parameters": {
             "type": "object",
             "properties": {
-              "name": {
+              "nickName": {
                 "type": "string",
                 "description": "The name of the customer"
               },
@@ -42,24 +38,25 @@
                 "type": "string",
                 "description": "The phone number of the customer"
               },
-              "company": {
+              "countryName": {
                 "type": "string",
-                "description": "The company of the customer"
+                "description": "The country of the customer"
               }
             },
-            "required": ["name", "email", "phone", "company"]
+            "required": ["email", "phone"]
           },
           "endpoint": {
-            "url": "https://jsonplaceholder.typicode.com/users",
+            "url": "http://172.16.92.21:18080/contactsService/add",
             "method": "POST",
             "headers": {
               "Content-Type": "application/json"
             },
             "body": {
-              "name": "{name}",
-              "email": "{email}",
-              "phone": "{phone}",
-              "company": "{company}"
+              "tenantId": "just4test",
+              "nickName": "{nickName}",
+              "countryName": "{countryName}",
+              "phoneNumber": "{phone}",
+              "email": "{email}"          
             }
           }
         }
