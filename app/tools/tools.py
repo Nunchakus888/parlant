@@ -127,8 +127,6 @@ class ToolManager:
         for param_name, param_config in properties.items():
             param_type = type_mapping.get(param_config.get("type", "string"), str)
             is_required = param_name in required_params
-            default_value = param_config.get("default") if not is_required else None
-            
             # 创建带注解的类型
             annotated_type = Annotated[param_type, ToolParameterOptions(
                 description=param_config.get("description", f"Parameter {param_name}"),
@@ -139,7 +137,11 @@ class ToolManager:
             if is_required:
                 sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type))
             else:
-                sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type, default=default_value))
+                # 只有当配置中有default时才设置默认值
+                if "default" in param_config:
+                    sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type, default=param_config["default"]))
+                else:
+                    sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type))
             
             call_params.append(param_name)
         
@@ -271,7 +273,10 @@ class ToolManager:
         
         # 如果所有重试都失败了
         if last_exception:
-            raise last_exception
+            if isinstance(last_exception, Exception):
+                raise last_exception
+            else:
+                raise Exception(f"API调用失败: {str(last_exception)}")
     
     def _replace_placeholders(self, template: Any, params: Dict[str, Any]) -> Any:
         """递归替换模板中的占位符"""
