@@ -405,9 +405,9 @@ chat_request_example: ExampleJson = {
     "chatbot_id": "xxx",
     "md5_checksum": "xxx",
     "is_preview": False,
-    "preview_act_ids": [],
+    "preview_actionbook_ids": [],
+    "autofill_params": {},
     "session_title": "",
-    "timeout": 60,
 }
 
 
@@ -426,11 +426,11 @@ class ChatRequestDTO(
     ]
     customer_id: Optional[CustomerId] = Field(
       default=None,
-      description="customer id"
+      description="unique identifier for the customer, if not provided, a new customer will be created."
     )
     session_id: Optional[str] = Field(
         default=None,
-        description="ID of the session. If not provided, a new session will be created.",
+        description="unique identifier for the session. If not provided, a new session will be created.",
         examples=["ses_123xyz"],
     )
     session_title: Optional[str] = Field(
@@ -438,10 +438,35 @@ class ChatRequestDTO(
         description="Title for new sessions. Defaults to 'Chat Session'.",
         examples=["Product Support", "General Inquiry"],
     )
-    timeout: Optional[int] = Field(
-        default=30,
-        description="Maximum seconds to wait for AI response.",
-        examples=[30, 60],
+    autofill_params: Optional[dict] = Field(
+        default={},
+        description="Parameters to automatically fill for the data-connector when they are required by the connector but not provided by the user, and the system has access to them.",
+        examples=[{"dialogId": "123", "tenantId": "1bgrs2d1sxef47d23a91x4s6z7y9gt8"}],
+    )
+    preview_actionbook_ids: Optional[list[str]] = Field(
+        default=[],
+        description="IDs of the actionbooks to preview. If not provided, no actionbooks will be previewed.",
+        examples=["act_123xyz", "act_456xyz"],
+    )
+    is_preview: Optional[bool] = Field(
+        default=False,
+        description="Whether to preview the actionbooks. If not provided, return all actionbooks.",
+        examples=[True, False],
+    )
+    md5_checksum: Optional[str] = Field(
+        default=None,
+        description="MD5 checksum of the agent configs. if it changes, the agent will be reload the configs.",
+        examples=["1234567890"],
+    )
+    tenant_id: str = Field(
+        default="",
+        description="Tenant ID. Required.",
+        examples=["tenant_123xyz"],
+    )
+    chatbot_id: str = Field(
+        default="",
+        description="Chatbot ID. Required.",
+        examples=["chatbot_123xyz"],
     )
 
 
