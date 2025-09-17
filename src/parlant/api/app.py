@@ -245,29 +245,34 @@ async def create_api_app(container: Container) -> ASGIApplication:
     async def root() -> Response:
         return RedirectResponse("/chat")
 
-    agent_router = APIRouter(prefix="/agents")
+    # agent_router = APIRouter(prefix="/agents")
 
-    agent_router.include_router(
-        guidelines.create_legacy_router(
-            application=application,
-            guideline_store=guideline_store,
-            tag_store=tag_store,
-            relationship_store=relationship_store,
-            service_registry=service_registry,
-            guideline_tool_association_store=guideline_tool_association_store,
-        ),
-    )
-    agent_router.include_router(
-        glossary.create_legacy_router(
-            glossary_store=glossary_store,
-        ),
-    )
-    agent_router.include_router(
-        variables.create_legacy_router(
-            context_variable_store=context_variable_store,
-            service_registry=service_registry,
-        ),
-    )
+    # agent_router.include_router(
+    #     guidelines.create_legacy_router(
+    #         application=application,
+    #         guideline_store=guideline_store,
+    #         tag_store=tag_store,
+    #         relationship_store=relationship_store,
+    #         service_registry=service_registry,
+    #         guideline_tool_association_store=guideline_tool_association_store,
+    #     ),
+    # )
+    # agent_router.include_router(
+    #     glossary.create_legacy_router(
+    #         glossary_store=glossary_store,
+    #     ),
+    # )
+    # agent_router.include_router(
+    #     variables.create_legacy_router(
+    #         context_variable_store=context_variable_store,
+    #         service_registry=service_registry,
+    #     ),
+    # )
+
+    # api_app.include_router(
+    #     router=agent_router,
+    # )
+
 
     api_app.include_router(
         router=agents.create_router(
@@ -278,10 +283,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
         prefix="/agents",
     )
 
-    api_app.include_router(
-        router=agent_router,
-    )
-
+  
     
     api_app.include_router(
         prefix="/sessions",
@@ -298,133 +300,133 @@ async def create_api_app(container: Container) -> ASGIApplication:
         ),
     )
 
-    api_app.include_router(
-        prefix="/index",
-        router=index.legacy_create_router(
-            evaluation_service=legacy_evaluation_service,
-            evaluation_store=evaluation_store,
-            evaluation_listener=evaluation_listener,
-            agent_store=agent_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/index",
+    #     router=index.legacy_create_router(
+    #         evaluation_service=legacy_evaluation_service,
+    #         evaluation_store=evaluation_store,
+    #         evaluation_listener=evaluation_listener,
+    #         agent_store=agent_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/services",
-        router=services.create_router(
-            authorization_policy=authorization_policy,
-            service_registry=service_registry,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/services",
+    #     router=services.create_router(
+    #         authorization_policy=authorization_policy,
+    #         service_registry=service_registry,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/tags",
-        router=tags.create_router(
-            authorization_policy=authorization_policy,
-            tag_store=tag_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/tags",
+    #     router=tags.create_router(
+    #         authorization_policy=authorization_policy,
+    #         tag_store=tag_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/terms",
-        router=glossary.create_router(
-            authorization_policy=authorization_policy,
-            glossary_store=glossary_store,
-            agent_store=agent_store,
-            tag_store=tag_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/terms",
+    #     router=glossary.create_router(
+    #         authorization_policy=authorization_policy,
+    #         glossary_store=glossary_store,
+    #         agent_store=agent_store,
+    #         tag_store=tag_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/customers",
-        router=customers.create_router(
-            authorization_policy=authorization_policy,
-            customer_store=customer_store,
-            tag_store=tag_store,
-            agent_store=agent_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/customers",
+    #     router=customers.create_router(
+    #         authorization_policy=authorization_policy,
+    #         customer_store=customer_store,
+    #         tag_store=tag_store,
+    #         agent_store=agent_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/canned_responses",
-        router=canned_responses.create_router(
-            authorization_policy=authorization_policy,
-            canned_response_store=canned_response_store,
-            tag_store=tag_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/canned_responses",
+    #     router=canned_responses.create_router(
+    #         authorization_policy=authorization_policy,
+    #         canned_response_store=canned_response_store,
+    #         tag_store=tag_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/context-variables",
-        router=variables.create_router(
-            authorization_policy=authorization_policy,
-            context_variable_store=context_variable_store,
-            service_registry=service_registry,
-            agent_store=agent_store,
-            tag_store=tag_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/context-variables",
+    #     router=variables.create_router(
+    #         authorization_policy=authorization_policy,
+    #         context_variable_store=context_variable_store,
+    #         service_registry=service_registry,
+    #         agent_store=agent_store,
+    #         tag_store=tag_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/guidelines",
-        router=guidelines.create_router(
-            authorization_policy=authorization_policy,
-            guideline_store=guideline_store,
-            relationship_store=relationship_store,
-            service_registry=service_registry,
-            guideline_tool_association_store=guideline_tool_association_store,
-            agent_store=agent_store,
-            tag_store=tag_store,
-            journey_store=journey_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/guidelines",
+    #     router=guidelines.create_router(
+    #         authorization_policy=authorization_policy,
+    #         guideline_store=guideline_store,
+    #         relationship_store=relationship_store,
+    #         service_registry=service_registry,
+    #         guideline_tool_association_store=guideline_tool_association_store,
+    #         agent_store=agent_store,
+    #         tag_store=tag_store,
+    #         journey_store=journey_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/relationships",
-        router=relationships.create_router(
-            authorization_policy=authorization_policy,
-            relationship_store=relationship_store,
-            tag_store=tag_store,
-            guideline_store=guideline_store,
-            agent_store=agent_store,
-            journey_store=journey_store,
-            service_registry=service_registry,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/relationships",
+    #     router=relationships.create_router(
+    #         authorization_policy=authorization_policy,
+    #         relationship_store=relationship_store,
+    #         tag_store=tag_store,
+    #         guideline_store=guideline_store,
+    #         agent_store=agent_store,
+    #         journey_store=journey_store,
+    #         service_registry=service_registry,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/journeys",
-        router=journeys.create_router(
-            authorization_policy=authorization_policy,
-            journey_store=journey_store,
-            guideline_store=guideline_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/journeys",
+    #     router=journeys.create_router(
+    #         authorization_policy=authorization_policy,
+    #         journey_store=journey_store,
+    #         guideline_store=guideline_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/evaluations",
-        router=evaluations.create_router(
-            authorization_policy=authorization_policy,
-            evaluation_service=evaluation_service,
-            evaluation_store=evaluation_store,
-            evaluation_listener=evaluation_listener,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/evaluations",
+    #     router=evaluations.create_router(
+    #         authorization_policy=authorization_policy,
+    #         evaluation_service=evaluation_service,
+    #         evaluation_store=evaluation_store,
+    #         evaluation_listener=evaluation_listener,
+    #     ),
+    # )
 
-    api_app.include_router(
-        prefix="/capabilities",
-        router=capabilities.create_router(
-            authorization_policy=authorization_policy,
-            capability_store=capability_store,
-            tag_store=tag_store,
-            agent_store=agent_store,
-            journey_store=journey_store,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/capabilities",
+    #     router=capabilities.create_router(
+    #         authorization_policy=authorization_policy,
+    #         capability_store=capability_store,
+    #         tag_store=tag_store,
+    #         agent_store=agent_store,
+    #         journey_store=journey_store,
+    #     ),
+    # )
 
-    api_app.include_router(
-        router=logs.create_router(
-            websocket_logger,
-        )
-    )
+    # api_app.include_router(
+    #     router=logs.create_router(
+    #         websocket_logger,
+    #     )
+    # )
 
     return AppWrapper(api_app)
