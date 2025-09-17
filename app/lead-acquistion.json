@@ -9,20 +9,12 @@
   },
   "action_books": [
     {
-      "type": "journey",
-      "title": "Schedule an Appointment",
-      "description": "Helps the patient find a time for their appointment.",
-      "conditions": ["The patient wants to schedule an appointment"],
-      "action": "# Appointment Scheduling Journey\n\n## 1. Initial State\n- **Action**: Determine the reason for the visit\n- **Type**: Chat State\n- **Description**: Welcome the patient and understand their specific needs\n\n## 2. Check Availability\n- **Action**: Load upcoming appointment slots into context\n- **Type**: Tool State\n- **Tool**: get_upcoming_slots\n- **Description**: Query available time slots from the system\n\n## 3. Present Options\n- **Action**: List available times and ask which ones work for them\n- **Type**: Chat State\n- **Description**: Show available slots and get patient's preference\n\n### 3.1 Happy Path - Patient Selects Time\n- **Condition**: The patient picks a time\n- **Action**: Confirm the details with the patient before scheduling\n- **Type**: Chat State\n\n#### 3.1.1 Final Confirmation\n- **Condition**: The patient confirms the details\n- **Action**: Schedule the appointment\n- **Type**: Tool State\n- **Tool**: schedule_appointment\n\n#### 3.1.2 Completion\n- **Action**: Confirm the appointment has been scheduled\n- **Type**: Chat State\n- **End**: Journey Complete\n\n### 3.2 Alternative Path - No Suitable Times\n- **Condition**: None of those times work for the patient\n- **Action**: Load later appointment slots\n- **Type**: Tool State\n- **Tool**: get_later_slots\n\n#### 3.2.1 Present Later Options\n- **Action**: List later times and ask if any of them work\n- **Type**: Chat State\n\n##### 3.2.1.1 Patient Accepts Later Time\n- **Condition**: The patient picks a time\n- **Transition**: Back to 3.1.1 (Final Confirmation)\n\n##### 3.2.1.2 No Suitable Later Times\n- **Condition**: None of those times work for the patient either\n- **Action**: Ask the patient to call the office to schedule an appointment\n- **Type**: Chat State\n- **End**: Journey Complete\n\n## Guidelines\n\n### Urgent Cases\n- **Condition**: The patient says their visit is urgent\n- **Action**: Tell them to call the office immediately\n- **Priority**: High\n\n## Journey Summary\n- **Total States**: 7 (4 Chat + 3 Tool)\n- **Transitions**: 8 conditional transitions\n- **End Points**: 2 (Success + Office Call)\n- **Tools Used**: get_upcoming_slots, get_later_slots, schedule_appointment",
-      "tools": []
-    },
-    {
-      "condition": "If the customer say hello and provides their contact information",
+      "condition": "1. Wants to schedule a demo 2. Requests detailed product/service information 3. Needs salesperson or account manager 4. Reveals purchase intention 5. Compares products between brands 6. Wants to sign up or get free trial 7. Asks for E-books or whitepapers 8. Inquires about pricing 10. Provide any contact information",
       "action": "Persuade the customer to provide more information, then save the customer's information using the save_customer_information tool",
       "tools": [
         {
           "name": "save_customer_information",
-          "description": "Save the customer's information",
+          "description": "Save the customer's information when they provide one or more fields",
           "parameters": {
             "type": "object",
             "properties": {
@@ -34,16 +26,13 @@
                 "type": "string",
                 "description": "The email of the customer"
               },
-              "phone": {
+              "dynamic_field_1": {
                 "type": "string",
-                "description": "The phone number of the customer"
-              },
-              "countryName": {
-                "type": "string",
-                "description": "The country of the customer"
+                "description": "The country of the customer",
+                "default": null
               }
             },
-            "required": ["email", "phone"]
+            "required": ["email", "nickName"]
           },
           "endpoint": {
             "url": "http://172.16.92.21:18080/contactsService/add",
@@ -52,35 +41,17 @@
               "Content-Type": "application/json"
             },
             "body": {
-              "tenantId": "just4test",
               "nickName": "{nickName}",
-              "countryName": "{countryName}",
-              "phoneNumber": "{phone}",
-              "email": "{email}"          
-            }
-          }
-        }
-      ]
-    },
-    {
-      "condition": "Customers need to schedule a demo or inquire about detailed product or service information",
-      "action": "1. If the customer information has not been fully collected, persuade the customer to provide this information. Inform the customer that the Customer Manager will proactively reach out after information is provided. 2. If all needed information is collected, thank users for providing their information and use the hand_off_assign_to tool",
-      "tools": [
-        {
-          "name": "hand_off_assign_to",
-          "description": "Transfer to a human agent and assign to a specific customer",
-          "parameters": {
-            "type": "object",
-            "properties": {}
-          },
-          "endpoint": {
-            "url": "https://jsonplaceholder.typicode.com/users/a1b2c3d4e5f6g7h8i9j0k",
-            "method": "GET",
-            "headers": {
-              "Content-Type": "application/json"
-            },
-            "body":{
-              "customer_id": "a1b2c3d4e5f6g7h8i9j0k"
+              "phoneNumber": "todo_autofill_by_system",
+              "email": "{email}",
+              "customAttrs": [
+                {
+                  "key": "dynamic_field_1",
+                  "value": {
+                    "dynamic_field_1": "{dynamic_field_1}"
+                  }
+                }
+              ]
             }
           }
         }
@@ -88,101 +59,43 @@
     },
     {
       "condition": "The customer clearly expresses the intention to transfer to a human agent ",
-      "action": "1. If the customer information has not been fully collected, persuade the customer to provide this information. Inform the customer that providing information can help humans more efficiently prioritize and resolve issues. 2. If all needed information is collected, thank users for providing their information and use the hand_off tool to transfer to human agents",
+      "action": "Transfer to a human agent using the handoff_to tool",
       "tools": [
-        "hand_off"
-      ]
-    },
-    {
-      "condition": "When a customer asks about weather",
-      "action": "1. If the customer provides a specific location, use the get_weather tool to provide current weather information. 2. If no location is specified, politely ask the customer to provide their city or location so you can give them accurate weather information.",
-      "tools": [
-        "get_weather"
+        {
+          "name": "handoff_to",
+          "description": "Transfer to a human agent",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "assigneeId": {
+                "type": "string",
+                "description": "The ID of the assignee",
+                "default": null
+              },
+              "type": {
+                "type": "string",
+                "description": "The type of the assignee. (e.g. owner, agent, unassigned, team, lastAssignee)",
+                "examples": ["owner", "agent", "unassigned", "team", "lastAssignee"],
+                "default": "unassigned"
+              }
+            }
+          },
+          "endpoint": {
+            "url": "http://172.16.80.52:8080/inboxConversationService/handoff",
+            "method": "POST",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body":{
+              "assigneeId": "{assigneeId}",
+              "type": "{type}",
+              "dialogId": "todo_autofill_by_system"
+            }
+          }
+        }
       ]
     }
   ],
   "tools": [
-    {
-      "name": "hand_off",
-      "description": "Transfer to a human agent",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      },
-      "endpoint": {
-        "url": "static://handoff",
-        "method": "GET",
-        "response": {
-          "data": "handover:[Translate \"Got it! Let me connect you with one of our team members who'll be happy to help you further.\" to the conversation language]",
-          "control": {
-            "mode": "manual"
-          }
-        }
-      }
-    },
-    {
-      "name": "get_exchange_rate",
-      "description": "Get real-time currency exchange rates (using exchangerate-api.com free tier)",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "base": {
-            "type": "string",
-            "description": "Base currency code (3-letter ISO code)",
-            "examples": ["USD", "EUR", "GBP", "CNY", "JPY"],
-            "default": "USD"
-          },
-          "target": {
-            "type": "string",
-            "description": "Target currency code (3-letter ISO code)",
-            "examples": ["USD", "EUR", "GBP", "CNY", "JPY"],
-            "default": "CNY"
-          },
-          "amount": {
-            "type": "number",
-            "description": "The amount of money to convert",
-            "examples": [100, 200, 300],
-            "default": 1
-          }
-        },
-        "required": ["base", "target", "amount"]
-      },
-      "endpoint": {
-        "url": "https://v6.exchangerate-api.com/v6/9dd0f717def0b44c86ecdd95/pair/{base}/{target}/{amount}",
-        "method": "GET",
-        "headers": {
-          "Content-Type": "application/json"
-        }
-      }
-    },
-    {
-      "name": "get_weather",
-      "description": "Get current weather information for a specific location",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "q": {
-            "type": "string",
-            "description": "The city name, state/country code (e.g., 'London,UK' or 'New York,NY,US')"
-          },
-          "units": {
-            "type": "string",
-            "description": "The unit of the temperature (e.g., 'metric' for Celsius or 'imperial' for Fahrenheit)",
-            "default": "metric"
-          },
-          "lang": {
-            "type": "string",
-            "description": "The language of the weather information",
-            "default": "en"
-          }
-        },
-        "required": ["q"]
-      },
-      "endpoint": {
-        "url": "https://api.openweathermap.org/data/2.5/weather?appid=377637a8a6633d518b0eae6391887dbc",
-        "method": "GET"
-      }
-    }
   ]
 }
