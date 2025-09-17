@@ -310,6 +310,7 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         t_end = time.time()
 
+        self._logger.debug(f"generate durations ====== {t_end - t_start}")
         self._logger.trace(json.dumps(response.model_dump(), indent=2))
 
         raw_content = response.choices[0].message.content or "{}"

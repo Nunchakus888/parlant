@@ -126,7 +126,9 @@ class ToolManager:
         
         for param_name, param_config in properties.items():
             param_type = type_mapping.get(param_config.get("type", "string"), str)
-            is_required = param_name in required_params
+            
+            has_default = "default" in param_config
+            is_required = param_name in required_params and not has_default  # 有默认值就不算必需
             # 创建带注解的类型
             annotated_type = Annotated[param_type, ToolParameterOptions(
                 description=param_config.get("description", f"Parameter {param_name}"),
@@ -138,7 +140,7 @@ class ToolManager:
                 sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type))
             else:
                 # 只有当配置中有default时才设置默认值
-                if "default" in param_config:
+                if has_default:
                     sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type, default=param_config["default"]))
                 else:
                     sig_params.append(Parameter(param_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=annotated_type))
