@@ -45,6 +45,13 @@ class CustomAgentFactory(AgentFactory):
         basic_settings = config.get("basic_settings", {})
 
         server = self._get_server_from_container()
+
+        actionbooks = config.get("action_books")
+        if not actionbooks:
+            self._logger.error("❌ 没有找到 action_books，无法创建智能体")
+            # todo: handle this
+            pass
+
         
         if server:
             agent = await server.create_agent(

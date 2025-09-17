@@ -408,8 +408,13 @@ class SessionUpdateParamsDTO(
 chat_request_example: ExampleJson = {
     "message": "Hello, I need help with my order",
     "customer_id": "cust_123xy",
-    "session_title": "Chat Session",
-    "timeout": 30,
+    "tenant_id": "xxx",
+    "chatbot_id": "xxx",
+    "md5_checksum": "xxx",
+    "is_preview": False,
+    "preview_act_ids": [],
+    "session_title": "",
+    "timeout": 60,
 }
 
 
@@ -2279,7 +2284,7 @@ def create_router(
             
             # Step 6: Wait for AI response
             logger.info("⏳ Step 6: Waiting for AI response")
-            timeout = params.timeout or 30
+            timeout = params.timeout or 60
             logger.info(f"⏰ Timeout set to: {timeout} seconds")
             logger.info(f"🔍 Waiting for events with: session_id={session.id}, min_offset={customer_event.offset + 1}, source={EventSource.AI_AGENT}, kinds={[EventKind.MESSAGE]}")
             
