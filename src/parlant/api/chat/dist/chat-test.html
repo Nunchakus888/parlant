@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Parlant Chat Test</title>
+    <title>Chat Test</title>
     <style>
         body { 
             font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; 
@@ -47,6 +47,12 @@
             outline: none;
             border-color: #3b82f6;
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin: 0;
+            cursor: pointer;
         }
         textarea { 
             min-height: 100px; 
@@ -138,6 +144,18 @@
         .required {
             color: #ef4444;
         }
+        .section-divider {
+            border-top: 1px solid #e5e7eb;
+            margin: 24px 0;
+        }
+        .form-group.checkbox-group {
+            align-items: flex-start;
+        }
+        .form-group.checkbox-group label {
+            margin-left: 8px;
+            width: auto;
+            flex: 1;
+        }
     </style>
 </head>
 <body>
@@ -146,10 +164,13 @@
             <h1 style="margin: 0 0 24px 0; color: #1f2937; font-size: 24px;">Parlant Chat Test</h1>
             
             <form id="chatForm">
+                <!-- Required Fields Section -->
+                <h3 style="margin: 0 0 16px 0; color: #374151; font-size: 16px; font-weight: 600;">Required Fields</h3>
+                
                 <div class="form-group">
-                    <label for="customer_id">Customer ID</label>
-                    <input type="text" id="customer_id" name="customer_id" value="test_user">
-                    <div class="help-text">Optional: Unique identifier for the customer</div>
+                    <label for="message">Message <span class="required">*</span></label>
+                    <textarea id="message" name="message" placeholder="Enter your message here..." required></textarea>
+                    <div class="help-text">The message to send to the AI agent</div>
                 </div>
                 
                 <div class="form-group">
@@ -159,27 +180,63 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="message">Message <span class="required">*</span></label>
-                    <textarea id="message" name="message" placeholder="Enter your message here..." required></textarea>
-                    <div class="help-text">The message to send to the AI agent</div>
+                    <label for="chatbot_id">Chatbot ID <span class="required">*</span></label>
+                    <input type="text" id="chatbot_id" name="chatbot_id" placeholder="Enter chatbot ID" required>
+                    <div class="help-text">Unique identifier for the chatbot</div>
+                </div>
+                
+                <!-- Optional Fields Section -->
+                <h3 style="margin: 24px 0 16px 0; color: #374151; font-size: 16px; font-weight: 600;">Optional Fields</h3>
+                
+                <div class="form-group">
+                    <label for="customer_id">Customer ID</label>
+                    <input type="text" id="customer_id" name="customer_id" value="test_user">
+                    <div class="help-text">Unique identifier for the customer (auto-created if not provided)</div>
                 </div>
                 
                 <div class="form-group">
                     <label for="session_id">Session ID</label>
                     <input type="text" id="session_id" name="session_id" placeholder="Leave empty for new session">
-                    <div class="help-text">Optional: Continue existing session</div>
+                    <div class="help-text">Continue existing session (new session created if not provided)</div>
                 </div>
                 
                 <div class="form-group">
                     <label for="session_title">Session Title</label>
                     <input type="text" id="session_title" name="session_title" placeholder="Chat Session">
-                    <div class="help-text">Optional: Title for new sessions</div>
+                    <div class="help-text">Title for new sessions (defaults to 'Chat Session')</div>
                 </div>
                 
                 <div class="form-group">
                     <label for="timeout">Timeout (seconds)</label>
                     <input type="number" id="timeout" name="timeout" value="60" min="5" max="300">
-                    <div class="help-text">Maximum wait time for AI response</div>
+                    <div class="help-text">Maximum wait time for AI response (default: 60 seconds)</div>
+                </div>
+                
+                <!-- Advanced Options Section -->
+                <h3 style="margin: 24px 0 16px 0; color: #374151; font-size: 16px; font-weight: 600;">Advanced Options</h3>
+                
+                <div class="form-group">
+                    <label for="autofill_params">Autofill Parameters</label>
+                    <textarea id="autofill_params" name="autofill_params" placeholder='{"dialogId": "123", "tenantId": "1bgrs2d1sxef47d23a91x4s6z7y9gt8"}'></textarea>
+                    <div class="help-text">JSON object for auto-filling data-connector parameters</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="preview_actionbook_ids">Preview Actionbook IDs</label>
+                    <input type="text" id="preview_actionbook_ids" name="preview_actionbook_ids" placeholder="act_123xyz,act_456xyz">
+                    <div class="help-text">Comma-separated list of actionbook IDs to preview</div>
+                </div>
+                
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="is_preview" name="is_preview" value="true">
+                    <label for="is_preview">Is Preview</label>
+                    <div class="help-text">Whether to preview the actionbooks</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="md5_checksum">MD5 Checksum</label>
+                    <input type="text" id="md5_checksum" name="md5_checksum" placeholder="1234567890">
+                    <div class="help-text">MD5 checksum of agent configs (triggers reload if changed)</div>
                 </div>
                 
                 <div class="button-group">
@@ -208,17 +265,51 @@
             
             const formData = new FormData(form);
             const data = {
-                customer_id: formData.get('customer_id'),
-                tenant_id: formData.get('tenant_id'),
                 message: formData.get('message'),
+                tenant_id: formData.get('tenant_id'),
+                chatbot_id: formData.get('chatbot_id'),
+                customer_id: formData.get('customer_id') || null,
                 session_id: formData.get('session_id') || null,
                 session_title: formData.get('session_title') || null,
-                timeout: parseInt(formData.get('timeout')) || 30
+                timeout: parseInt(formData.get('timeout')) || 60,
+                autofill_params: {},
+                preview_actionbook_ids: [],
+                is_preview: false,
+                md5_checksum: formData.get('md5_checksum') || null
             };
 
-            // Remove null values
+            // Handle autofill_params JSON parsing
+            const autofillParamsText = formData.get('autofill_params');
+            if (autofillParamsText && autofillParamsText.trim()) {
+                try {
+                    data.autofill_params = JSON.parse(autofillParamsText);
+                } catch (error) {
+                    showResponse({
+                        error: 'Invalid JSON',
+                        message: 'Autofill Parameters must be valid JSON',
+                        details: error.message
+                    }, true);
+                    return;
+                }
+            }
+
+            // Handle preview_actionbook_ids
+            const previewActionbookIdsText = formData.get('preview_actionbook_ids');
+            if (previewActionbookIdsText && previewActionbookIdsText.trim()) {
+                data.preview_actionbook_ids = previewActionbookIdsText
+                    .split(',')
+                    .map(id => id.trim())
+                    .filter(id => id.length > 0);
+            }
+
+            // Handle is_preview checkbox
+            data.is_preview = formData.get('is_preview') === 'true';
+
+            // Remove null/empty values
             Object.keys(data).forEach(key => {
-                if (data[key] === null || data[key] === '') {
+                if (data[key] === null || data[key] === '' || 
+                    (Array.isArray(data[key]) && data[key].length === 0) ||
+                    (typeof data[key] === 'object' && Object.keys(data[key]).length === 0)) {
                     delete data[key];
                 }
             });
@@ -240,7 +331,13 @@
                 if (response_data.ok) {
                     showResponse(result, false);
                 } else {
-                    showResponse(result, true);
+                    // Enhanced error display
+                    const errorInfo = {
+                        status: response_data.status,
+                        statusText: response_data.statusText,
+                        ...result
+                    };
+                    showResponse(errorInfo, true);
                 }
             } catch (error) {
                 showResponse({
@@ -278,13 +375,35 @@
         function clearForm() {
             form.reset();
             hideResponse();
+            // Set default values
             document.getElementById('customer_id').value = 'test_user';
-            document.getElementById('timeout').value = '30';
+            document.getElementById('timeout').value = '60';
             document.getElementById('tenant_id').value = '';
+            document.getElementById('chatbot_id').value = '';
+            document.getElementById('message').value = '';
+            document.getElementById('session_id').value = '';
+            document.getElementById('session_title').value = '';
+            document.getElementById('autofill_params').value = '';
+            document.getElementById('preview_actionbook_ids').value = '';
+            document.getElementById('is_preview').checked = false;
+            document.getElementById('md5_checksum').value = '';
         }
 
         // Auto-focus on message field
         document.getElementById('message').focus();
+        
+        // Add JSON formatting for autofill_params
+        document.getElementById('autofill_params').addEventListener('blur', function() {
+            const value = this.value.trim();
+            if (value) {
+                try {
+                    const parsed = JSON.parse(value);
+                    this.value = JSON.stringify(parsed, null, 2);
+                } catch (error) {
+                    // Keep original value if not valid JSON
+                }
+            }
+        });
     </script>
 </body>
 </html>

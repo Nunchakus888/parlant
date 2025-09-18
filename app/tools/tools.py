@@ -190,8 +190,8 @@ class ToolManager:
     
     async def _call_api(self, config: ToolConfig, params: Dict[str, Any], max_retries: int = 2) -> Dict[str, Any]:
         """调用API，支持重试机制"""
-        # 过滤掉 None 值
-        params = {k: v for k, v in params.items() if v is not None}
+        # # 过滤掉 None 值
+        # params = {k: v for k, v in params.items() if v is not None}
         
         endpoint = config.endpoint
         
