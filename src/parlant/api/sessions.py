@@ -415,6 +415,7 @@ chat_request_example: ExampleJson = {
     "preview_actionbook_ids": [],
     "autofill_params": {},
     "session_title": "",
+    "timeout": 60,
 }
 
 
@@ -474,6 +475,11 @@ class ChatRequestDTO(
         default="",
         description="Chatbot ID. Required.",
         examples=["chatbot_123xyz"],
+    )
+    timeout: Optional[int] = Field(
+        default=None,
+        description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
+        examples=[30, 60, 120],
     )
 
 
@@ -1503,7 +1509,7 @@ def create_router(
             agent_id=session.agent_id,
             creation_utc=session.creation_utc,
             title=session.title,
-            customer_id=session.customer_id,
+            customer_id=session.customer_id or CustomerStore.GUEST_ID,
             consumption_offsets=ConsumptionOffsetsDTO(
                 client=session.consumption_offsets["client"],
             ),
@@ -1547,7 +1553,7 @@ def create_router(
                 agent_id=s.agent_id,
                 creation_utc=s.creation_utc,
                 title=s.title,
-                customer_id=s.customer_id,
+                customer_id=s.customer_id or CustomerStore.GUEST_ID,
                 consumption_offsets=ConsumptionOffsetsDTO(
                     client=s.consumption_offsets["client"],
                 ),
@@ -2282,30 +2288,6 @@ def create_router(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to process message: {str(e)}"
                 )
-            
-            # Step 5: Check AI engine status before waiting
-            logger.info("🔍 Step 5: Checking AI engine status")
-            try:
-                # Check if there are any AI events before waiting
-                ai_events_before = await session_store.list_events(
-                    session_id=session.id,
-                    source=EventSource.AI_AGENT,
-                    kinds=[EventKind.MESSAGE],
-                )
-                logger.info(f"📊 AI events before waiting: {len(ai_events_before)}")
-                
-                # Check if there are any status events (to see if AI is working)
-                status_events = await session_store.list_events(
-                    session_id=session.id,
-                    kinds=[EventKind.STATUS],
-                    correlation_id=customer_event.correlation_id,
-                )
-                logger.info(f"📊 Status events for correlation: {len(status_events)}")
-                for status_event in status_events:
-                    logger.info(f"📋 Status event: {status_event.data}")
-                
-            except Exception as e:
-                logger.warning(f"⚠️ Could not check AI engine status: {e}")
             
             # Step 6: Wait for AI response
             logger.info("⏳ Step 6: Waiting for AI response")
