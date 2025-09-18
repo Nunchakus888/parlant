@@ -431,7 +431,7 @@ class ChatRequestDTO(
             examples=["Hello, I need help", "What can you do?"],
         ),
     ]
-    customer_id: Optional[CustomerId] = Field(
+    customer_id: CustomerId = Field(
       default=None,
       description="unique identifier for the customer, if not provided, a new customer will be created."
     )
