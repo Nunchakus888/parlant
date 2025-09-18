@@ -47,6 +47,7 @@ from parlant.api.authorization import (
 )
 from parlant.core.contextual_correlator import ContextualCorrelator
 from parlant.core.common import ItemNotFoundError, generate_id
+from parlant.core.sessions import SessionListener
 from parlant.core.loggers import LogLevel, Logger
 from parlant.core.application import Application
 from parlant.core.tags import TagStore
@@ -83,6 +84,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
     websocket_logger = container[WebSocketLogger]
     correlator = container[ContextualCorrelator]
     authorization_policy = container[AuthorizationPolicy]
+    session_listener = container[SessionListener]
     application = container[Application]
     if AgentFactory in container.defined_types:
         agent_factory = container[AgentFactory]
@@ -251,12 +253,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
             authorization_policy=authorization_policy,
             app=application,
             logger=logger,
-            application=application,
-            agent_store=agent_store,
-            customer_store=customer_store,
-            session_store=session_store,
             session_listener=session_listener,
-            nlp_service=nlp_service,
             agent_factory=agent_factory,
         ),
     )
@@ -301,9 +298,7 @@ async def create_api_app(container: Container) -> ASGIApplication:
         prefix="/customers",
         router=customers.create_router(
             authorization_policy=authorization_policy,
-            customer_store=customer_store,
-            tag_store=tag_store,
-            agent_store=agent_store,
+            app=application,
         ),
     )
 

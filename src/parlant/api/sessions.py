@@ -15,6 +15,7 @@
 from datetime import datetime
 from enum import Enum
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
+from itertools import chain
 from pydantic import Field
 from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, cast
 
@@ -31,16 +32,21 @@ from parlant.core.async_utils import Timeout
 from parlant.core.common import DefaultBaseModel
 from parlant.core.customers import CustomerId, CustomerStore
 from parlant.core.engines.types import UtteranceRationale, UtteranceRequest
+from parlant.core.loggers import Logger
 from parlant.core.nlp.generation_info import GenerationInfo
+from parlant.core.nlp.moderation import ModerationService
+from parlant.core.nlp.service import NLPService
 from parlant.core.sessions import (
     Event,
     EventId,
     EventKind,
     EventSource,
+    MessageEventData,
     MessageGenerationInspection,
     Participant,
     PreparationIteration,
     SessionId,
+    SessionListener,
     SessionStatus,
     SessionUpdateParams,
 )
@@ -1224,10 +1230,7 @@ async def _ensure_session_and_customer(
     session_id: SessionId,
     customer_id: CustomerId,
     session_title: str,
-    application: Application,
-    customer_store: CustomerStore,
-    session_store: SessionStore,
-    agent_store: AgentStore,
+    app: Application,
     logger: Logger,
     agent_creator: Callable[[CustomerId], Awaitable[Agent]],
 ) -> tuple[Any, Any, AgentId]:
@@ -1242,9 +1245,6 @@ async def _ensure_session_and_customer(
         customer_id: The customer ID to check/create
         session_title: Title for the session if creating new
         application: Application instance for creating sessions
-        customer_store: Customer store for customer operations
-        session_store: Session store for session operations
-        agent_store: Agent store for agent operations
         logger: Logger instance for logging
         
     Returns:
@@ -1253,25 +1253,27 @@ async def _ensure_session_and_customer(
     
     # Step 1: Ensure customer exists
     try:
-        customer = await customer_store.read_customer(customer_id)
+        customer = await app.customers.read(customer_id)
         logger.info(f"👤 Customer found: {customer.id}")
     except Exception:
         logger.info(f"👤 Customer not found: {customer_id}, creating...")
-        customer = await customer_store.create_customer(
+        customer = await app.customers.create(
             id=customer_id,
             name=customer_id,
+            extra={},
+            tags=[],
         )
         logger.info(f"👤 Created new customer: {customer.id}")
 
     
     # Step 2: Ensure session exists
     try:
-        session = await session_store.read_session(session_id)
+        session = await app.sessions.read(session_id)
         logger.info(f"🔍 Session found: {session.id}")
         
         # ensure agent exists
         try:
-            await agent_store.read_agent(session.agent_id)
+            await app.agents.read(session.agent_id)
             agent_id = session.agent_id    
             logger.info(f"🤖 Agent found: {agent_id}")
         except Exception:
@@ -1282,7 +1284,7 @@ async def _ensure_session_and_customer(
             logger.info(f"🤖 Created new agent: {agent_id}")
             
             # Update session with new agent_id
-            session = await session_store.update_session(
+            session = await app.sessions.update(
                 session_id=session_id,
                 params={
                     "agent_id": agent_id,
@@ -1302,7 +1304,7 @@ async def _ensure_session_and_customer(
         logger.info(f"🤖 Created new agent: {agent_id}")
 
         # Step 4: Create session
-        session = await application.create_customer_session(
+        session = await app.sessions.create(
             session_id=session_id,
             customer_id=customer_id,
             agent_id=agent_id,
@@ -1409,12 +1411,7 @@ def create_router(
     authorization_policy: AuthorizationPolicy,
     app: Application,
     logger: Logger,
-    application: Application,
-    agent_store: AgentStore,
-    customer_store: CustomerStore,
-    session_store: SessionStore,
     session_listener: SessionListener,
-    nlp_service: NLPService,
     agent_factory: AgentFactory | None = None,
 ) -> APIRouter:
     router = APIRouter()
@@ -1428,7 +1425,7 @@ def create_router(
             return agent
         else:
             logger.info(f"No agent factory provided, using default agent for customer: {customer_id}")
-            agent = await agent_store.create_agent(
+            agent = await app.agents.create(
                 name=f"Default Agent for {customer_id}",
                 description=f"Default agent for customer {customer_id}",
             )
@@ -1462,7 +1459,7 @@ def create_router(
         The session will be initialized with the specified agent and optional customer.
         If no customer_id is provided, a guest customer will be created.
         """
-        _ = await agent_store.read_agent(agent_id=params.agent_id)
+        _ = await app.agents.read(agent_id=params.agent_id)
 
         logger.info(f"👤 Creating session, customer: {params.customer_id}, agent: {params.agent_id}, read_agent: {_}")
 
@@ -1478,7 +1475,7 @@ def create_router(
             )
 
         session = await app.sessions.create(
-            customer_id=params.customer_id or CustomerStore.GUEST_ID,
+            customer_id=params.customer_id or CustomerId.GUEST_ID,
             agent_id=params.agent_id,
             title=params.title,
             allow_greeting=allow_greeting,
@@ -1521,7 +1518,7 @@ def create_router(
             agent_id=session.agent_id,
             creation_utc=session.creation_utc,
             title=session.title,
-            customer_id=session.customer_id or CustomerStore.GUEST_ID,
+            customer_id=session.customer_id or app.customers.GUEST_ID,
             consumption_offsets=ConsumptionOffsetsDTO(
                 client=session.consumption_offsets["client"],
             ),
@@ -1565,7 +1562,7 @@ def create_router(
                 agent_id=s.agent_id,
                 creation_utc=s.creation_utc,
                 title=s.title,
-                customer_id=s.customer_id or CustomerStore.GUEST_ID,
+                customer_id=s.customer_id or app.customers.GUEST_ID,
                 consumption_offsets=ConsumptionOffsetsDTO(
                     client=s.consumption_offsets["client"],
                 ),
@@ -2081,10 +2078,7 @@ def create_router(
                 session_id=session_id,
                 customer_id=customer_id,
                 session_title=params.session_title or f"{customer_id} - Chat Session",
-                application=application,
-                customer_store=customer_store,
-                session_store=session_store,
-                agent_store=agent_store,
+                app=app,                
                 logger=logger,
                 agent_creator=_agent_creator,
             )
@@ -2108,7 +2102,7 @@ def create_router(
             
             try:
                 logger.info(f"📨 Posting event with session_id: {session.id}, agent_id: {session.agent_id}")
-                customer_event = await application.post_event(
+                customer_event = await app.sessions.create_event(
                     session_id=session.id,
                     kind=EventKind.MESSAGE,
                     data=message_data,
@@ -2117,24 +2111,6 @@ def create_router(
                 )
                 logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
 
-                
-                status_events_immediate = await session_store.list_events(
-                    session_id=session.id,
-                    kinds=[EventKind.STATUS],
-                )
-                logger.info(f"📊 Status events immediately after posting: {len(status_events_immediate)}")
-                for se in status_events_immediate:
-                    logger.info(f"  - Status: {se.data}")
-                
-                # Debug: Check if there are any error events
-                error_events = await session_store.list_events(
-                    session_id=session.id,
-                    kinds=[EventKind.STATUS],
-                )
-                logger.info(f"📊 Error events: {len(error_events)}")
-                for ee in error_events:
-                    if ee.data and isinstance(ee.data, dict) and ee.data.get("status") == "error":
-                        logger.error(f"❌ Error event detected: {ee.data}")
                     
             except Exception as e:
                 logger.error(f"❌ Failed to post customer message: {e}")
@@ -2164,11 +2140,12 @@ def create_router(
                 if wait_result:
                     logger.info("✅ AI response detected, retrieving events")
                     # Get the AI response
-                    ai_events = await session_store.list_events(
+                    ai_events = await app.sessions.find_events(
                         session_id=session.id,
                         min_offset=customer_event.offset + 1,
                         source=EventSource.AI_AGENT,
                         kinds=[EventKind.MESSAGE],
+                        correlation_id=None,
                     )
                     logger.info(f"📊 Retrieved {len(ai_events)} AI events")
                     
@@ -2212,22 +2189,7 @@ def create_router(
             # Step 7: Timeout handling
             logger.warning("⏰ Step 7: Handling timeout")
             
-            # Before throwing 504, let's check what actually happened
-            try:
-                final_ai_events = await session_store.list_events(
-                    session_id=session.id,
-                    source=EventSource.AI_AGENT,
-                    kinds=[EventKind.MESSAGE],
-                )
-                logger.warning(f"⚠️ Final AI events count: {len(final_ai_events)}")
-                
-                all_events = await session_store.list_events(session.id)
-                logger.warning(f"⚠️ Total events in session: {len(all_events)}")
-                for i, event in enumerate(all_events):
-                    logger.warning(f"⚠️ Event {i}: {event.kind} from {event.source} - {event.data}")
-                
-            except Exception as e:
-                logger.error(f"❌ Could not retrieve final event status: {e}")
+            # Timeout occurred - no AI response received
             
             # Now throw the timeout
             raise HTTPException(

@@ -20,6 +20,8 @@ class CustomerTagUpdateParams:
 
 
 class CustomerModule:
+    GUEST_ID = CustomerId("guest")
+
     def __init__(
         self,
         logger: Logger,
@@ -43,6 +45,7 @@ class CustomerModule:
         name: str,
         extra: Mapping[str, str],
         tags: Sequence[TagId] | None,
+        id: CustomerId | None = None,
     ) -> Customer:
         if tags:
             for tag_id in tags:
@@ -51,6 +54,7 @@ class CustomerModule:
             tags = list(set(tags))
 
         customer = await self._customer_store.create_customer(
+            id=id,
             name=name,
             extra=extra,
             tags=tags or [],
