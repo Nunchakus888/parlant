@@ -95,12 +95,14 @@ class SessionModule:
         self,
         customer_id: CustomerId,
         agent_id: AgentId,
+        session_id: SessionId | None = None,
         title: str | None = None,
         allow_greeting: bool = False,
     ) -> Session:
         _ = await self._agent_store.read_agent(agent_id=agent_id)
 
         session = await self._session_store.create_session(
+            session_id=session_id,
             creation_utc=datetime.now(timezone.utc),
             customer_id=customer_id,
             agent_id=agent_id,
