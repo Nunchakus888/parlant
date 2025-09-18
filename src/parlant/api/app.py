@@ -297,15 +297,15 @@ async def create_api_app(container: Container) -> ASGIApplication:
     #     ),
     # )
 
-    # api_app.include_router(
-    #     prefix="/customers",
-    #     router=customers.create_router(
-    #         authorization_policy=authorization_policy,
-    #         customer_store=customer_store,
-    #         tag_store=tag_store,
-    #         agent_store=agent_store,
-    #     ),
-    # )
+    api_app.include_router(
+        prefix="/customers",
+        router=customers.create_router(
+            authorization_policy=authorization_policy,
+            customer_store=customer_store,
+            tag_store=tag_store,
+            agent_store=agent_store,
+        ),
+    )
 
     # api_app.include_router(
     #     prefix="/canned_responses",
