@@ -477,9 +477,9 @@ class ChatRequestDTO(
         examples=["chatbot_123xyz"],
     )
     timeout: Optional[int] = Field(
-        default=None,
+        default=60,
         description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
-        examples=[30, 60, 120],
+        examples=[60, 120],
     )
 
 
@@ -2224,7 +2224,7 @@ def create_router(
             session, customer, agent_id = await _ensure_session_and_customer(
                 session_id=session_id,
                 customer_id=customer_id,
-                session_title=params.session_title or "Chat Session",
+                session_title=params.session_title or f"{customer_id} - Chat Session",
                 application=application,
                 customer_store=customer_store,
                 session_store=session_store,
