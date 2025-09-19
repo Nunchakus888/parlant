@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+from typing import Dict, Any
+
 from parlant.app_modules.agents import AgentModule
 from parlant.app_modules.capabilities import CapabilityModule
 from parlant.app_modules.canned_responses import CannedResponseModule
@@ -57,3 +60,7 @@ class Application:
         self.glossary = glossary_module
         self.evaluations = evaluation_module
         self.canned_responses = canned_response_module
+        
+        # cache mechanism
+        self._object_cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_lock = asyncio.Lock()
