@@ -1227,30 +1227,45 @@ KindsQuery: TypeAlias = Annotated[
 
 
 async def _ensure_session_and_customer(
-    session_id: SessionId,
-    customer_id: CustomerId,
-    session_title: str,
+    params: ChatRequestDTO,
     app: Application,
     logger: Logger,
     agent_creator: Callable[[CustomerId], Awaitable[Agent]],
 ) -> tuple[Any, Any, AgentId]:
     """
-    Unified session and customer management logic.
+    Unified session and customer management logic with md5_checksum caching.
     
     This function handles the complex logic of ensuring both session and customer exist,
     creating them if necessary, and returning the appropriate instances for chat interaction.
+    It uses md5_checksum to cache objects and avoid unnecessary recreation.
     
     Args:
-        session_id: The session ID to check/create
-        customer_id: The customer ID to check/create
-        session_title: Title for the session if creating new
-        application: Application instance for creating sessions
+        params: The parameters for the chat request
+        app: Application instance for creating sessions
         logger: Logger instance for logging
+        agent_creator: Function to create agents for customers
         
     Returns:
         Tuple of (session, customer, agent_id) ready for chat interaction
     """
     
+    # Extract parameters
+    customer_id = params.customer_id
+    session_id = params.session_id
+    session_title = params.session_title or f"{customer_id} - Chat Session"
+    md5_checksum = params.md5_checksum
+    
+    # Generate cache key if md5_checksum is provided
+    cache_key = f"{customer_id}:{md5_checksum}" if md5_checksum else None
+    
+    # Check cache first if md5_checksum is provided
+    if cache_key and md5_checksum:
+        async with app._cache_lock:
+            if cache_key in app._object_cache:
+                cached = app._object_cache[cache_key]
+                logger.info(f"🎯 Using cached objects for {cache_key}")
+                return cached["session"], cached["customer"], cached["agent_id"]
+
     # Step 1: Ensure customer exists
     try:
         customer = await app.customers.read(customer_id)
@@ -1265,25 +1280,32 @@ async def _ensure_session_and_customer(
         )
         logger.info(f"👤 Created new customer: {customer.id}")
 
+    # Step 2: Ensure session exists and check md5_checksum
+    session = None
+    agent_id = None
     
-    # Step 2: Ensure session exists
     try:
         session = await app.sessions.read(session_id)
         logger.info(f"🔍 Session found: {session.id}")
         
-        # ensure agent exists
-        try:
-            await app.agents.read(session.agent_id)
-            agent_id = session.agent_id    
-            logger.info(f"🤖 Agent found: {agent_id}")
-        except Exception:
-            logger.info(f"🤖 Agent {session.agent_id} not found, creating new agent...")
-            # Create new agent for existing session
+        # Check if md5_checksum has changed
+        session_checksum = getattr(session, 'md5_checksum', None)
+        if md5_checksum and session_checksum != md5_checksum:
+            logger.info(f"🔄 MD5 checksum changed from {session_checksum} to {md5_checksum}, recreating agent...")
+            
+            # Delete old agent if it exists
+            try:
+                await app.agents.delete(session.agent_id)
+                logger.info(f"🗑️ Deleted old agent: {session.agent_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to delete old agent {session.agent_id}: {e}")
+            
+            # Create new agent with updated configuration
             agent = await agent_creator(customer_id)
             agent_id = agent.id
             logger.info(f"🤖 Created new agent: {agent_id}")
             
-            # Update session with new agent_id
+            # Update session with new agent_id and md5_checksum
             session = await app.sessions.update(
                 session_id=session_id,
                 params={
@@ -1291,9 +1313,45 @@ async def _ensure_session_and_customer(
                     "customer_id": customer_id,
                     "title": session_title,
                     "allow_greeting": False,
+                    "md5_checksum": md5_checksum,
                 },
             )
             logger.info(f"🔍 Updated session with new agent: {session.id}")
+            
+        else:
+            # md5_checksum matches or not provided, check if agent exists
+            try:
+                await app.agents.read(session.agent_id)
+                agent_id = session.agent_id    
+                logger.info(f"🤖 Agent found: {agent_id}")
+                
+                # Update md5_checksum if it wasn't set before
+                if md5_checksum and not session_checksum:
+                    session = await app.sessions.update(
+                        session_id=session_id,
+                        params={"md5_checksum": md5_checksum},
+                    )
+                    logger.info(f"🔍 Updated session with md5_checksum: {session.id}")
+                    
+            except Exception:
+                logger.info(f"🤖 Agent {session.agent_id} not found, creating new agent...")
+                # Create new agent for existing session
+                agent = await agent_creator(customer_id)
+                agent_id = agent.id
+                logger.info(f"🤖 Created new agent: {agent_id}")
+                
+                # Update session with new agent_id and md5_checksum
+                session = await app.sessions.update(
+                    session_id=session_id,
+                    params={
+                        "agent_id": agent_id,
+                        "customer_id": customer_id,
+                        "title": session_title,
+                        "allow_greeting": False,
+                        "md5_checksum": md5_checksum,
+                    },
+                )
+                logger.info(f"🔍 Updated session with new agent: {session.id}")
         
     except Exception:
         logger.info(f"🔍 Session not found: {session_id}, creating...")
@@ -1303,15 +1361,26 @@ async def _ensure_session_and_customer(
         agent_id = agent.id
         logger.info(f"🤖 Created new agent: {agent_id}")
 
-        # Step 4: Create session
+        # Step 4: Create session with md5_checksum
         session = await app.sessions.create(
             session_id=session_id,
             customer_id=customer_id,
             agent_id=agent_id,
             title=session_title,
             allow_greeting=False,
+            md5_checksum=md5_checksum,
         )
         logger.info(f"🔍 Created new session: {session.id} with agent: {agent_id}")
+    
+    # Cache the result if md5_checksum is provided
+    if cache_key and md5_checksum:
+        async with app._cache_lock:
+            app._object_cache[cache_key] = {
+                "session": session,
+                "customer": customer,
+                "agent_id": agent_id
+            }
+            logger.info(f"💾 Cached objects for {cache_key}")
     
     return session, customer, agent_id
 
@@ -2061,154 +2130,100 @@ def create_router(
         """
         logger.info(f"🚀 Chat request started - {params}")
         
-        try:
-            # Step 1: Authorization
-            logger.info("🔐 Step 1: Authorization check")
-            await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
-            logger.info("✅ Authorization successful")
-            
-            # Step 2: Session and Customer management
-            logger.info("👤 Step 2: Session and Customer management")
-            
-            customer_id = params.customer_id
-            session_id = params.session_id
-            
-            # Get or create session and customer in one unified flow
-            session, customer, agent_id = await _ensure_session_and_customer(
-                session_id=session_id,
-                customer_id=customer_id,
-                session_title=params.session_title or f"{customer_id} - Chat Session",
-                app=app,                
-                logger=logger,
-                agent_creator=_agent_creator,
-            )
-            
-            logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
+        await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
+        logger.info("✅ Authorization successful")
 
+        logger.info("👤 Step 2: Session and Customer management")
+        
+        # Get or create session and customer in one unified flow
+        session, customer, agent_id = await _ensure_session_and_customer(
+            params=params,
+            app=app,
+            logger=logger,
+            agent_creator=_agent_creator,
+        )
+        
+        logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
 
-            logger.info("📤 Step 4: Sending customer message")
-            logger.info(f"📝 Message content: '{params.message}'")
-            
-            # Build proper message event data (same as create_event API)
-            message_data: MessageEventData = {
-                "message": params.message,
-                "participant": {
-                    "id": customer_id,
-                    "display_name": customer_id,
-                },
-                "flagged": False,
-                "tags": [],
-            }
-            
-            try:
-                logger.info(f"📨 Posting event with session_id: {session.id}, agent_id: {session.agent_id}")
-                customer_event = await app.sessions.create_event(
-                    session_id=session.id,
-                    kind=EventKind.MESSAGE,
-                    data=message_data,
-                    source=EventSource.CUSTOMER,
-                    trigger_processing=True,
-                )
-                logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
-
-                    
-            except Exception as e:
-                logger.error(f"❌ Failed to post customer message: {e}")
-                import traceback
-                logger.error(f"❌ Traceback: {traceback.format_exc()}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to process message: {str(e)}"
-                )
-            
-            # Step 6: Wait for AI response
-            logger.info("⏳ Step 6: Waiting for AI response")
-            timeout = params.timeout or 60
-            logger.info(f"⏰ Timeout set to: {timeout} seconds")
-            logger.info(f"🔍 Waiting for events with: session_id={session.id}, min_offset={customer_event.offset + 1}, source={EventSource.AI_AGENT}, kinds={[EventKind.MESSAGE]}")
-            
-            try:
-                wait_result = await session_listener.wait_for_events(
-                    session_id=session.id,
-                    min_offset=customer_event.offset + 1,
-                    source=EventSource.AI_AGENT,
-                    kinds=[EventKind.MESSAGE],
-                    timeout=Timeout(timeout),
-                )
-                logger.info(f"⏳ Wait result: {wait_result}")
-                
-                if wait_result:
-                    logger.info("✅ AI response detected, retrieving events")
-                    # Get the AI response
-                    ai_events = await app.sessions.find_events(
-                        session_id=session.id,
-                        min_offset=customer_event.offset + 1,
-                        source=EventSource.AI_AGENT,
-                        kinds=[EventKind.MESSAGE],
-                        correlation_id=None,
-                    )
-                    logger.info(f"📊 Retrieved {len(ai_events)} AI events")
-                    
-                    if ai_events:
-                        # Return the first AI message event
-                        ai_event = ai_events[0]
-                        logger.info(f"✅ Returning AI response - event_id: {ai_event.id}, message: '{ai_event.data.get('message', '')[:50]}...'")
-                        
-                        return EventDTO(
-                            id=ai_event.id,
-                            source=_event_source_to_event_source_dto(ai_event.source),
-                            kind=_event_kind_to_event_kind_dto(ai_event.kind),
-                            offset=ai_event.offset,
-                            creation_utc=ai_event.creation_utc,
-                            correlation_id=ai_event.correlation_id,
-                            data=cast(JSONSerializableDTO, ai_event.data),
-                            deleted=ai_event.deleted,
-                        )
-                    else:
-                        logger.warning("⚠️ Wait returned True but no AI events found")
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="AI response detected but no events found"
-                        )
-                else:
-                    logger.warning("⏰ Wait returned False - timeout or no events")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error during AI response wait: {e}")
-                if "timeout" in str(e).lower():
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail="Request timed out waiting for AI response"
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Error waiting for AI response: {str(e)}"
-                    )
-            
-            # Step 7: Timeout handling
-            logger.warning("⏰ Step 7: Handling timeout")
-            
+        logger.info("📤 Step 4: Sending customer message")
+        logger.info(f"📝 Message content: '{params.message}'")
+        
+        # Build proper message event data (same as create_event API)
+        message_data: MessageEventData = {
+            "message": params.message,
+            "participant": {
+                "id": params.customer_id,
+                "display_name": params.customer_id,
+            },
+            "flagged": False,
+            "tags": [],
+        }
+        
+        logger.info(f"📨 Posting event with session_id: {session.id}, agent_id: {session.agent_id}")
+        customer_event = await app.sessions.create_event(
+            session_id=session.id,
+            kind=EventKind.MESSAGE,
+            data=message_data,
+            source=EventSource.CUSTOMER,
+            trigger_processing=True,
+        )
+        logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
+        
+        # Step 6: Wait for AI response
+        logger.info("⏳ Step 6: Waiting for AI response")
+        timeout = params.timeout or 60
+        logger.info(f"⏰ Timeout set to: {timeout} seconds")
+        logger.info(f"🔍 Waiting for events with: session_id={session.id}, min_offset={customer_event.offset + 1}, source={EventSource.AI_AGENT}, kinds={[EventKind.MESSAGE]}")
+        
+        wait_result = await session_listener.wait_for_events(
+            session_id=session.id,
+            min_offset=customer_event.offset + 1,
+            source=EventSource.AI_AGENT,
+            kinds=[EventKind.MESSAGE],
+            timeout=Timeout(timeout),
+        )
+        logger.info(f"⏳ Wait result: {wait_result}")
+        
+        if not wait_result:
             # Timeout occurred - no AI response received
-            
-            # Now throw the timeout
+            logger.warning("⏰ Step 7: Handling timeout")
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="Request timed out waiting for AI response. Check AI engine configuration and logs."
             )
-            
-        except HTTPException:
-            # Re-raise HTTP exceptions
-            raise
-        except Exception as e:
-            logger.error(f"❌ Unexpected error in chat endpoint: {e}")
-            logger.error(f"❌ Error type: {type(e).__name__}")
-            import traceback
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        
+        logger.info("✅ AI response detected, retrieving events")
+        # Get the AI response
+        ai_events = await app.sessions.find_events(
+            session_id=session.id,
+            min_offset=customer_event.offset + 1,
+            source=EventSource.AI_AGENT,
+            kinds=[EventKind.MESSAGE],
+            correlation_id=None,
+        )
+        logger.info(f"📊 Retrieved {len(ai_events)} AI events")
+        
+        if not ai_events:
+            logger.warning("⚠️ Wait returned True but no AI events found")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Internal server error: {str(e)}"
+                detail="AI response detected but no events found"
             )
+        
+        # Return the first AI message event
+        ai_event = ai_events[0]
+        logger.info(f"✅ Returning AI response - event_id: {ai_event.id}, message: '{ai_event.data.get('message', '')[:50]}...'")
+        
+        return EventDTO(
+            id=ai_event.id,
+            source=_event_source_to_event_source_dto(ai_event.source),
+            kind=_event_kind_to_event_kind_dto(ai_event.kind),
+            offset=ai_event.offset,
+            creation_utc=ai_event.creation_utc,
+            correlation_id=ai_event.correlation_id,
+            data=cast(JSONSerializableDTO, ai_event.data),
+            deleted=ai_event.deleted,
+        )
 
 
     return router

@@ -272,6 +272,7 @@ class Session:
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
     updated_utc: Optional[datetime] = datetime.now(timezone.utc)
+    md5_checksum: Optional[str] = None
 
 
 class SessionUpdateParams(TypedDict, total=False):
@@ -282,6 +283,7 @@ class SessionUpdateParams(TypedDict, total=False):
     updated_utc: Optional[datetime] = datetime.now(timezone.utc)
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
+    md5_checksum: Optional[str]
 
 
 class SessionStore(ABC):
@@ -293,6 +295,7 @@ class SessionStore(ABC):
         session_id: Optional[SessionId] = None,
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
+        md5_checksum: Optional[str] = None,
     ) -> Session: ...
 
     @abstractmethod
@@ -413,6 +416,7 @@ class _SessionDocument(TypedDict, total=False):
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[_AgentStateDocument]
     updated_utc: str
+    md5_checksum: Optional[str]
 
 
 class _EventDocument(TypedDict, total=False):
@@ -888,6 +892,8 @@ class SessionDocumentStore(SessionStore):
                 )
                 for s in params["agent_states"]
             ]
+        if "md5_checksum" in params:
+            doc_params["md5_checksum"] = params["md5_checksum"]
 
         return doc_params
 
@@ -913,6 +919,7 @@ class SessionDocumentStore(SessionStore):
                 for s in session.agent_states
             ],
             updated_utc=session.updated_utc.isoformat() if session.updated_utc else datetime.now(timezone.utc).isoformat(),
+            md5_checksum=session.md5_checksum,
         )
 
     def _deserialize_session(
@@ -936,6 +943,7 @@ class SessionDocumentStore(SessionStore):
                 for s in session_document["agent_states"]
             ],
             updated_utc=datetime.fromisoformat(session_document["updated_utc"]) if session_document.get("updated_utc") else datetime.now(timezone.utc),
+            md5_checksum=session_document.get("md5_checksum"),
         )
 
     def _serialize_event(
@@ -1087,6 +1095,7 @@ class SessionDocumentStore(SessionStore):
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
         mode: Optional[SessionMode] = None,
+        md5_checksum: Optional[str] = None,
     ) -> Session:
         async with self._lock.writer_lock:
             creation_utc = creation_utc or datetime.now(timezone.utc)
@@ -1102,6 +1111,7 @@ class SessionDocumentStore(SessionStore):
                 consumption_offsets=consumption_offsets,
                 title=title,
                 agent_states=[],
+                md5_checksum=md5_checksum,
             )
 
             await self._session_collection.insert_one(document=self._serialize_session(session))
