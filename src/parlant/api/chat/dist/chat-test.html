@@ -156,6 +156,29 @@
             width: auto;
             flex: 1;
         }
+        .response-highlight {
+            background: #f0f9ff;
+            border: 1px solid #0ea5e9;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 12px;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .response-highlight.error {
+            background: #fef2f2;
+            border-color: #ef4444;
+            color: #dc2626;
+        }
+        .response-highlight .label {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+        .response-highlight .value {
+            color: #1f2937;
+        }
     </style>
 </head>
 <body>
@@ -329,16 +352,13 @@
 
                 const result = await response_data.json();
 
-                if (response_data.ok) {
+                // Handle new RESTful response format
+                if (result.code === 0) {
+                    // Success response
                     showResponse(result, false);
                 } else {
-                    // Enhanced error display
-                    const errorInfo = {
-                        status: response_data.status,
-                        statusText: response_data.statusText,
-                        ...result
-                    };
-                    showResponse(errorInfo, true);
+                    // Error response (even with HTTP 200, check business code)
+                    showResponse(result, true);
                 }
             } catch (error) {
                 showResponse({
@@ -360,12 +380,48 @@
             response.style.display = 'block';
             response.className = isError ? 'response-section error' : 'response-section';
             
-            const title = isError ? 'Error Response' : 'AI Response';
-            const content = JSON.stringify(data, null, 2);
+            let title, highlightContent, fullContent;
+            
+            if (isError) {
+                title = 'Error Response';
+                // Format error response with business code and message
+                if (data.code !== undefined) {
+                    highlightContent = `
+                        <div class="response-highlight error">
+                            <div class="label">Business Code:</div>
+                            <div class="value">${data.code}</div>
+                            <div class="label" style="margin-top: 8px;">Message:</div>
+                            <div class="value">${data.message}</div>
+                        </div>
+                    `;
+                } else {
+                    highlightContent = '';
+                }
+                fullContent = JSON.stringify(data, null, 2);
+            } else {
+                title = 'AI Response';
+                // Extract and highlight the AI message for better readability
+                if (data.data && data.data.data && data.data.data.message) {
+                    const aiMessage = data.data.data.message;
+                    const participant = data.data.data.participant?.display_name || 'AI Assistant';
+                    highlightContent = `
+                        <div class="response-highlight">
+                            <div class="label">From:</div>
+                            <div class="value">${participant}</div>
+                            <div class="label" style="margin-top: 8px;">Message:</div>
+                            <div class="value">${aiMessage}</div>
+                        </div>
+                    `;
+                } else {
+                    highlightContent = '';
+                }
+                fullContent = JSON.stringify(data, null, 2);
+            }
             
             response.innerHTML = `
                 <div class="response-title">${title}</div>
-                <div class="response-content">${content}</div>
+                ${highlightContent}
+                <div class="response-content">${fullContent}</div>
             `;
         }
 

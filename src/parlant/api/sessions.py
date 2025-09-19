@@ -378,6 +378,31 @@ class EventDTO(
     deleted: bool
 
 
+# RESTful API Response Wrapper for Chat endpoint
+class ChatResponseDTO(DefaultBaseModel):
+    """RESTful response wrapper for chat endpoint."""
+    
+    status: int = Field(description="HTTP status code")
+    code: int = Field(description="Business status code")
+    message: str = Field(description="Response message")
+    data: EventDTO | None = Field(default=None, description="Chat event data")
+
+
+chat_response_success_example = {
+    "status": 200,
+    "code": 0,
+    "message": "SUCCESS",
+    "data": event_example
+}
+
+chat_response_error_example = {
+    "status": 504,
+    "code": 504, 
+    "message": "TIMEOUT_ERROR",
+    "data": None
+}
+
+
 class ConsumptionOffsetsUpdateParamsDTO(
     DefaultBaseModel,
     json_schema_extra={"example": consumption_offsets_example},
@@ -2109,14 +2134,42 @@ def create_router(
     @router.post(
         "/chat",
         operation_id="chat",
-        response_model=EventDTO,
+        response_model=ChatResponseDTO,
         responses={
             status.HTTP_200_OK: {
-                "description": "AI response to the chat message",
-                "content": {"application/json": {"example": event_example}},
+                "description": "AI response to the chat message (success or business error)",
+                "content": {"application/json": {"example": chat_response_success_example}},
+            },
+            status.HTTP_403_FORBIDDEN: {
+                "description": "Authorization failed",
+                "content": {"application/json": {"example": {
+                    "status": 403,
+                    "code": 403,
+                    "message": "AUTHORIZATION_ERROR",
+                    "data": None
+                }}},
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY: {
+                "description": "Validation error in request parameters",
+                "content": {"application/json": {"example": {
+                    "status": 422,
+                    "code": 422,
+                    "message": "VALIDATION_ERROR",
+                    "data": None
+                }}},
+            },
+            status.HTTP_500_INTERNAL_SERVER_ERROR: {
+                "description": "Internal server error",
+                "content": {"application/json": {"example": {
+                    "status": 500,
+                    "code": 500,
+                    "message": "NO_EVENTS_FOUND",
+                    "data": None
+                }}},
             },
             status.HTTP_504_GATEWAY_TIMEOUT: {
-                "description": "Request timeout waiting for AI response"
+                "description": "Request timeout waiting for AI response",
+                "content": {"application/json": {"example": chat_response_error_example}},
             },
         },
         **apigen_config(group_name=API_GROUP, method_name="chat"),
@@ -2124,7 +2177,7 @@ def create_router(
     async def chat(
         request: Request,
         params: ChatRequestDTO,
-    ) -> EventDTO:
+    ) -> ChatResponseDTO:
         """Simple chat endpoint that handles session management automatically.
         If session_id is provided, it will be used, otherwise a new session will be created.
         """
@@ -2187,9 +2240,11 @@ def create_router(
         if not wait_result:
             # Timeout occurred - no AI response received
             logger.warning("⏰ Step 7: Handling timeout")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="Request timed out waiting for AI response. Check AI engine configuration and logs."
+            return ChatResponseDTO(
+                status=504,
+                code=504,
+                message="TIMEOUT_ERROR",
+                data=None
             )
         
         logger.info("✅ AI response detected, retrieving events")
@@ -2205,16 +2260,18 @@ def create_router(
         
         if not ai_events:
             logger.warning("⚠️ Wait returned True but no AI events found")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="AI response detected but no events found"
+            return ChatResponseDTO(
+                status=500,
+                code=500,
+                message="NO_EVENTS_FOUND",
+                data=None
             )
         
         # Return the first AI message event
         ai_event = ai_events[0]
         logger.info(f"✅ Returning AI response - event_id: {ai_event.id}, message: '{ai_event.data.get('message', '')[:50]}...'")
         
-        return EventDTO(
+        event_dto = EventDTO(
             id=ai_event.id,
             source=_event_source_to_event_source_dto(ai_event.source),
             kind=_event_kind_to_event_kind_dto(ai_event.kind),
@@ -2223,6 +2280,13 @@ def create_router(
             correlation_id=ai_event.correlation_id,
             data=cast(JSONSerializableDTO, ai_event.data),
             deleted=ai_event.deleted,
+        )
+        
+        return ChatResponseDTO(
+            status=200,
+            code=0,
+            message="SUCCESS",
+            data=event_dto
         )
 
 
