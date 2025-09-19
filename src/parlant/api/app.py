@@ -18,6 +18,7 @@ import traceback
 from typing import Awaitable, Callable, TypeAlias
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -52,6 +53,57 @@ from parlant.core.loggers import LogLevel, Logger
 from parlant.core.application import Application
 from parlant.core.tags import TagStore
 from parlant.core.agent_factory import AgentFactory
+
+
+def is_restful_api_request(request: Request) -> bool:
+    """Check if the request is for an API endpoint that should return RESTful format."""
+    path = request.url.path
+    
+    # Define patterns for RESTful API endpoints
+    restful_patterns = [
+        "/sessions/chat",
+        # Add more patterns as needed:
+        # "/api/v2/chat",
+        # "/conversation",
+        # "/chat/stream",
+    ]
+    
+    # Check for exact matches
+    if path in restful_patterns:
+        return True
+    
+    # Check for path endings (for sub-paths)
+    restful_endings = [
+        "/chat",
+        # Add more endings as needed
+    ]
+    
+    return any(path.endswith(ending) for ending in restful_endings)
+
+
+def create_chat_error_response(request: Request, status_code: int, message: str, detail: str = None):
+    """Create a ChatResponseDTO error response for RESTful APIs, or raise HTTPException for other APIs."""
+    if is_restful_api_request(request):
+        from parlant.api.sessions import ChatResponseDTO
+        from fastapi.responses import JSONResponse
+        
+        response_data = ChatResponseDTO(
+            status=status_code,
+            code=status_code,
+            message=message,
+            data=None
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content=response_data.model_dump()
+        )
+    else:
+        # For other APIs, raise HTTPException
+        raise HTTPException(
+            status_code=status_code,
+            detail=detail or message
+        )
+
 
 ASGIApplication: TypeAlias = Callable[
     [
@@ -158,34 +210,29 @@ async def create_api_app(container: Container) -> ASGIApplication:
     @api_app.exception_handler(AuthorizationException)
     async def authorization_error_handler(
         request: Request, exc: AuthorizationException
-    ) -> HTTPException:
+    ):
         logger.trace(f"Authorization error: {exc}")
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        )
+        return create_chat_error_response(request, status.HTTP_403_FORBIDDEN, "AUTHORIZATION_ERROR", str(exc))
 
     @api_app.exception_handler(ItemNotFoundError)
     async def item_not_found_error_handler(
         request: Request, exc: ItemNotFoundError
-    ) -> HTTPException:
-        logger.info(str(exc))
+    ):
+        logger.error(str(exc))
+        return create_chat_error_response(request, status.HTTP_404_NOT_FOUND, "NOT_FOUND", str(exc))
 
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        )
+    @api_app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        logger.error(f"Validation error: {exc}")
+        return create_chat_error_response(request, status.HTTP_422_UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", exc.errors())
 
     @api_app.exception_handler(Exception)
-    async def server_error_handler(request: Request, exc: ItemNotFoundError) -> HTTPException:
+    async def server_error_handler(request: Request, exc: Exception):
         logger.error(str(exc))
         logger.error(str(traceback.format_exception(exc)))
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        )
+        return create_chat_error_response(request, status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR", str(exc))
 
     static_dir = os.path.join(os.path.dirname(__file__), "chat/dist")
     api_app.mount("/chat", StaticFiles(directory=static_dir, html=True), name="static")
