@@ -28,10 +28,12 @@ from typing import (
     cast,
 )
 from typing_extensions import override, TypedDict, NotRequired, Self
+from pydantic import Field
 
 from parlant.core import async_utils
 from parlant.core.async_utils import ReaderWriterLock, Timeout
 from parlant.core.common import (
+    DefaultBaseModel,
     ItemNotFoundError,
     JSONSerializable,
     UniqueId,
@@ -186,6 +188,31 @@ SessionStatus: TypeAlias = Literal[
 class StatusEventData(TypedDict):
     status: SessionStatus
     data: JSONSerializable
+
+
+class BaseEventData(DefaultBaseModel):
+    """Base class for all event data with type field and extensible fields."""
+    type: str = Field(..., description="Event type identifier")
+    
+    class Config:
+        extra = "allow"  # Allow additional fields for extensibility
+
+
+class ToolErrorEventData(BaseEventData):
+    """Event data for tool execution errors."""
+    type: str = Field(default="tool_error", description="Event type")
+    message: str = Field(..., description="Error message")
+    tool_id: str = Field(..., description="ID of the tool that failed")
+    status_code: Optional[int] = Field(None, description="HTTP status code if applicable")
+    timestamp: str = Field(..., description="ISO timestamp of the error")
+    duration: Optional[float] = Field(None, description="Duration of the error")
+
+
+class NoGuidelineMatchEventData(BaseEventData):
+    """Event data for when no guidelines match an interaction."""
+    type: str = Field(default="no_guideline_match", description="Event type")
+    message: str = Field(..., description="Description of the no-match situation")
+    timestamp: str = Field(..., description="ISO timestamp of the event")
 
 
 class GuidelineMatch(TypedDict):

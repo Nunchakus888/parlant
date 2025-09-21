@@ -75,8 +75,9 @@ class CustomAgentFactory(AgentFactory):
 
         # default guideline
         await agent.create_guideline(
-            condition=f"The customer inquires about something that is not related to our [extract main topic from {basic_settings.get('background')}] business",
-            action=f"Politely explain that you specialize business and would be happy to help with related questions instead.",
+            condition="The customer's inquiry does not match any specific business guidelines or the customer asks about topics outside our expertise",
+            action="Politely explain that you specialize in our business area and would be happy to help with related questions. Ask how you can assist them with our services.",
+            metadata={"type": "default"},
         )
 
         # _process_evaluations
@@ -142,7 +143,7 @@ class CustomAgentFactory(AgentFactory):
         tool_manager = ToolManager(
             raw_configs=tools_config,
             logger=self._logger,
-            timeout=30
+            timeout=10
         )
         await tool_manager.setup_tools(agent)
         

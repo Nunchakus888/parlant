@@ -7,9 +7,11 @@
 import json
 import asyncio
 import aiohttp
-from typing import Dict, Any, List, Optional, Annotated
+import time
+from typing import Dict, Any, List, Optional, Annotated, Union
 from dataclasses import dataclass
 from inspect import Parameter, Signature
+from pydantic import BaseModel
 
 
 @dataclass
@@ -21,10 +23,20 @@ class ToolConfig:
     endpoint: Dict[str, Any]
 
 
+class ApiResponse(BaseModel):
+    """API响应结构"""
+    success: bool
+    data: Optional[Any] = None
+    error: Optional[Any] = None
+    message: Optional[str] = None
+    status_code: Optional[int] = None
+    duration: Optional[float] = None
+
+
 class ToolManager:
     """工具管理器"""
     
-    def __init__(self, config_path: str = None, raw_configs: List[Dict[str, Any]] = None, logger=None, timeout: int = 60):
+    def __init__(self, config_path: str = None, raw_configs: List[Dict[str, Any]] = None, logger=None, timeout: int = 10):
         self.config_path = config_path
         self.raw_configs = raw_configs
         self.logger = logger
@@ -168,18 +180,29 @@ class ToolManager:
                 # 调用API
                 result = await self._call_api(config, params)
                 
-                self._log_info(f"工具 {config.name} 执行成功")
-                
-                # 处理静态响应，支持 control 参数
-                if isinstance(result, dict) and "data" in result:
-                    control = result.get("control", {})
-                    return p.ToolResult(data=result["data"], control=control)
+                if result.success:
+                    duration_info = f" - duration: {result.duration:.3f}s" if result.duration else ""
+                    self._log_info(f"工具 {config.name} 执行成功{duration_info}")
                 else:
-                    return p.ToolResult(data=result)
+                    duration_info = f" - duration: {result.duration:.3f}s" if result.duration else ""
+                    self._log_error(f"工具 {config.name} 执行失败: {result.message or result.error or '未知错误'}{duration_info}")
+                
+                return p.ToolResult(data=result.dict())
                 
             except Exception as e:
+                # 构建详细的错误消息
+                detailed_message = f"Tool execution failed: {config.name} - {type(e).__name__}: {str(e)}"
+                
                 self._log_error(f"工具 {config.name} 执行失败: {str(e)}")
-                return p.ToolResult(data={"error": str(e)})
+                
+                error_response = ApiResponse(
+                    success=False,
+                    error=str(e),
+                    message=detailed_message,
+                    status_code=500,
+                    duration=10
+                )
+                return p.ToolResult(data=error_response.dict())
         
         # 设置元数据
         dynamic_tool_func.__name__ = config.name
@@ -188,19 +211,20 @@ class ToolManager:
         
         return p.tool(dynamic_tool_func)
     
-    async def _call_api(self, config: ToolConfig, params: Dict[str, Any], max_retries: int = 2) -> Dict[str, Any]:
-        """调用API，支持重试机制"""
-        # # 过滤掉 None 值
-        # params = {k: v for k, v in params.items() if v is not None}
+    async def _call_api(self, config: ToolConfig, params: Dict[str, Any]) -> ApiResponse:
+        start_time = time.time()
+
+        def get_duration():
+            return (time.time() - start_time) or self.timeout
         
         endpoint = config.endpoint
         
         # 检查是否为静态响应
         if endpoint.get("url", "").startswith("static://"):
-            self._log_info(f"🔧 静态工具调用: {config.name}")
+            self._log_info(f"🔧 static tool call: {config.name}")
             static_response = endpoint.get("response", {})
-            self._log_debug(f"📨 静态响应: {static_response}")
-            return static_response
+            self._log_debug(f"📨 static response: {static_response}")
+            return ApiResponse(success=True, data=static_response, duration=get_duration())
         
         # 替换占位符
         url = self._replace_placeholders(endpoint["url"], params)
@@ -225,60 +249,134 @@ class ToolManager:
             query_params = {k: v for k, v in params.items() if k not in used_params}
         
         # 记录请求信息
-        self._log_info(f"🚀 API调用: {method} {url}")
+        self._log_info(f"🚀 API call: {method} {url}")
         if headers:
-            self._log_debug(f"📋 请求头: {headers}")
+            self._log_debug(f"📋 request headers: {headers}")
         if query_params:
-            self._log_debug(f"❓ Query参数: {query_params}")
+            self._log_debug(f"❓ Query parameters: {query_params}")
         if body:
-            self._log_debug(f"📦 请求体: {json.dumps(body, ensure_ascii=False, indent=2)}")
+            self._log_debug(f"📦 request body: {json.dumps(body, ensure_ascii=False, indent=2)}")
         
-        # 重试机制
-        last_exception = None
-        for attempt in range(max_retries + 1):
-            if attempt > 0:
-                self._log_info(f"🔄 重试第 {attempt} 次...")
-                await asyncio.sleep(1 * attempt)  # 递增延迟
-            
-            # 发送请求
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
+        # 发送请求
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        
+        try:
+            self._log_debug(f"🔧 创建aiohttp会话，超时设置: {self.timeout}s")
             async with aiohttp.ClientSession(timeout=timeout) as session:
+                self._log_debug(f"🚀 开始发送{method}请求到: {url}")
+                
                 try:
                     if method == "GET":
+                        self._log_debug("📤 执行GET请求")
                         async with session.get(url, params=query_params, headers=headers) as response:
-                            self._log_info(f"✅ 响应状态: {response.status}")
-                            result = await response.json()
-                            self._log_debug(f"📨 响应数据: {result}")
-                            return result
+                            self._log_debug(f"📥 收到响应，状态码: {response.status}")
+                            result = await self._parse_response(response)
+                            return self._format_response(response.status, result, get_duration())
                     else:
+                        self._log_debug(f"📤 执行{method}请求")
                         async with session.request(method, url, json=body, params=query_params, headers=headers) as response:
-                            self._log_info(f"✅ 响应状态: {response.status}")
-                            result = await response.json()
-                            self._log_debug(f"📨 响应数据: {result}")
-                            return result
-                except aiohttp.ClientTimeout as e:
-                    last_exception = e
-                    self._log_error(f"❌ API调用超时 ({self.timeout}秒) - 尝试 {attempt + 1}/{max_retries + 1}: {str(e)}")
-                    if attempt == max_retries:
-                        raise Exception(f"API调用超时，已重试 {max_retries} 次，请检查网络连接")
-                except aiohttp.ClientError as e:
-                    last_exception = e
-                    self._log_error(f"❌ API调用网络错误 - 尝试 {attempt + 1}/{max_retries + 1}: {str(e)}")
-                    if attempt == max_retries:
-                        raise Exception(f"网络连接错误，已重试 {max_retries} 次: {str(e)}")
-                except Exception as e:
-                    last_exception = e
-                    error_msg = str(e) if str(e) else f"未知错误: {type(e).__name__}"
-                    self._log_error(f"❌ API调用失败 - 尝试 {attempt + 1}/{max_retries + 1}: {error_msg}")
-                    if attempt == max_retries:
-                        raise Exception(f"API调用失败，已重试 {max_retries} 次: {error_msg}")
+                            self._log_debug(f"📥 收到响应，状态码: {response.status}")
+                            result = await self._parse_response(response)
+                            return self._format_response(response.status, result, get_duration())
+                except Exception as inner_e:
+                    self._log_error(f"🔥 请求执行过程中发生错误: {str(inner_e)}")
+                    self._log_error(f"🔥 错误类型: {type(inner_e).__name__}")
+                    raise
+        except Exception as session_e:
+            duration = get_duration()
+            self._log_error(f"🔥 会话创建或管理过程中发生错误: {str(session_e)}")
+            self._log_error(f"🔥 错误类型: {type(session_e).__name__}")
+            
+            # 检查是否是BaseException相关错误
+            if "catching classes that do not inherit from BaseException" in str(session_e):
+                self._log_error("🚨 检测到BaseException相关错误！")
+                self._log_error("这可能是aiohttp库内部的问题或Python环境问题")
+                
+            # 如果到这里，说明是aiohttp相关的异常，重新抛出让外层处理
+            raise
+        except aiohttp.ClientTimeout as e:
+            duration = get_duration()
+            timeout_message = f"Request timeout after {self.timeout} seconds - {method} {url}"
+            self._log_error(f"❌ API call timeout ({self.timeout} seconds) - duration: {duration:.3f}s")
+            return ApiResponse(
+                success=False, 
+                error=str(e), 
+                message=timeout_message,
+                duration=duration
+            )
+        except aiohttp.ClientError as e:
+            duration = get_duration()
+            network_message = f"Network connection error - {method} {url}: {str(e)}"
+            self._log_error(f"❌ API call network error: {str(e)} - duration: {duration:.3f}s")
+            return ApiResponse(
+                success=False, 
+                error=str(e), 
+                message=network_message,
+                duration=duration
+            )
+        except Exception as e:
+            duration = get_duration()
+            
+            unexpected_message = f"Unexpected error occurred - {method} {url}: {type(e).__name__}: {str(e)}"
+            return ApiResponse(
+                success=False, 
+                error=str(e), 
+                message=unexpected_message,
+                duration=duration
+            )
+    
+    async def _parse_response(self, response: aiohttp.ClientResponse) -> Any:
+        """解析HTTP响应，支持多种格式"""
+        content_type = response.headers.get('content-type', '').lower()
         
-        # 如果所有重试都失败了
-        if last_exception:
-            if isinstance(last_exception, Exception):
-                raise last_exception
+        try:
+            if 'application/json' in content_type:
+                return await response.json()
+            elif 'text/' in content_type or 'application/xml' in content_type:
+                return await response.text()
+            elif 'application/octet-stream' in content_type:
+                return await response.read()
             else:
-                raise Exception(f"API调用失败: {str(last_exception)}")
+                try:
+                    return await response.json()
+                except Exception:
+                    self._log_debug("❓ JSON解析失败，回退到文本解析")
+                    return await response.text()
+        except Exception as e:
+            self._log_error(f"Failed to parse response: {str(e)}")
+            return await response.text()
+    
+    def _format_response(self, status_code: int, result: Any, duration: float) -> ApiResponse:
+        """统一格式化API响应"""
+        if status_code >= 400:
+            # 提取API返回的错误信息
+            if isinstance(result, dict):
+                api_error_msg = result.get('message', 'API call failed')
+            elif isinstance(result, str):
+                api_error_msg = result[:200] + '...' if len(result) > 200 else result  # 截断过长的文本
+            else:
+                api_error_msg = str(result)[:200] + '...' if len(str(result)) > 200 else str(result)
+            
+            # 构建更详细的错误消息，包含请求信息
+            detailed_error_msg = f"HTTP {status_code}: {api_error_msg}"
+            self._log_error(f"❌ API call failed: HTTP {status_code} - {api_error_msg} - duration: {duration:.3f}s")
+            return ApiResponse(
+                success=False,
+                error=result,  # 保存完整的API响应作为原始错误信息
+                message=detailed_error_msg,  # 用户友好的错误说明
+                status_code=status_code,
+                data=result,
+                duration=duration
+            )
+        else:
+            self._log_info(f"✅ API call success: HTTP {status_code} - duration: {duration:.3f}s")
+            self._log_debug(f"📨 response data: {result}")
+            return ApiResponse(
+                success=True,
+                data=result,
+                status_code=status_code,
+                duration=duration
+            )
     
     def _replace_placeholders(self, template: Any, params: Dict[str, Any]) -> Any:
         """递归替换模板中的占位符"""

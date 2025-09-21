@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from itertools import chain
 from typing import Mapping, Optional, Sequence
 from parlant.core.customers import Customer
@@ -24,7 +25,7 @@ from parlant.core.loggers import Logger
 from parlant.core.agents import Agent
 from parlant.core.context_variables import ContextVariable, ContextVariableValue
 from parlant.core.services.tools.service_registry import ServiceRegistry
-from parlant.core.sessions import Event, SessionId, ToolEventData
+from parlant.core.sessions import Event, SessionId, ToolEventData, ToolErrorEventData
 from parlant.core.engines.alpha.guideline_matching.guideline_match import GuidelineMatch
 from parlant.core.glossary import Term
 from parlant.core.engines.alpha.tool_calling.tool_caller import (
@@ -152,6 +153,8 @@ class ToolEventGenerator:
             tool_calls,
         )
 
+        
+        self._logger.debug(f"tool_results: {tool_results}")
         if not tool_results:
             return ToolEventGenerationResult(
                 generations=inference_result.batch_generations,
@@ -184,9 +187,43 @@ class ToolEventGenerator:
                         data=event_data,
                     )
                 )
+            
+            # Check if the tool call failed and emit an error event
+            if self._is_tool_failed(r.result):
+                await self._emit_tool_error_event(context, r.result, r.tool_call.tool_id.to_string())
 
         return ToolEventGenerationResult(
             generations=inference_result.batch_generations,
             events=events,
             insights=inference_result.insights,
+        )
+
+    def _is_tool_failed(self, result: dict) -> bool:
+        """Check if the tool call failed."""
+        data = result.get("data", {})
+        
+        # Check if the tool call failed
+        if isinstance(data, dict) and "success" in data:
+            return data["success"] is False
+        
+        return False
+
+
+    async def _emit_tool_error_event(self, context: LoadedContext, result: dict, tool_id: str) -> None:
+        """Emit a tool error event."""
+        
+        api_data = result.get("data", {})
+        error_message = api_data.get("message") or api_data.get("error") or ""
+        
+        event_data = ToolErrorEventData(
+            message=error_message,
+            tool_id=tool_id,
+            status_code=api_data.get("status_code"),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            duration=api_data.get("duration"),
+        )
+
+        await context.session_event_emitter.emit_custom_event(
+            correlation_id=self._correlator.correlation_id,
+            data=event_data.model_dump(),
         )
