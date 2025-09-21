@@ -69,6 +69,7 @@ from parlant.core.sessions import (
     GuidelineMatch as StoredGuidelineMatch,
     GuidelineMatchingInspection,
     MessageGenerationInspection,
+    NoGuidelineMatchEventData,
     PreparationIteration,
     PreparationIterationGenerations,
     Session,
@@ -578,11 +579,27 @@ class AlphaEngine(Engine):
             )
         )
 
-        context.state.ordinary_guideline_matches = list(
-            set(guideline_and_journey_matching_result.resolved_guidelines).difference(
-                set(context.state.tool_enabled_guideline_matches.keys())
-            ),
-        )
+        # 过滤掉默认类型的guideline
+        non_default_guidelines = [
+            match for match in guideline_and_journey_matching_result.resolved_guidelines
+            if match.guideline.metadata.get("type") != "default"
+        ]
+        
+        
+        # 详细日志分析
+        self._logger.info(f"=== Guideline Matching Analysis ===")
+        self._logger.info(f"Total resolved guidelines: {guideline_and_journey_matching_result.resolved_guidelines}")
+        self._logger.info(f"Non-default guidelines: {len(non_default_guidelines)}, {non_default_guidelines}")
+        
+        # 检查是否需要发送事件
+        has_non_default_guidelines = len(non_default_guidelines) > 0
+        self._logger.info(f"Has non-default guidelines: {has_non_default_guidelines}")
+        
+        if not has_non_default_guidelines:
+            self._logger.info("🚨 No non-default guidelines matched - emitting no_guideline_match status event")
+            await self._emit_no_guideline_match_event(context)
+        else:
+            self._logger.info("✅ Non-default guidelines found - no event needed")
 
         # Infer any needed tool calls and execute them,
         # adding the resulting tool events to the session.
@@ -896,6 +913,19 @@ class AlphaEngine(Engine):
 
         return message_generation_inspections
 
+    async def _emit_no_guideline_match_event(self, context: LoadedContext) -> None:
+        """Emit a special status event when no guidelines are matched."""
+
+        event_data = NoGuidelineMatchEventData(
+            message="No guidelines matched for this interaction",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        
+        await context.session_event_emitter.emit_custom_event(
+            correlation_id=self._correlator.correlation_id,
+            data=event_data.model_dump(),
+        )
+    
     async def _emit_error_event(self, context: LoadedContext, exception_details: str) -> None:
         await context.session_event_emitter.emit_status_event(
             correlation_id=self._correlator.correlation_id,

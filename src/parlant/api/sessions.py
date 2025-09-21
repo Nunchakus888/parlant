@@ -357,6 +357,7 @@ event_example: ExampleJson = {
     "correlation_id": "corr_13xyz",
     "data": {
         "message": "Hello, I need help with my account",
+        "total_tokens": 100,
         "participant": {"id": "cust_123xy", "display_name": "John Doe"},
     },
 }
@@ -371,11 +372,14 @@ class EventDTO(
     id: EventIdPath
     source: EventSourceDTO
     kind: EventKindDTO
-    offset: EventOffsetField
     creation_utc: EventCreationUTCField
     correlation_id: EventCorrelationIdField
     data: JSONSerializableDTO
-    deleted: bool
+
+class ChatDataDTO(DefaultBaseModel):
+    """Chat data."""  
+    generate: EventDTO | None = Field(default=None, description="AI generated event data")
+    events: list[EventDTO] | None = Field(default=[], description="Custom events for AI generation process exceptions")
 
 
 # RESTful API Response Wrapper for Chat endpoint
@@ -385,14 +389,16 @@ class ChatResponseDTO(DefaultBaseModel):
     status: int = Field(description="HTTP status code")
     code: int = Field(description="Business status code")
     message: str = Field(description="Response message")
-    data: EventDTO | None = Field(default=None, description="Chat event data")
+    data: ChatDataDTO | None = Field(default=None, description="Chat event data")
 
 
 chat_response_success_example = {
     "status": 200,
     "code": 0,
     "message": "SUCCESS",
-    "data": event_example
+    "data": {
+        "generate": event_example,
+    }
 }
 
 chat_response_error_example = {
@@ -2222,12 +2228,13 @@ def create_router(
         )
         logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
         
-        # Step 6: Wait for AI response
-        logger.info("⏳ Step 6: Waiting for AI response")
+        # Step 6: Wait for AI response or system status
+        logger.info("⏳ Step 6: Waiting for AI response or system status")
         timeout = params.timeout or 60
         logger.info(f"⏰ Timeout set to: {timeout} seconds")
-        logger.info(f"🔍 Waiting for events with: session_id={session.id}, min_offset={customer_event.offset + 1}, source={EventSource.AI_AGENT}, kinds={[EventKind.MESSAGE]}")
         
+        # Use a single efficient wait for any relevant events
+        # This avoids multiple polling and reduces performance overhead
         wait_result = await session_listener.wait_for_events(
             session_id=session.id,
             min_offset=customer_event.offset + 1,
@@ -2266,28 +2273,53 @@ def create_router(
                 message="NO_EVENTS_FOUND",
                 data=None
             )
-        
-        # Return the first AI message event
-        ai_event = ai_events[0]
-        logger.info(f"✅ Returning AI response - event_id: {ai_event.id}, message: '{ai_event.data.get('message', '')[:50]}...'")
-        
-        event_dto = EventDTO(
-            id=ai_event.id,
-            source=_event_source_to_event_source_dto(ai_event.source),
-            kind=_event_kind_to_event_kind_dto(ai_event.kind),
-            offset=ai_event.offset,
-            creation_utc=ai_event.creation_utc,
-            correlation_id=ai_event.correlation_id,
-            data=cast(JSONSerializableDTO, ai_event.data),
-            deleted=ai_event.deleted,
+
+        extra_events = await app.sessions.find_events(
+            session_id=session.id,
+            min_offset=customer_event.offset + 1,
+            source=EventSource.AI_AGENT,
+            kinds=[EventKind.CUSTOM],
+            correlation_id=None,
         )
+
         
-        return ChatResponseDTO(
+        first_event = ai_events[0]
+        extra_info = None
+
+        if extra_events:
+          extra_info = [
+              EventDTO(
+                  id=event.id,
+                  source=_event_source_to_event_source_dto(event.source),
+                  kind=_event_kind_to_event_kind_dto(event.kind),
+                  creation_utc=event.creation_utc,
+                  correlation_id=event.correlation_id,
+                  data=cast(JSONSerializableDTO, event.data),
+              ) for event in extra_events]
+
+          logger.info(f"📊 Retrieved {len(extra_events)} extra events, extra_info: {extra_info}")
+        
+        logger.info(f"✅ Processing event - event_id: {first_event.id}, source: {first_event.source}, kind: {first_event.kind}")
+
+        logger.info("✅ Returning event for client processing")
+        response = ChatResponseDTO(
             status=200,
             code=0,
             message="SUCCESS",
-            data=event_dto
+            data=ChatDataDTO(
+                generate=EventDTO(
+                    id=first_event.id,
+                    source=_event_source_to_event_source_dto(first_event.source),
+                    kind=_event_kind_to_event_kind_dto(first_event.kind),
+                    creation_utc=first_event.creation_utc,
+                    correlation_id=first_event.correlation_id,
+                    data=cast(JSONSerializableDTO, first_event.data),
+                ),
+                events=extra_info,
+            )
         )
 
+        logger.info(f"✅ Response: {response.model_dump()}")
+        return response
 
     return router
