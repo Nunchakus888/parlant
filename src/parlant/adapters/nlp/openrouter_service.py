@@ -291,10 +291,6 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         openrouter_api_arguments = {k: v for k, v in hints.items() if k in self.supported_openrouter_params}
 
-        # self._logger.debug(f"\nOpenRouterSchematicGenerator.generate ======")
-        # self._logger.debug(f"\nprompt_start ======")
-        # self._logger.debug(f"\n{prompt}")
-        # self._logger.debug(f"\nprompt_end ======")
         self._logger.debug(f"arguments ====== {openrouter_api_arguments}")
         t_start = time.time()
         try:
@@ -328,16 +324,23 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
             content = self.schema.model_validate(json_content)
             usage_data = response.usage
 
+            usage = None
+            if usage_data:
+                usage = UsageInfo(
+                    input_tokens=usage_data.prompt_tokens,
+                    output_tokens=usage_data.completion_tokens,
+                    total_tokens=usage_data.total_tokens,
+                    prompt_tokens_details=usage_data.prompt_tokens_details,
+                    completion_tokens_details=usage_data.completion_tokens_details,
+                )
+
             return SchematicGenerationResult(
                 content=content,
                 info=GenerationInfo(
                     schema_name=self.schema.__name__,
                     model=self.id,
                     duration=(t_end - t_start),
-                    usage=UsageInfo(
-                        input_tokens=usage_data.prompt_tokens if usage_data else 0,
-                        output_tokens=usage_data.completion_tokens if usage_data else 0,
-                    ),
+                    usage=usage,
                 ),
             )
         except ValidationError:

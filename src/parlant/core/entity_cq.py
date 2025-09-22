@@ -58,6 +58,7 @@ from parlant.core.sessions import (
     PreparationIteration,
     SessionUpdateParams,
 )
+from parlant.core.nlp.generation_info import GenerationInfo
 from parlant.core.services.tools.service_registry import ServiceRegistry
 from parlant.core.tags import Tag
 from parlant.core.tools import ToolId, ToolService
@@ -503,12 +504,14 @@ class EntityCommands:
         correlation_id: str,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
+        response_analysis_generations: Sequence[GenerationInfo] | None = None,
     ) -> None:
         await self._session_store.create_inspection(
             session_id=session_id,
             correlation_id=correlation_id,
             preparation_iterations=preparation_iterations,
             message_generations=message_generations,
+            response_analysis_generations=response_analysis_generations,
         )
 
     async def update_session(

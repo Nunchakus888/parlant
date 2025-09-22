@@ -61,6 +61,7 @@ from parlant.core.persistence.document_database_helper import (
     DocumentMigrationHelper,
     DocumentStoreMigrationHelper,
 )
+from openai.types.completion_usage import PromptTokensDetails, CompletionTokensDetails
 
 SessionId = NewType("SessionId", str)
 
@@ -269,6 +270,102 @@ class PreparationIteration:
 class Inspection:
     message_generations: Sequence[MessageGenerationInspection]
     preparation_iterations: Sequence[PreparationIteration]
+    evaluation_generations:  Sequence[GenerationInfo] | None = None
+    usage_info: UsageInfo | None = None
+    
+    @classmethod
+    def create_with_usage_info(
+        cls,
+        message_generations: Sequence[MessageGenerationInspection],
+        preparation_iterations: Sequence[PreparationIteration],
+        evaluation_generations: Sequence[GenerationInfo] | None = None,
+    ) -> "Inspection":
+        """创建Inspection并自动计算usage_info"""
+        # 收集所有generation_info用于聚合
+        all_generations = []
+        
+        # 收集消息生成的generation_info
+        for msg_gen in message_generations:
+            all_generations.extend(msg_gen.generations.values())
+        
+        # 收集准备迭代的generation_info
+        for prep_iter in preparation_iterations:
+            # 指导原则匹配的generation_info
+            all_generations.extend(prep_iter.generations.guideline_matching.batches)
+            # 工具调用的generation_info
+            all_generations.extend(prep_iter.generations.tool_calls)
+        
+        # 收集评估生成的generation_info
+        if evaluation_generations:
+            all_generations.extend(evaluation_generations)
+        
+        # 计算基本token统计
+        total_input_tokens = sum(gen.usage.input_tokens for gen in all_generations)
+        total_output_tokens = sum(gen.usage.output_tokens for gen in all_generations)
+        total_tokens = sum(gen.usage.total_tokens or 0 for gen in all_generations)
+        
+        # 聚合 prompt_tokens_details
+        prompt_details = None
+        if any(gen.usage.prompt_tokens_details for gen in all_generations):
+            cached_tokens = sum(
+                gen.usage.prompt_tokens_details.cached_tokens or 0 
+                for gen in all_generations 
+                if gen.usage.prompt_tokens_details
+            )
+            audio_tokens = sum(
+                gen.usage.prompt_tokens_details.audio_tokens or 0 
+                for gen in all_generations 
+                if gen.usage.prompt_tokens_details
+            )
+            prompt_details = PromptTokensDetails(
+                cached_tokens=cached_tokens,
+                audio_tokens=audio_tokens
+            )
+        
+        # 聚合 completion_tokens_details
+        completion_details = None
+        if any(gen.usage.completion_tokens_details for gen in all_generations):
+            reasoning_tokens = sum(
+                gen.usage.completion_tokens_details.reasoning_tokens or 0 
+                for gen in all_generations 
+                if gen.usage.completion_tokens_details
+            )
+            audio_tokens = sum(
+                gen.usage.completion_tokens_details.audio_tokens or 0 
+                for gen in all_generations 
+                if gen.usage.completion_tokens_details
+            )
+            accepted_prediction_tokens = sum(
+                gen.usage.completion_tokens_details.accepted_prediction_tokens or 0 
+                for gen in all_generations 
+                if gen.usage.completion_tokens_details
+            )
+            rejected_prediction_tokens = sum(
+                gen.usage.completion_tokens_details.rejected_prediction_tokens or 0 
+                for gen in all_generations 
+                if gen.usage.completion_tokens_details
+            )
+            completion_details = CompletionTokensDetails(
+                reasoning_tokens=reasoning_tokens,
+                audio_tokens=audio_tokens,
+                accepted_prediction_tokens=accepted_prediction_tokens,
+                rejected_prediction_tokens=rejected_prediction_tokens
+            )
+        
+        usage_info = UsageInfo(
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            total_tokens=total_tokens,
+            prompt_tokens_details=prompt_details,
+            completion_tokens_details=completion_details,
+        )
+        
+        return cls(
+            message_generations=message_generations,
+            preparation_iterations=preparation_iterations,
+            evaluation_generations=evaluation_generations,
+            usage_info=usage_info,
+        )
 
 
 ConsumerId: TypeAlias = Literal["client"]
@@ -393,6 +490,7 @@ class SessionStore(ABC):
         correlation_id: str,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
+        response_analysis_generations: Sequence[GenerationInfo] | None = None,
     ) -> Inspection: ...
 
     @abstractmethod
@@ -463,6 +561,9 @@ class _UsageInfoDocument(TypedDict):
     input_tokens: int
     output_tokens: int
     extra: Optional[Mapping[str, int]]
+    total_tokens: Optional[int]
+    prompt_tokens_details: Optional[PromptTokensDetails]
+    completion_tokens_details: Optional[CompletionTokensDetails]
 
 
 class _GenerationInfoDocument(TypedDict):
@@ -556,6 +657,7 @@ class _InspectionDocument(TypedDict, total=False):
     correlation_id: str
     message_generations: Sequence[_MessageGenerationInspectionDocument]
     preparation_iterations: Sequence[_PreparationIterationDocument]
+    usage_info: UsageInfo
 
 
 class _MessageEventData_v0_5_0(TypedDict):
@@ -1012,16 +1114,22 @@ class SessionDocumentStore(SessionStore):
         session_id: SessionId,
         correlation_id: str,
     ) -> _InspectionDocument:
+        def serialize_usage_info(usage: UsageInfo) -> _UsageInfoDocument:
+            return _UsageInfoDocument(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                total_tokens=usage.total_tokens,
+                extra=usage.extra,
+                prompt_tokens_details=usage.prompt_tokens_details.__dict__ if usage.prompt_tokens_details else None,
+                completion_tokens_details=usage.completion_tokens_details.__dict__ if usage.completion_tokens_details else None,
+            )
+        
         def serialize_generation_info(generation: GenerationInfo) -> _GenerationInfoDocument:
             return _GenerationInfoDocument(
                 schema_name=generation.schema_name,
                 model=generation.model,
                 duration=generation.duration,
-                usage=_UsageInfoDocument(
-                    input_tokens=generation.usage.input_tokens,
-                    output_tokens=generation.usage.output_tokens,
-                    extra=generation.usage.extra,
-                ),
+                usage=serialize_usage_info(generation.usage),
             )
 
         return _InspectionDocument(
@@ -1059,12 +1167,23 @@ class SessionDocumentStore(SessionStore):
                 }
                 for i in inspection.preparation_iterations
             ],
+            usage_info=serialize_usage_info(inspection.usage_info) if inspection.usage_info else None,
         )
 
     def _deserialize_message_inspection(
         self,
         inspection_document: _InspectionDocument,
     ) -> Inspection:
+        def deserialize_usage_info(usage_doc: _UsageInfoDocument) -> UsageInfo:
+            return UsageInfo(
+                input_tokens=usage_doc["input_tokens"],
+                output_tokens=usage_doc["output_tokens"],
+                total_tokens=usage_doc["total_tokens"],
+                extra=usage_doc["extra"],
+                prompt_tokens_details=PromptTokensDetails(**usage_doc["prompt_tokens_details"]) if usage_doc["prompt_tokens_details"] else None,
+                completion_tokens_details=CompletionTokensDetails(**usage_doc["completion_tokens_details"]) if usage_doc["completion_tokens_details"] else None,
+            )
+        
         def deserialize_generation_info(
             generation_document: _GenerationInfoDocument,
         ) -> GenerationInfo:
@@ -1072,11 +1191,7 @@ class SessionDocumentStore(SessionStore):
                 schema_name=generation_document["schema_name"],
                 model=generation_document["model"],
                 duration=generation_document["duration"],
-                usage=UsageInfo(
-                    input_tokens=generation_document["usage"]["input_tokens"],
-                    output_tokens=generation_document["usage"]["output_tokens"],
-                    extra=generation_document["usage"]["extra"],
-                ),
+                usage=deserialize_usage_info(generation_document["usage"]),
             )
 
         return Inspection(
@@ -1111,6 +1226,7 @@ class SessionDocumentStore(SessionStore):
                 )
                 for i in inspection_document["preparation_iterations"]
             ],
+            usage_info=deserialize_usage_info(usage_doc) if (usage_doc := inspection_document.get("usage_info")) else None,
         )
 
     @override
@@ -1330,14 +1446,16 @@ class SessionDocumentStore(SessionStore):
         correlation_id: str,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
+        response_analysis_generations: Sequence[GenerationInfo] | None = None,
     ) -> Inspection:
         async with self._lock.writer_lock:
             if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
-            inspection = Inspection(
+            inspection = Inspection.create_with_usage_info(
                 message_generations=message_generations,
                 preparation_iterations=preparation_iterations,
+                evaluation_generations=response_analysis_generations,
             )
 
             await self._inspection_collection.insert_one(

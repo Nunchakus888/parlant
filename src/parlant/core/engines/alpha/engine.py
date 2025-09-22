@@ -328,6 +328,12 @@ class AlphaEngine(Engine):
                 )
 
                 await self._hooks.call_on_messages_emitted(context)
+                # Start post-processing in background, don't wait for completion
+                # asyncio.create_task(self._post_process(
+                #     context=context,
+                #     preparation_iteration_inspections=preparation_iteration_inspections,
+                #     message_generation_inspections=message_generation_inspections,
+                # ))
 
         except asyncio.CancelledError:
             # Task was cancelled. This usually happens for 1 of 2 reasons:
@@ -342,6 +348,39 @@ class AlphaEngine(Engine):
             # Mark that the agent is ready to receive and respond to new events.
             await self._emit_ready_event(context)
             raise
+
+    async def _post_process(
+        self,
+        context: LoadedContext,
+        preparation_iteration_inspections: Sequence[PreparationIteration],
+        message_generation_inspections: Sequence[MessageGenerationInspection],
+    ) -> None:
+        """Post-processing operations that run in background after ready event is sent."""
+        try:
+
+            # Save results for later inspection.
+            await self._entity_commands.create_inspection(
+                session_id=context.session.id,
+                correlation_id=self._correlator.correlation_id,
+                preparation_iterations=preparation_iteration_inspections,
+                message_generations=message_generation_inspections,
+            )
+
+            await self._add_agent_state(
+                context=context,
+                session=context.session,
+                guideline_matches=list(
+                    chain(
+                        context.state.ordinary_guideline_matches,
+                        context.state.tool_enabled_guideline_matches,
+                    )
+                ),
+            )
+
+            await self._hooks.call_on_messages_emitted(context)
+        except Exception as e:
+            # Log error but don't raise - post-processing failure shouldn't affect main flow
+            self._logger.warning(f"Post-processing failed: {e}")
 
     async def _do_utter(
         self,
