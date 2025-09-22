@@ -211,7 +211,7 @@ class ToolErrorEventData(BaseEventData):
 
 class NoGuidelineMatchEventData(BaseEventData):
     """Event data for when no guidelines match an interaction."""
-    type: str = Field(default="no_guideline_match", description="Event type")
+    type: str = Field(default="skipped", description="Event type")
     message: str = Field(..., description="Description of the no-match situation")
     timestamp: str = Field(..., description="ISO timestamp of the event")
 
