@@ -380,6 +380,7 @@ class ChatDataDTO(DefaultBaseModel):
     """Chat data."""  
     generate: EventDTO | None = Field(default=None, description="AI generated event data")
     events: list[EventDTO] | None = Field(default=[], description="Custom events for AI generation process exceptions")
+    total_tokens: int = Field(description="Total tokens")
 
 
 # RESTful API Response Wrapper for Chat endpoint
@@ -1533,6 +1534,23 @@ def create_router(
             return agent
 
 
+    async def _get_total_tokens_for_event(session_id: str, correlation_id: str) -> int:
+        """获取指定事件的总token消耗"""
+        try:
+            logger.info(f"🔍 Attempting to read inspection for session_id={session_id}, correlation_id={correlation_id}")
+            inspection = await app.sessions._session_store.read_inspection(
+                session_id=session_id,
+                correlation_id=correlation_id,
+            )
+            
+            total_tokens = inspection.usage_info.total_tokens if inspection.usage_info else 0
+            logger.info(f"✅ Successfully read inspection, total_tokens={total_tokens}")
+            return total_tokens
+        except Exception as e:
+            logger.warning(f"❌ Failed to get total tokens for correlation_id {correlation_id}: {e}")
+            return 0
+
+
     @router.post(
         "",
         status_code=status.HTTP_201_CREATED,
@@ -2302,6 +2320,9 @@ def create_router(
         logger.info(f"✅ Processing event - event_id: {first_event.id}, source: {first_event.source}, kind: {first_event.kind}")
 
         logger.info("✅ Returning event for client processing")
+        total_tokens = await _get_total_tokens_for_event(session.id, first_event.correlation_id)
+        logger.info(f"✅ Total tokens: {total_tokens}")
+
         response = ChatResponseDTO(
             status=200,
             code=0,
@@ -2316,6 +2337,7 @@ def create_router(
                     data=cast(JSONSerializableDTO, first_event.data),
                 ),
                 events=extra_info,
+                total_tokens=total_tokens
             )
         )
 
