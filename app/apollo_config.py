@@ -8,7 +8,7 @@ Apollo配置中心集成模块
 import os
 import yaml
 import logging
-import requests
+import aiohttp
 from typing import Dict, Any
 
 # 配置logger
@@ -48,7 +48,7 @@ class ApolloConfigManager:
         self.env = env
         self.timeout = timeout
     
-    def _get_config_from_api(self, namespace: str = "application.yaml") -> str:
+    async def _get_config_from_api(self, namespace: str = "application.yaml") -> str:
         """
         直接从 Apollo API 获取配置
         
@@ -62,30 +62,33 @@ class ApolloConfigManager:
             # 构建 API URL
             url = f"{self.config_server_url}/configs/{self.app_id}/{self.cluster}/{namespace}"
             logger.info(f"请求 Apollo API: {url}")
+
+
+            connector = aiohttp.TCPConnector()
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
             
-            # 发送 HTTP 请求，绕过代理访问内网服务
-            proxies = {
-                'http': None,
-                'https': None
-            }
-            response = requests.get(url, timeout=self.timeout, proxies=proxies)
-            logger.info(f"API 响应状态码: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # 从 configurations.content 中提取配置
-                configurations = data.get("configurations", {})
-                content = configurations.get("content", "")
-                
-                if content:
-                    return content
-                else:
-                    logger.warning("API 响应中没有找到 configurations.content")
-                    return ""
-            else:
-                logger.error(f"API 请求失败，状态码: {response.status_code}")
-                return ""
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout
+            ) as session:
+                async with session.get(url) as response:
+                    logger.info(f"API 响应状态码: {response.status}")
+                    
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # 从 configurations.content 中提取配置
+                        configurations = data.get("configurations", {})
+                        content = configurations.get("content", "")
+                        
+                        if content:
+                            return content
+                        else:
+                            logger.warning("API 响应中没有找到 configurations.content")
+                            return ""
+                    else:
+                        logger.error(f"API 请求失败，状态码: {response.status}")
+                        return ""
                 
         except Exception as e:
             logger.error(f"请求 Apollo API 失败: {e}")
@@ -131,7 +134,7 @@ class ApolloConfigManager:
             logger.error(f"解析配置内容失败: {e}")
             return {}
     
-    def load_config(self, namespace: str = "application.yaml") -> Dict[str, Any]:
+    async def load_config(self, namespace: str = "application.yaml") -> Dict[str, Any]:
         """
         从Apollo加载配置
         
@@ -145,7 +148,7 @@ class ApolloConfigManager:
             logger.info(f"开始加载配置，namespace: {namespace}")
             
             # 尝试从 Apollo API 获取配置
-            config_content = self._get_config_from_api(namespace)
+            config_content = await self._get_config_from_api(namespace)
             
             # 如果获取失败，使用本地回退配置
             if not config_content:
@@ -179,7 +182,7 @@ class ApolloConfigManager:
                 logger.debug(f"设置环境变量: {key}={value}")
 
 
-def load_apollo_config(
+async def load_apollo_config(
     config_server_url: str,
     app_id: str,
     cluster: str = "default",
@@ -209,13 +212,13 @@ def load_apollo_config(
         timeout=timeout
     )
     
-    config = manager.load_config(namespace)
+    config = await manager.load_config(namespace)
     manager.set_env_variables(config)
     
     return config
 
 
-def load_apollo_config_from_env() -> Dict[str, Any]:
+async def load_apollo_config_from_env() -> Dict[str, Any]:
     """
     从环境变量读取Apollo连接参数并加载配置
     
@@ -238,7 +241,7 @@ def load_apollo_config_from_env() -> Dict[str, Any]:
             "缺少必需的Apollo环境变量: APOLLO_CONFIG_SERVER_URL, APOLLO_APP_ID"
         )
     
-    return load_apollo_config(
+    return await load_apollo_config(
         config_server_url=config_server_url,
         app_id=app_id,
         cluster=os.environ.get("APOLLO_CLUSTER", "default"),
