@@ -16,6 +16,7 @@ import asyncio
 import os
 import traceback
 from typing import Awaitable, Callable, TypeAlias
+from datetime import datetime
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -255,6 +256,11 @@ async def create_api_app(container: Container) -> ASGIApplication:
     @api_app.get("/", include_in_schema=False)
     async def root() -> Response:
         return RedirectResponse("/chat")
+
+    @api_app.get("/health")
+    async def health_check():
+        return {"status": "healthy", "timestamp": datetime.now()}
+
 
     # agent_router = APIRouter(prefix="/agents")
 
