@@ -38,7 +38,7 @@ async def main() -> None:
 
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
-        log_level=LogLevel.TRACE,
+        log_level=LogLevel.DEBUG,
         session_store=mongodb_url,
         initialize_container=initialize_agent_factory
     ) as server:
