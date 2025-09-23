@@ -73,14 +73,12 @@ class ApolloConfigManager:
             
             if response.status_code == 200:
                 data = response.json()
-                logger.info(f"API 响应成功，数据键: {list(data.keys())}")
                 
                 # 从 configurations.content 中提取配置
                 configurations = data.get("configurations", {})
                 content = configurations.get("content", "")
                 
                 if content:
-                    logger.info(f"成功获取配置内容，长度: {len(content)}")
                     return content
                 else:
                     logger.warning("API 响应中没有找到 configurations.content")
@@ -156,13 +154,11 @@ class ApolloConfigManager:
             
             # 解析配置内容
             config = self._parse_config_content(config_content)
-            logger.info(f"解析后的配置类型: {type(config)}")
             
             if not isinstance(config, dict):
                 logger.warning(f"配置格式错误，期望dict，实际: {type(config)}")
                 return {}
                 
-            logger.info(f"成功加载配置，包含 {len(config)} 个配置项")
             return config
             
         except Exception as e:
@@ -181,8 +177,6 @@ class ApolloConfigManager:
             if isinstance(value, (str, int, float, bool)):
                 os.environ[key] = str(value)
                 logger.debug(f"设置环境变量: {key}={value}")
-        
-        logger.info(f"已设置 {len(config)} 个环境变量")
 
 
 def load_apollo_config(
