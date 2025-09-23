@@ -36,50 +36,6 @@ async def main() -> None:
     ) as server:
 
 
-        # @p.tool
-        # async def initiate_human_handoff(context: p.ToolContext, reason: str) -> p.ToolResult:
-        #     """Initiate handoff to a human agent when the AI cannot adequately help the customer."""
-            
-        #     return p.ToolResult(
-        #         data=f"Human handoff initiated because: {reason}",
-        #         control={
-        #             "mode": "manual"  # 关键：设置会话为手动模式
-        #         }
-        #     )
-
-        # # 关联到 guideline
-        # await agent.create_guideline(
-        #     condition="Customer requests human assistance",
-        #     action="Initiate human handoff and explain the transition professionally",
-        #     tools=[initiate_human_handoff]
-        # )
-        # 
-        # 发送人工代理消息
-        # async def send_human_message(session_id: str, message: str, operator_name: str):
-        #     event = await client.sessions.create_event(
-        #         session_id=session_id,
-        #         kind="message",
-        #         source="human_agent",  # 标识为人工代理消息
-        #         message=message,
-        #         participant={
-        #             "id": OPTIONAL_ID_FOR_EXTERNAL_SYSTEM_REFERENCE,
-        #             "display_name": operator_name
-        #         }
-        #     )
-        # 
-
-
-        # 人工代理以 AI 身份发送消息（保持无缝体验）
-        # async def send_message_as_ai(session_id: str, message: str):
-        #     event = await client.sessions.create_event(
-        #         session_id=session_id,
-        #         kind="message",
-        #         source="human_agent_on_behalf_of_ai_agent",  # 人工发送但显示为 AI
-        #         message=message
-        #     )
-        # 
-        # 
-        # 
 
         global logger
         logger = server._container[p.Logger]
