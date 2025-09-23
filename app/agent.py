@@ -11,6 +11,7 @@ from parlant.core.loggers import Logger, LogLevel, StdoutLogger
 from parlant.core.contextual_correlator import ContextualCorrelator
 from parlant.core.agents import AgentStore
 from tools.initialize_agent_factory import initialize_agent_factory
+from apollo_config import load_apollo_config_from_env
 
 # load env
 from dotenv import load_dotenv
@@ -21,11 +22,20 @@ logger = None
 
 async def main() -> None:
     """主函数"""
+    print("🚀 开始启动 Parlant 服务器...")
+    
+    # 尝试从Apollo加载配置
+    try:
+        print("📡 正在从Apollo配置中心加载配置...")
+        apollo_config = load_apollo_config_from_env()
+        print(f"✅ 成功从Apollo加载配置，包含 {len(apollo_config)} 个配置项")
+    except Exception as e:
+        print(f"⚠️  从Apollo加载配置失败: {e}")
+        print("📝 将使用本地环境变量配置")
+    
     # 使用mongodb存储会话和智能体
     mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
 
-    print("🚀 开始启动 Parlant 服务器...")
-    print(f"📁 配置文件路径: app/lead-acquistion.json")
     print(f"🔧 初始化函数: {initialize_agent_factory}")
 
     async with p.Server(
@@ -36,13 +46,10 @@ async def main() -> None:
     ) as server:
 
 
-
         global logger
         logger = server._container[p.Logger]
         
-        # 将 server 对象存储到 container 中，供 AgentFactory 使用
         server._container._server_ref = server
-        logger.info("✅ 已将 server 对象存储到 container 中")
 
         logger.info("服务器已启动，等待客户请求...")
         logger.info("当客户发起会话时，将自动创建个性化智能体并设置工具")
