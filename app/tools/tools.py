@@ -64,6 +64,7 @@ class ToolManager:
                     self._log_debug(f"✅ 成功设置工具: {config.name}")
             except Exception as e:
                 self._log_error(f"❌ 设置工具 {config.name} 失败: {str(e)}")
+                raise e
         
         self._log_info(f"工具设置完成，成功设置 {successful_tools}/{len(configs)} 个工具")
     
