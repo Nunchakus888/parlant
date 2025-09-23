@@ -7,6 +7,8 @@ from parlant.core.agent_factory import AgentFactory
 import parlant.sdk as p
 from parlant.core.agents import AgentStore
 from app.tools import ToolManager
+from app.tools.http_config import AgentConfigRequest, HttpConfigLoader
+
 
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
@@ -36,39 +38,48 @@ class CustomAgentFactory(AgentFactory):
 
         return None
     
-    async def create_agent_for_customer(self, customer_id: p.CustomerId) -> p.Agent:
-        """从配置文件创建个性化智能体"""
-        self._logger.info(f"为客户 {customer_id} 创建个性化智能体...")
+    async def create_agent_for_customer(self, config_request: AgentConfigRequest) -> p.Agent:
+        """
+        从HTTP配置请求创建个性化智能体
         
-        # 加载配置
-        config = self._load_config()
+        Args:
+            config_request: HTTP配置请求参数，必须提供
+            
+        Returns:
+            创建的Agent实例
+            
+        Raises:
+            RuntimeError: 当配置加载失败时
+        """
+        server = self._get_server_from_container()
+        if not server:
+            raise RuntimeError("Server 对象不可用，无法创建智能体")
+
+        self._logger.info(f"创建个性化智能体 for config_request: {config_request}")
+
+        http_loader = HttpConfigLoader(self._logger)
+        config = await http_loader.load_config_from_http(config_request)
+        # config = self._load_config()
+
+        self._logger.info(f"成功加载配置: {config}")
+
         basic_settings = config.get("basic_settings", {})
 
-        server = self._get_server_from_container()
-
-        actionbooks = config.get("action_books")
-        if not actionbooks:
+        action_books = config.get("action_books")
+        if not action_books:
             self._logger.error("❌ 没有找到 action_books，无法创建智能体")
             # todo: handle this
-            pass
+            raise RuntimeError("没有找到 action_books，无法创建智能体")
 
-        
-        if server:
-            agent = await server.create_agent(
-                name=basic_settings.get("name"),
-                description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
-                max_engine_iterations=3,
-            )
-            self._logger.info("✅ 使用 server.create_agent() 创建 Agent（完整功能）")
-        else:
-            # 回退到使用 agent_store，但需要手动创建完整的 Agent 对象
-            self._logger.error("❌ 无法获取 Server 对象，这会导致 Agent 功能受限")
-            raise RuntimeError("Server 对象不可用，无法创建具有完整功能的 Agent")
-
-        merged_tools = self._merge_tools_from_action_books(config)
+        agent = await server.create_agent(
+            name=basic_settings.get("name"),
+            description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
+            max_engine_iterations=3,
+        )
+        self._logger.info("✅ 使用 server.create_agent() 创建 Agent（完整功能）")
         
         # setup tools
-        tools = await self._setup_tools(agent, merged_tools)
+        tools = await self._setup_tools(agent, config.get("tools", []))
         
         # create guidelines
         await self._create_guidelines(agent, config.get("action_books", []), tools)
@@ -88,52 +99,10 @@ class CustomAgentFactory(AgentFactory):
         elapsed_time = end_time - start_time
         self._logger.info(f"⏱️ _process_evaluations 耗时: {elapsed_time:.3f} 秒")
         
-        self._logger.info(f"成功创建智能体 {agent.id} for customer {customer_id}")
+        self._logger.info(f"成功创建智能体 {agent.id} for config_request: {config_request}")
         return agent
     
-    def _merge_tools_from_action_books(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """merge main tools and action_books tools, pick up the tool schema from action_books
-        
-        Args:
-            config: the config of the agent
 
-        Returns:
-            the merged tools
-            modify the tools definition in the action_books to the tool name
-            remove the tool schema from the action_books tools
-        """
-        main_tools = config.get("tools", [])
-        action_books = config.get("action_books", [])
-
-        existing_tool_names = {tool["name"] for tool in main_tools if isinstance(tool, dict) and "name" in tool}
-
-        for action_book in action_books:
-            tools_in_action_book = action_book.get("tools", [])
-            if not tools_in_action_book:
-                continue
-
-            simplified_tools = []
-            for tool in tools_in_action_book:
-                if isinstance(tool, dict) and "name" in tool:
-                    if tool["name"] not in existing_tool_names:
-                        main_tools.append(tool)
-                        self._logger.info(f"pick tool schema from action_books: {tool['name']}")
-                    else:
-                        self._logger.warning(f"tool {tool['name']} already exists in main tools, skip adding")
-                    
-                    simplified_tools.append(tool["name"])
-                    self._logger.debug(f"pick tool schema from action_books: {tool['name']}")
-                elif isinstance(tool, str):
-                    simplified_tools.append(tool)
-                    self._logger.debug(f"pick tool name from action_books: {tool}")
-                else:
-                    self._logger.warning(f"unknown tool type: {type(tool)}, value: {tool}, skip adding")
-
-            action_book["tools"] = simplified_tools
-
-        self._logger.info(f"tool merge completed: total tools {len(main_tools)}")
-        return main_tools
-    
     async def _setup_tools(self, agent: p.Agent, tools_config: List[Dict[str, Any]]) -> Dict[str, Any]:
         """setup tools and return the tool mapping"""
         if not tools_config:

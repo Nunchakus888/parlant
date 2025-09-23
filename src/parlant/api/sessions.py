@@ -29,7 +29,7 @@ from parlant.core.agents import AgentId, AgentStore, CompositionMode, Agent
 from parlant.core.agent_factory import AgentFactory
 from parlant.core.application import Application
 from parlant.core.async_utils import Timeout
-from parlant.core.common import DefaultBaseModel
+from parlant.core.common import DefaultBaseModel, ItemNotFoundError
 from parlant.core.customers import CustomerId, CustomerStore
 from parlant.core.engines.types import UtteranceRationale, UtteranceRequest
 from parlant.core.loggers import Logger
@@ -1273,15 +1273,9 @@ async def _ensure_session_and_customer(
     params: ChatRequestDTO,
     app: Application,
     logger: Logger,
-    agent_creator: Callable[[CustomerId], Awaitable[Agent]],
+    agent_creator: Callable[[ChatRequestDTO], Awaitable[Agent]],
 ) -> tuple[Any, Any, AgentId]:
     """
-    Unified session and customer management logic with md5_checksum caching.
-    
-    This function handles the complex logic of ensuring both session and customer exist,
-    creating them if necessary, and returning the appropriate instances for chat interaction.
-    It uses md5_checksum to cache objects and avoid unnecessary recreation.
-    
     Args:
         params: The parameters for the chat request
         app: Application instance for creating sessions
@@ -1337,14 +1331,10 @@ async def _ensure_session_and_customer(
             logger.info(f"🔄 MD5 checksum changed from {session_checksum} to {md5_checksum}, recreating agent...")
             
             # Delete old agent if it exists
-            try:
-                await app.agents.delete(session.agent_id)
-                logger.info(f"🗑️ Deleted old agent: {session.agent_id}")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to delete old agent {session.agent_id}: {e}")
-            
+            # todo
+
             # Create new agent with updated configuration
-            agent = await agent_creator(customer_id)
+            agent = await agent_creator(params)
             agent_id = agent.id
             logger.info(f"🤖 Created new agent: {agent_id}")
             
@@ -1362,45 +1352,43 @@ async def _ensure_session_and_customer(
             logger.info(f"🔍 Updated session with new agent: {session.id}")
             
         else:
-            # md5_checksum matches or not provided, check if agent exists
-            try:
-                await app.agents.read(session.agent_id)
-                agent_id = session.agent_id    
-                logger.info(f"🤖 Agent found: {agent_id}")
-                
-                # Update md5_checksum if it wasn't set before
-                if md5_checksum and not session_checksum:
-                    session = await app.sessions.update(
-                        session_id=session_id,
-                        params={"md5_checksum": md5_checksum},
-                    )
-                    logger.info(f"🔍 Updated session with md5_checksum: {session.id}")
-                    
-            except Exception:
-                logger.info(f"🤖 Agent {session.agent_id} not found, creating new agent...")
-                # Create new agent for existing session
-                agent = await agent_creator(customer_id)
-                agent_id = agent.id
-                logger.info(f"🤖 Created new agent: {agent_id}")
-                
-                # Update session with new agent_id and md5_checksum
+            await app.agents.read(session.agent_id)
+            agent_id = session.agent_id    
+            logger.info(f"🤖 Agent found: {agent_id}")
+            
+            # Update md5_checksum if it wasn't set before
+            if md5_checksum and not session_checksum:
                 session = await app.sessions.update(
                     session_id=session_id,
-                    params={
-                        "agent_id": agent_id,
-                        "customer_id": customer_id,
-                        "title": session_title,
-                        "allow_greeting": False,
-                        "md5_checksum": md5_checksum,
-                    },
+                    params={"md5_checksum": md5_checksum},
                 )
-                logger.info(f"🔍 Updated session with new agent: {session.id}")
-        
-    except Exception:
-        logger.info(f"🔍 Session not found: {session_id}, creating...")
+                logger.info(f"🔍 Updated session with md5_checksum: {session.id}")
+                
+            logger.info(f"🤖 Agent {session.agent_id} not found, creating new agent...")
+            # Create new agent for existing session
+            agent = await agent_creator(params)
+            agent_id = agent.id
+            logger.info(f"🤖 Created new agent: {agent_id}")
+            
+            # Update session with new agent_id and md5_checksum
+            session = await app.sessions.update(
+                session_id=session_id,
+                params={
+                    "agent_id": agent_id,
+                    "customer_id": customer_id,
+                    "title": session_title,
+                    "allow_greeting": False,
+                    "md5_checksum": md5_checksum,
+                },
+            )
+            logger.info(f"🔍 Updated session with new agent: {session.id}")
+
+    except ItemNotFoundError:
+        # session not found, create new session
+        logger.info(f"🔍 ItemNotFoundError: {session_id}, creating...")
 
         # Step 3: Create agent for customer using the agent factory
-        agent = await agent_creator(customer_id)
+        agent = await agent_creator(params)
         agent_id = agent.id
         logger.info(f"🤖 Created new agent: {agent_id}")
 
@@ -1529,20 +1517,32 @@ def create_router(
     router = APIRouter()
 
     # Agent factory creates or retrieves agents for customers
-    async def _agent_creator(customer_id: CustomerId) -> Agent:
+    async def _agent_creator(params: ChatRequestDTO) -> Agent:
         if agent_factory:
-            logger.info(f"Using custom agent factory for customer: {customer_id}")
-            agent = await agent_factory.create_agent_for_customer(customer_id)
+            logger.info(f"Using custom agent factory for customer: {params.customer_id}")
+            
+            # 构建AgentConfigRequest
+            from app.tools.http_config import AgentConfigRequest
+            config_request = AgentConfigRequest(
+                tenant_id=params.tenant_id,
+                chatbot_id=params.chatbot_id,
+                preview=params.is_preview or False,
+                action_book_id=params.preview_actionbook_ids[0] if params.preview_actionbook_ids else None,
+                extra_param=params.autofill_params or {}
+            )
+            
+            agent = await agent_factory.create_agent_for_customer(config_request)
             logger.info(f"🤖 Created new agent via factory: {agent.id}")
             return agent
         else:
-            logger.info(f"No agent factory provided, using default agent for customer: {customer_id}")
-            agent = await app.agents.create(
-                name=f"Default Agent for {customer_id}",
-                description=f"Default agent for customer {customer_id}",
-            )
-            logger.info(f"🤖 Created default agent: {agent.id}")
-            return agent
+            raise ValueError("No agent factory provided")
+            # logger.info(f"No agent factory provided, using default agent for customer: {customer_id}")
+            # agent = await app.agents.create(
+            #     name=f"Default Agent for {customer_id}",
+            #     description=f"Default agent for customer {customer_id}",
+            # )
+            # logger.info(f"🤖 Created default agent: {agent.id}")
+            # return agent
 
 
     async def _get_total_tokens_for_event(session_id: str, correlation_id: str) -> int:
@@ -2218,18 +2218,27 @@ def create_router(
         """
         logger.info(f"🚀 Chat request started - {params}")
         
-        await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
-        logger.info("✅ Authorization successful")
+        try:
+            await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
+            logger.info("✅ Authorization successful")
 
-        logger.info("👤 Step 2: Session and Customer management")
-        
-        # Get or create session and customer in one unified flow
-        session, customer, agent_id = await _ensure_session_and_customer(
-            params=params,
-            app=app,
-            logger=logger,
-            agent_creator=_agent_creator,
-        )
+            logger.info("👤 Step 2: Session and Customer management")
+            
+            # Get or create session and customer in one unified flow
+            session, customer, agent_id = await _ensure_session_and_customer(
+                params=params,
+                app=app,
+                logger=logger,
+                agent_creator=_agent_creator,
+            )
+        except Exception as e:
+            logger.error(f"❌ Error during session/customer setup: {e}")
+            return ChatResponseDTO(
+                status=500,
+                code=-1,
+                message=str(e),
+                data=None
+            )
         
         logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
 

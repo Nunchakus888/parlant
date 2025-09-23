@@ -26,6 +26,6 @@ class AgentFactory(ABC):
         self._logger = logger
     
     @abstractmethod
-    async def create_agent_for_customer(self, customer_id: CustomerId) -> Agent:
-        """为指定客户创建Agent的抽象方法，子类必须实现"""
+    async def create_agent_for_customer(self, config_request) -> Agent:
+        """为指定配置请求创建Agent的抽象方法，子类必须实现"""
         pass

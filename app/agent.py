@@ -15,7 +15,7 @@ from apollo_config import load_apollo_config_from_env
 
 # load env
 from dotenv import load_dotenv
-load_dotenv()
+# load_dotenv()
 
 logger = None
 
@@ -35,8 +35,6 @@ async def main() -> None:
     
     # 使用mongodb存储会话和智能体
     mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
-
-    print(f"🔧 初始化函数: {initialize_agent_factory}")
 
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
