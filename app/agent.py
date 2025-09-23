@@ -27,11 +27,11 @@ async def main() -> None:
     # 尝试从Apollo加载配置
     try:
         print("📡 正在从Apollo配置中心加载配置...")
-        apollo_config = load_apollo_config_from_env()
+        apollo_config = await load_apollo_config_from_env()
         print(f"✅ 成功从Apollo加载配置，包含 {len(apollo_config)} 个配置项")
     except Exception as e:
         print(f"⚠️  从Apollo加载配置失败: {e}")
-        print("📝 将使用本地环境变量配置")
+        raise
     
     # 使用mongodb存储会话和智能体
     mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")

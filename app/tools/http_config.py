@@ -7,7 +7,7 @@ HTTP配置模块
 import json
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-import httpx
+import aiohttp
 import os
 
 
@@ -83,24 +83,25 @@ class HttpConfigLoader:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            timeout = aiohttp.ClientTimeout(total=10.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 self.logger.info(f"正在从 {url} 获取配置信息...")
-                response = await client.post(
+                async with session.post(
                     url,
                     json=request_data,
                     headers={"Content-Type": "application/json"}
-                )
-                response.raise_for_status()
+                ) as response:
+                    response.raise_for_status()
+                    
+                    res = await response.json()
+                    if res.get("code") != 0:
+                        error_code = res.get("code")
+                        error_message = res.get("message", "未知业务错误")
+                        self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
+                        raise AgentConfigError(error_message, error_code)
+                    return res.get("data")
                 
-                res = response.json()
-                if res.get("code") != 0:
-                    error_code = res.get("code")
-                    error_message = res.get("message", "未知业务错误")
-                    self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
-                    raise AgentConfigError(error_message, error_code)
-                return res.get("data")
-                
-        except httpx.HTTPError as e:
+        except aiohttp.ClientError as e:
             self.logger.error(f"HTTP请求失败: {e}")
             raise
         except json.JSONDecodeError as e:

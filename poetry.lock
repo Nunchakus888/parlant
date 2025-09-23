@@ -5551,10 +5551,9 @@ windows-terminal = ["colorama (>=0.4.6)"]
 name = "pymongo"
 version = "4.15.1"
 description = "PyMongo - the Official MongoDB Python driver"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"mongo\""
 files = [
     {file = "pymongo-4.15.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:97ccf8222abd5b79daa29811f64ef8b6bb678b9c9a1c1a2cfa0a277f89facd1d"},
     {file = "pymongo-4.15.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:f130b3d7540749a8788a254ceb199a03ede4ee080061bfa5e20e28237c87f2d7"},
@@ -8154,7 +8153,6 @@ cerebras = ["cerebras-cloud-sdk", "torch", "transformers"]
 deepseek = ["torch", "transformers"]
 gemini = ["google-api-core", "google-genai", "torch"]
 litellm = ["litellm", "torch", "transformers"]
-mongo = ["pymongo"]
 ollama = ["ollama"]
 together = ["together", "torch", "transformers"]
 vertex = ["anthropic", "google-api-core", "google-auth", "google-genai", "torch", "transformers"]
@@ -8162,4 +8160,4 @@ vertex = ["anthropic", "google-api-core", "google-auth", "google-genai", "torch"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "e1319f942480aece461dc540ae20ec6b076d81900d6b6b7b1ac7cdb2c0c4ecc0"
+content-hash = "d023463778a13b9b82a78883f204d5fb7bfe109d9c1c15fcec562b5a423346a1"

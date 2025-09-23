@@ -45,6 +45,7 @@ parlant-client = { git = "https://github.com/emcie-co/parlant-client-python.git"
 python = "^3.10"
 python-dateutil = "^2.8.2"
 python-dotenv = "^1.0.1"
+pymongo = "^4.11.1"
 requests = "^2.32.5"
 rich = "^13.7.1"
 semver = "^3.0.2"
@@ -70,7 +71,6 @@ together = { version = "^1.2.12", optional = true }
 torch = { version = "^2.6.0", optional = true }
 transformers = { version = "^4.46.2", optional = true }
 litellm = { version = "^1.61.16", optional = true }
-pymongo = { version = "^4.11.1", optional = true }
 
 
 [tool.poetry.group.dev.dependencies]
@@ -115,8 +115,6 @@ vertex = [
 ollama = ["ollama"]
 
 litellm = ["litellm", "torch", "transformers"]
-
-mongo = ["pymongo"]
 
 
 [build-system]
