@@ -382,6 +382,17 @@ class ChatDataDTO(DefaultBaseModel):
     events: list[EventDTO] | None = Field(default=[], description="Custom events for AI generation process exceptions")
     total_tokens: int = Field(description="Total tokens")
 
+class CapabilityChatDataDTO(DefaultBaseModel):
+    """Capability chat data."""
+    total_tokens: int = Field(description="Total tokens")
+    message: str = Field(description="Message")
+    # if kind is message, success is True
+    success: bool = Field(description="Success")
+    correlation_id: str = Field(description="Correlation ID")
+    creation_utc: datetime = Field(description="Creation UTC")
+    id: str = Field(description="ID")
+    session_id: str = Field(description="Session ID")
+
 
 # RESTful API Response Wrapper for Chat endpoint
 class ChatResponseDTO(DefaultBaseModel):
@@ -390,7 +401,7 @@ class ChatResponseDTO(DefaultBaseModel):
     status: int = Field(description="HTTP status code")
     code: int = Field(description="Business status code")
     message: str = Field(description="Response message")
-    data: ChatDataDTO | None = Field(default=None, description="Chat event data")
+    data: CapabilityChatDataDTO | None = Field(default=None, description="Chat event data")
 
 
 chat_response_success_example = {
@@ -2302,42 +2313,33 @@ def create_router(
 
         
         first_event = ai_events[0]
-        extra_info = None
 
-        if extra_events:
-          extra_info = [
-              EventDTO(
-                  id=event.id,
-                  source=_event_source_to_event_source_dto(event.source),
-                  kind=_event_kind_to_event_kind_dto(event.kind),
-                  creation_utc=event.creation_utc,
-                  correlation_id=event.correlation_id,
-                  data=cast(JSONSerializableDTO, event.data),
-              ) for event in extra_events]
-
-          logger.info(f"📊 Retrieved {len(extra_events)} extra events, extra_info: {extra_info}")
+        if not first_event:
+            return ChatResponseDTO(
+                status=500,
+                code=500,
+                message="NO_EVENTS_FOUND",
+                data=None
+            )
         
         logger.info(f"✅ Processing event - event_id: {first_event.id}, source: {first_event.source}, kind: {first_event.kind}")
 
-        logger.info("✅ Returning event for client processing")
         total_tokens = await _get_total_tokens_for_event(session.id, first_event.correlation_id)
         logger.info(f"✅ Total tokens: {total_tokens}")
 
+        
         response = ChatResponseDTO(
             status=200,
             code=0,
             message="SUCCESS",
-            data=ChatDataDTO(
-                generate=EventDTO(
-                    id=first_event.id,
-                    source=_event_source_to_event_source_dto(first_event.source),
-                    kind=_event_kind_to_event_kind_dto(first_event.kind),
-                    creation_utc=first_event.creation_utc,
-                    correlation_id=first_event.correlation_id,
-                    data=cast(JSONSerializableDTO, first_event.data),
-                ),
-                events=extra_info,
-                total_tokens=total_tokens
+            data=CapabilityChatDataDTO(
+                message=cast(MessageEventData, first_event.data)["message"],
+                success=True if not extra_events else False,
+                id=first_event.id,
+                correlation_id=first_event.correlation_id,
+                creation_utc=first_event.creation_utc,
+                total_tokens=total_tokens,
+                session_id=session.id
             )
         )
 
