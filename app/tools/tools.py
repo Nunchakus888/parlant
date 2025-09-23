@@ -45,7 +45,6 @@ class ToolManager:
     
     async def setup_tools(self, agent) -> None:
         """为智能体设置工具"""
-        self._log_info("开始为智能体设置工具...")
         
         # 加载配置
         configs = await self._load_configs()

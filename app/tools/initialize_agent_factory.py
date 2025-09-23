@@ -61,7 +61,7 @@ class CustomAgentFactory(AgentFactory):
         config = await http_loader.load_config_from_http(config_request)
         # config = self._load_config()
 
-        self._logger.info(f"成功加载配置: {config}")
+        self._logger.info(f"✅成功加载配置: {config}")
 
         basic_settings = config.get("basic_settings", {})
 
@@ -76,7 +76,6 @@ class CustomAgentFactory(AgentFactory):
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
             max_engine_iterations=3,
         )
-        self._logger.info("✅ 使用 server.create_agent() 创建 Agent（完整功能）")
         
         # setup tools
         tools = await self._setup_tools(agent, config.get("tools", []))
