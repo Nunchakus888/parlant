@@ -23,6 +23,7 @@ from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Seque
 from parlant.api.authorization import AuthorizationPolicy, Operation
 from parlant.api.common import GuidelineIdField, ExampleJson, JSONSerializableDTO, apigen_config
 from parlant.api.glossary import TermSynonymsField, TermIdPath, TermNameField, TermDescriptionField
+from parlant.app_modules.customers import CustomerMetadataUpdateParams
 from parlant.app_modules.sessions import Moderation
 from parlant.core.agents import AgentId
 from parlant.core.agents import AgentId, AgentStore, CompositionMode, Agent
@@ -1289,131 +1290,75 @@ async def _ensure_session_and_customer(
     # Extract parameters
     customer_id = params.customer_id
     session_id = params.session_id
-    session_title = params.session_title or f"{customer_id} - Chat Session"
     md5_checksum = params.md5_checksum
-    
-    # Generate cache key if md5_checksum is provided
-    cache_key = f"{customer_id}:{md5_checksum}" if md5_checksum else None
-    
-    # Check cache first if md5_checksum is provided
-    if cache_key and md5_checksum:
-        async with app._cache_lock:
-            if cache_key in app._object_cache:
-                cached = app._object_cache[cache_key]
-                logger.info(f"🎯 Using cached objects for {cache_key}")
-                return cached["session"], cached["customer"], cached["agent_id"]
 
-    # Step 1: Ensure customer exists
+    # Step 1: Ensure customer exists and check md5_checksum in customer.extra
     try:
         customer = await app.customers.read(customer_id)
-        logger.info(f"👤 Customer found: {customer.id}")
-    except Exception:
-        logger.info(f"👤 Customer not found: {customer_id}, creating...")
+        logger.debug(f"👤 Customer found: {customer.id}")
+
+        session = await app.sessions.read(session_id)
+        logger.debug(f"🔍 Session found: {session.id}")
+
+        agent = await app.agents.read(session.agent_id)
+        logger.debug(f"🤖 Agent found: {agent.id}")
+
+        if customer.extra.get('md5_checksum') != md5_checksum:
+            logger.info(f"🔄 MD5 checksum changed from {customer.extra.get('md5_checksum')} to {md5_checksum}, updating session...")
+
+            agent = await agent_creator(params)
+            logger.debug(f"🤖 Created new agent: {agent.id}")
+
+            logger.debug(f"🤖 Updated agent with new md5_checksum: {agent.id}")
+
+            await app.customers.update(
+                customer_id=customer_id,
+                name=customer.name,
+                metadata=CustomerMetadataUpdateParams(set={'md5_checksum': md5_checksum}),
+                tags=customer.tags
+            )
+
+            logger.debug(f"� Updated customer with new md5_checksum: {customer.id}")
+
+            await app.sessions.update(
+                session_id=session_id,
+                params={
+                    "agent_id": agent.id,
+                    "customer_id": customer_id,
+                    "allow_greeting": False,
+                },
+            )
+
+            logger.debug(f"🔍 Updated session with new agent: {session.id}")
+            return session, customer, agent.id
+
+        logger.info(f"🔍 MD5 checksum is the same: {customer.extra.get('md5_checksum')}")        
+        return session, customer, agent.id
+            
+    except ItemNotFoundError:
+        logger.info(f"❌ session cache not found: {session_id} customer: {customer_id}, creating...")
+        # Create customer with md5_checksum in extra
+        customer_extra = {'md5_checksum': md5_checksum} if md5_checksum else {}
         customer = await app.customers.create(
             id=customer_id,
-            name=customer_id,
-            extra={},
-            tags=[],
+            name=None,
+            extra=customer_extra,
+            tags=None,
         )
-        logger.info(f"👤 Created new customer: {customer.id}")
+        logger.info(f"❌ no cache, created new customer: {customer.id}")
 
-    # Step 2: Ensure session exists and check md5_checksum
-    session = None
-    agent_id = None
-    
-    try:
-        session = await app.sessions.read(session_id)
-        logger.info(f"🔍 Session found: {session.id}")
-        
-        # Check if md5_checksum has changed
-        session_checksum = getattr(session, 'md5_checksum', None)
-        if md5_checksum and session_checksum != md5_checksum:
-            logger.info(f"🔄 MD5 checksum changed from {session_checksum} to {md5_checksum}, recreating agent...")
-            
-            # Delete old agent if it exists
-            # todo
-
-            # Create new agent with updated configuration
-            agent = await agent_creator(params)
-            agent_id = agent.id
-            logger.info(f"🤖 Created new agent: {agent_id}")
-            
-            # Update session with new agent_id and md5_checksum
-            session = await app.sessions.update(
-                session_id=session_id,
-                params={
-                    "agent_id": agent_id,
-                    "customer_id": customer_id,
-                    "title": session_title,
-                    "allow_greeting": False,
-                    "md5_checksum": md5_checksum,
-                },
-            )
-            logger.info(f"🔍 Updated session with new agent: {session.id}")
-            
-        else:
-            await app.agents.read(session.agent_id)
-            agent_id = session.agent_id    
-            logger.info(f"🤖 Agent found: {agent_id}")
-            
-            # Update md5_checksum if it wasn't set before
-            if md5_checksum and not session_checksum:
-                session = await app.sessions.update(
-                    session_id=session_id,
-                    params={"md5_checksum": md5_checksum},
-                )
-                logger.info(f"🔍 Updated session with md5_checksum: {session.id}")
-                
-            logger.info(f"🤖 Agent {session.agent_id} not found, creating new agent...")
-            # Create new agent for existing session
-            agent = await agent_creator(params)
-            agent_id = agent.id
-            logger.info(f"🤖 Created new agent: {agent_id}")
-            
-            # Update session with new agent_id and md5_checksum
-            session = await app.sessions.update(
-                session_id=session_id,
-                params={
-                    "agent_id": agent_id,
-                    "customer_id": customer_id,
-                    "title": session_title,
-                    "allow_greeting": False,
-                    "md5_checksum": md5_checksum,
-                },
-            )
-            logger.info(f"🔍 Updated session with new agent: {session.id}")
-
-    except ItemNotFoundError:
-        # session not found, create new session
-        logger.info(f"🔍 ItemNotFoundError: {session_id}, creating...")
-
-        # Step 3: Create agent for customer using the agent factory
         agent = await agent_creator(params)
-        agent_id = agent.id
-        logger.info(f"🤖 Created new agent: {agent_id}")
+        logger.info(f"🤖 Created new agent: {agent.id}")
 
-        # Step 4: Create session with md5_checksum
         session = await app.sessions.create(
             session_id=session_id,
             customer_id=customer_id,
-            agent_id=agent_id,
-            title=session_title,
+            agent_id=agent.id,
             allow_greeting=False,
-            md5_checksum=md5_checksum,
         )
-        logger.info(f"🔍 Created new session: {session.id} with agent: {agent_id}")
-    
-    # Cache the result if md5_checksum is provided
-    if cache_key and md5_checksum:
-        async with app._cache_lock:
-            app._object_cache[cache_key] = {
-                "session": session,
-                "customer": customer,
-                "agent_id": agent_id
-            }
-            logger.info(f"💾 Cached objects for {cache_key}")
-    
-    return session, customer, agent_id
+
+        logger.info(f"❌ no cache, created new session: {session.id}")
+        return session, customer, agent.id
 
 
 def _get_jailbreak_moderation_service(logger: Logger) -> ModerationService:
