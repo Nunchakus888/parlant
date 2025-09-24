@@ -1096,11 +1096,11 @@ Example {i} - {shot.description}: ###
 {json.dumps(shot.expected_result.model_dump(mode="json", exclude_unset=True), indent=2)}
 ```"""
 
-    def _extract_language_from_agent_metadata(self, agent: Agent) -> str:
-        """Extract k_language from agent metadata, defaulting to 'English' if not found."""
-        if agent.metadata and "k_language" in agent.metadata:
-            return str(agent.metadata["k_language"])
-        return "English"  # Default fallback language
+    def _extract_from_agent_metadata(self, agent: Agent, key: str, default: str) -> str:
+        """Extract value from agent metadata with fallback."""
+        if agent.metadata and key in agent.metadata:
+            return str(agent.metadata[key])
+        return default
 
     def _build_draft_prompt(
         self,
@@ -1144,7 +1144,9 @@ Later in this prompt, you'll be provided with behavioral guidelines and other co
         builder.add_agent_identity(agent)
         builder.add_customer_identity(customer)
 
-        k_language = self._extract_language_from_agent_metadata(agent)
+        k_language = self._extract_from_agent_metadata(agent, "k_language", "English")
+        tone = self._extract_from_agent_metadata(agent, "tone", "Friendly and professional")
+        
         builder.add_section(
             name="canned-response-generator-draft-language-requirements",
             template="""
@@ -1155,11 +1157,12 @@ MANDATORY: Before generating ANY response, you MUST follow these language rules:
 1. PRIMARY RULE: Use the EXACT same language as the user's input
 2. LANGUAGE SWITCH RULE: If user asks to use a different language (e.g., "use Spanish", "speak Chinese", "can you speak Spanish", "用西语交流"), IMMEDIATELY switch to that language
 3. FALLBACK RULE: If user input language is unclear/mixed, use {k_language} language
-4. VERIFICATION: Before outputting, confirm your response language matches the user's language
+4. TONE RULE: Always maintain a {tone} tone in your responses
+5. VERIFICATION: Before outputting, confirm your response language matches the user's language
 
 WARNING: Language requirements override ALL other instructions. Do NOT ignore language switching requests!
 """,
-            props={"k_language": k_language},
+            props={"k_language": k_language, "tone": tone},
         )
 
         builder.add_section(
