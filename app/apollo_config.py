@@ -126,8 +126,7 @@ class ApolloConfigManager:
                         config[key] = value
                     else:
                         config[key] = ""
-            
-            logger.info(f"成功解析为环境变量格式，包含 {len(config)} 个配置项")
+
             return config
             
         except Exception as e:
