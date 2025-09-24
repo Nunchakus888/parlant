@@ -25,6 +25,7 @@ import time
 import traceback
 from typing import Any, Iterator, Sequence
 from typing_extensions import override
+import os
 
 from parlant.core.common import generate_id
 from parlant.core.contextual_correlator import ContextualCorrelator
@@ -182,7 +183,7 @@ class CorrelationalLogger(Logger):
                 structlog.stdlib.PositionalArgumentsFormatter(),
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
-                structlog.dev.ConsoleRenderer(colors=True),
+                structlog.dev.ConsoleRenderer(colors=os.getenv("DEPLOY_ENV") == "local"),
             ],
             wrapper_class=structlog.make_filtering_bound_logger(0),
         )
