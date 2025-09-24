@@ -71,10 +71,21 @@ class CustomAgentFactory(AgentFactory):
             # todo: handle this
             raise RuntimeError("没有找到 action_books，无法创建智能体")
 
+        metadata = {
+            "k_language": basic_settings.get("language", "English"),
+            "tone": basic_settings.get("tone", "Friendly and professional"),
+            "chatbot_id": basic_settings.get("chatbot_id")
+        }
+        
         agent = await server.create_agent(
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
             max_engine_iterations=3,
+            metadata=metadata,
+        )
+
+        agent.create_canned_response(
+            template="Thank you for your inquiry about {just4test}."
         )
         
         # setup tools

@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import NewType, Optional, Sequence, cast
+from typing import NewType, Optional, Sequence, cast, Dict, Any
 from typing_extensions import override, TypedDict, Self
 
 from parlant.core.async_utils import ReaderWriterLock
@@ -57,6 +57,7 @@ class AgentUpdateParams(TypedDict, total=False):
     description: Optional[str]
     max_engine_iterations: int
     composition_mode: CompositionMode
+    metadata: Optional[Dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class Agent:
     max_engine_iterations: int
     tags: Sequence[TagId]
     composition_mode: CompositionMode = CompositionMode.FLUID
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class AgentStore(ABC):
@@ -80,6 +82,7 @@ class AgentStore(ABC):
         max_engine_iterations: Optional[int] = None,
         composition_mode: Optional[CompositionMode] = None,
         tags: Optional[Sequence[TagId]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Agent: ...
 
     @abstractmethod
@@ -130,6 +133,7 @@ class _AgentDocument(TypedDict, total=False):
     description: Optional[str]
     max_engine_iterations: int
     composition_mode: str
+    metadata: Optional[Dict[str, Any]]
 
 
 class _AgentTagAssociationDocument(TypedDict, total=False):
@@ -262,6 +266,7 @@ class AgentDocumentStore(AgentStore):
             description=agent.description,
             max_engine_iterations=agent.max_engine_iterations,
             composition_mode=agent.composition_mode.value,
+            metadata=agent.metadata,
         )
 
     async def _deserialize_agent(self, agent_document: _AgentDocument) -> Agent:
@@ -280,6 +285,7 @@ class AgentDocumentStore(AgentStore):
             max_engine_iterations=agent_document["max_engine_iterations"],
             tags=tags,
             composition_mode=CompositionMode(agent_document.get("composition_mode", "fluid")),
+            metadata=agent_document.get("metadata"),
         )
 
     @override
@@ -291,6 +297,7 @@ class AgentDocumentStore(AgentStore):
         max_engine_iterations: Optional[int] = None,
         composition_mode: Optional[CompositionMode] = None,
         tags: Optional[Sequence[TagId]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Agent:
         async with self._lock.writer_lock:
             creation_utc = creation_utc or datetime.now(timezone.utc)
@@ -306,6 +313,7 @@ class AgentDocumentStore(AgentStore):
                 max_engine_iterations=max_engine_iterations,
                 tags=tags or [],
                 composition_mode=composition_mode or CompositionMode.FLUID,
+                metadata=metadata,
             )
 
             await self._agents_collection.insert_one(document=self._serialize_agent(agent=agent))

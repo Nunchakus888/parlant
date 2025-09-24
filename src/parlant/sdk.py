@@ -53,6 +53,7 @@ from typing import (
     TypeAlias,
     TypedDict,
     cast,
+    Dict,
 )
 from typing_extensions import overload
 from lagom import Container
@@ -1697,6 +1698,7 @@ class Agent:
     max_engine_iterations: int
     composition_mode: CompositionMode
     tags: Sequence[TagId]
+    metadata: Dict[str, Any] | None
 
     retrievers: Mapping[str, Callable[[RetrieverContext], Awaitable[JSONSerializable]]] = field(
         default_factory=dict
@@ -2536,6 +2538,7 @@ class Server:
         composition_mode: CompositionMode = CompositionMode.FLUID,
         max_engine_iterations: int | None = None,
         tags: Sequence[TagId] = [],
+        metadata: Dict[str, Any] | None = None,
     ) -> Agent:
         """Creates a new agent with the specified name, description, and composition mode."""
 
@@ -2546,6 +2549,8 @@ class Server:
             description=description,
             max_engine_iterations=max_engine_iterations or 3,
             composition_mode=composition_mode.value,
+            tags=tags,
+            metadata=metadata,
         )
 
         return Agent(
@@ -2555,6 +2560,7 @@ class Server:
             max_engine_iterations=agent.max_engine_iterations,
             composition_mode=CompositionMode(agent.composition_mode),
             tags=tags,
+            metadata=agent.metadata,
             _server=self,
             _container=self._container,
         )
@@ -2572,6 +2578,7 @@ class Server:
                 max_engine_iterations=a.max_engine_iterations,
                 composition_mode=CompositionMode(a.composition_mode),
                 tags=a.tags,
+                metadata=a.metadata,
                 _server=self,
                 _container=self._container,
             )
@@ -2591,6 +2598,7 @@ class Server:
                 max_engine_iterations=agent.max_engine_iterations,
                 composition_mode=CompositionMode(agent.composition_mode),
                 tags=agent.tags,
+                metadata=agent.metadata,
                 _server=self,
                 _container=self._container,
             )
