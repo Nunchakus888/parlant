@@ -264,8 +264,6 @@ async def setup_agent_with_tools(agent) -> None:
             
         except Exception as e:
             logger.error(f"❌ 设置工具 {tool_name} 失败: {str(e)}")
-    
-    logger.info(f"工具设置完成，成功设置 {successful_tools}/{len(tools_config)} 个工具")
 
 
 async def main() -> None:

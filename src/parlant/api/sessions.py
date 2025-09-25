@@ -520,9 +520,9 @@ class ChatRequestDTO(
         examples=["chatbot_123xyz"],
     )
     timeout: Optional[int] = Field(
-        default=60,
+        default=57,
         description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
-        examples=[60, 120],
+        examples=[57, 120],
     )
 
 
@@ -1308,7 +1308,7 @@ async def _ensure_session_and_customer(
     try:
         agent = await app.agents.read(agent_id)
 
-        if agent.metadata.get('md5_checksum') != md5_checksum:
+        if not md5_checksum or agent.metadata.get('md5_checksum') != md5_checksum:
             logger.info(f"🔄 MD5 checksum changed from {agent.metadata.get('md5_checksum')} to {md5_checksum}, updating agent...")
 
             await app.agents.delete(agent_id)
@@ -1319,7 +1319,7 @@ async def _ensure_session_and_customer(
 
     except ItemNotFoundError as e:
         agent = await agent_creator(params)
-        logger.info(f"❌ agent not found: {e}, ✅ created new agent: {agent.id}")
+        logger.info(f"✅ created new agent: {agent.id}")
 
     try:
         session = await app.sessions.read(session_id)
@@ -1456,13 +1456,12 @@ def create_router(
                 tenant_id=params.tenant_id,
                 chatbot_id=params.chatbot_id,
                 preview=params.is_preview or False,
-                action_book_id=params.preview_action_book_ids,
+                action_book_id=params.preview_action_book_ids[0] if params.preview_action_book_ids else None,
                 extra_param=params.autofill_params or {},
                 md5_checksum=params.md5_checksum
             )
             
             agent = await agent_factory.create_agent_for_customer(config_request)
-            logger.info(f"🤖 Created new agent via factory: {agent.id}")
             return agent
         else:
             raise ValueError("No agent factory provided")
@@ -2192,8 +2191,7 @@ def create_router(
             "flagged": False,
             "tags": [],
         }
-        
-        logger.info(f"📨 Posting event with session_id: {session.id}, agent_id: {session.agent_id}")
+
         customer_event = await app.sessions.create_event(
             session_id=session.id,
             kind=EventKind.MESSAGE,

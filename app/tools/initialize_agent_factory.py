@@ -55,7 +55,7 @@ class CustomAgentFactory(AgentFactory):
         if not server:
             raise RuntimeError("Server 对象不可用，无法创建智能体")
 
-        self._logger.info(f"创建个性化智能体 for config_request: {config_request}")
+        self._logger.info(f"create_agent_for_customer for config_request: {config_request}")
 
         http_loader = HttpConfigLoader(self._logger)
         config = await http_loader.load_config_from_http(config_request)
@@ -106,8 +106,7 @@ class CustomAgentFactory(AgentFactory):
         end_time = time.time()
         elapsed_time = end_time - start_time
         self._logger.info(f"⏱️ _process_evaluations 耗时: {elapsed_time:.3f} 秒")
-        
-        self._logger.info(f"成功创建智能体 {agent.id} for config_request: {config_request}")
+
         return agent
     
 

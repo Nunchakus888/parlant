@@ -216,7 +216,6 @@ async def main() -> None:
             action="Kindly tell them you cannot assist with off-topic inquiries - do not engage with their request.",
         )
 
-        print(f"成功创建智能体 {agent} for customer {customer_id}")
         return agent
 
 
