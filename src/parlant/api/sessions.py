@@ -1448,7 +1448,6 @@ def create_router(
     # Agent factory creates or retrieves agents for customers
     async def _agent_creator(params: ChatRequestDTO) -> Agent:
         if agent_factory:
-            logger.info(f"Using custom agent factory for customer: {params.customer_id}")
             
             # 构建AgentConfigRequest
             from app.tools.http_config import AgentConfigRequest
