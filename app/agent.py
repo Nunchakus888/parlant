@@ -5,7 +5,7 @@ from parlant.core.loggers import Logger, LogLevel, StdoutLogger
 from parlant.core.contextual_correlator import ContextualCorrelator
 from parlant.core.agents import AgentStore
 from tools.initialize_agent_factory import initialize_agent_factory
-from apollo_config import load_apollo_config_from_env
+from configs.apollo_config import load_apollo_config_from_env
 
 # load env
 from dotenv import load_dotenv
