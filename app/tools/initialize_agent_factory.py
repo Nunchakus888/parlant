@@ -55,8 +55,6 @@ class CustomAgentFactory(AgentFactory):
         if not server:
             raise RuntimeError("Server 对象不可用，无法创建智能体")
 
-        self._logger.info(f"create_agent_for_customer for config_request: {config_request}")
-
         http_loader = HttpConfigLoader(self._logger)
         config = await http_loader.load_config_from_http(config_request)
         # config = self._load_config()
@@ -105,7 +103,7 @@ class CustomAgentFactory(AgentFactory):
         await server._process_evaluations()
         end_time = time.time()
         elapsed_time = end_time - start_time
-        self._logger.info(f"⏱️ _process_evaluations 耗时: {elapsed_time:.3f} 秒")
+        self._logger.info(f"✅⏱️ _process_evaluations 耗时: {elapsed_time:.3f} 秒")
 
         return agent
     
@@ -123,7 +121,6 @@ class CustomAgentFactory(AgentFactory):
         )
         await tool_manager.setup_tools(agent)
         
-        self._logger.info(f"successfully setup {len(tools_config)} tools")
         return tool_manager._tools
     
     async def _create_guidelines(self, agent: p.Agent, action_books: List[Dict[str, Any]], available_tools: Dict[str, Any]) -> None:
@@ -165,14 +162,14 @@ class CustomAgentFactory(AgentFactory):
                 
                 # print tool names
                 tool_names = [tool.tool.name for tool in associated_tools] if associated_tools else []
-                self._logger.debug(f"create guideline: {condition} -> (associated {tool_names} tools)")
+                self._logger.debug(f"create actionbooks: {condition} -> (associated {tool_names} tools)")
                 
             except Exception as e:
                 self._logger.error(f"create guideline failed: {e}")
                 continue
         
         
-        self._logger.info(f"successfully created {len(action_books)} guidelines")
+        self._logger.info(f"✅successfully created {len(action_books)} actionbooks")
 
     async def _process_journey(self, journey_config: Dict[str, Any], agent: p.Agent) -> None:
         """

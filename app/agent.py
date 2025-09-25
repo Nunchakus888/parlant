@@ -1,9 +1,3 @@
-"""
-精简工具示例
-
-使用单一文件的工具管理器，代码简洁易维护。
-"""
-
 import parlant.sdk as p
 import asyncio
 import os
@@ -15,7 +9,7 @@ from apollo_config import load_apollo_config_from_env
 
 # load env
 from dotenv import load_dotenv
-# load_dotenv()
+from utils.format import encode_mongodb_url
 
 logger = None
 
@@ -31,15 +25,12 @@ async def main() -> None:
         print(f"✅ 成功从Apollo加载配置，包含 {len(apollo_config)} 个配置项")
     except Exception as e:
         print(f"⚠️  从Apollo加载配置失败: {e}")
-        raise
-    
-    # 使用mongodb存储会话和智能体
-    mongodb_url = os.environ.get("MONGODB_SESSION_STORE", "mongodb://localhost:27017")
+        load_dotenv()
 
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
-        log_level=LogLevel.DEBUG,
-        session_store=mongodb_url,
+        log_level=LogLevel.TRACE if os.getenv("DEPLOY_ENV") == "local" else LogLevel.DEBUG,
+        session_store=encode_mongodb_url(os.environ.get("MONGODB_SESSION_STORE")),
         initialize_container=initialize_agent_factory
     ) as server:
 
@@ -50,7 +41,7 @@ async def main() -> None:
         server._container._server_ref = server
 
         logger.info("服务器已启动，等待客户请求...")
-        logger.info("当客户发起会话时，将自动创建个性化智能体并设置工具")
+        logger.info("当客户发起会话时，将自动创建Agent并设置Actionbooks")
 
 
 if __name__ == "__main__":

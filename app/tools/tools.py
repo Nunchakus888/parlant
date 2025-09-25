@@ -65,7 +65,7 @@ class ToolManager:
                 self._log_error(f"❌ 设置工具 {config.name} 失败: {str(e)}")
                 raise e
         
-        self._log_info(f"工具设置完成，成功设置 {successful_tools}/{len(configs)} 个工具")
+        self._log_info(f"✅successfully setup {successful_tools}/{len(configs)} tools")
     
     def get_tool(self, name: str) -> Optional[Any]:
         """获取指定工具"""
@@ -102,8 +102,7 @@ class ToolManager:
                 except Exception as e:
                     self._log_error(f"解析工具配置失败: {str(e)}")
                     continue
-            
-            self._log_info(f"成功加载 {len(configs)} 个工具配置")
+
             return configs
             
         except FileNotFoundError:

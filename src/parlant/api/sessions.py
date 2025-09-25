@@ -1303,7 +1303,7 @@ async def _ensure_session_and_customer(
             extra={},
             tags=None,
         )
-        logger.info(f"❌ customer not found: {e}, ✅ created new customer: {customer.id}")
+        logger.info(f"✅ created new customer: {customer.id}")
     
     try:
         agent = await app.agents.read(agent_id)
@@ -1340,7 +1340,7 @@ async def _ensure_session_and_customer(
             agent_id=agent.id,
             allow_greeting=False,
         )
-        logger.info(f"❌ session not found: {e}, ✅ created new session: {session.id}")
+        logger.info(f"✅ created new session: {session.id}")
 
     return session, customer, agent.id
 
