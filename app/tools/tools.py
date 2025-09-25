@@ -80,7 +80,6 @@ class ToolManager:
         try:
             # 优先使用直接传入的配置
             if self.raw_configs is not None:
-                self._log_info(f"使用直接传入的工具配置，共 {len(self.raw_configs)} 个工具")
                 raw_configs = self.raw_configs
             elif self.config_path is not None:
                 self._log_info(f"从配置文件加载工具配置: {self.config_path}")
