@@ -8,7 +8,7 @@ import parlant.sdk as p
 from parlant.core.agents import AgentStore
 from app.tools import ToolManager
 from app.tools.http_config import AgentConfigRequest, HttpConfigLoader
-
+from app.tools.prompts_format import decode_markdown_links
 
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
@@ -149,6 +149,8 @@ class CustomAgentFactory(AgentFactory):
                     self._logger.warning(f"skip invalid guideline: condition={condition}, action={action}")
                     continue
                 
+                action = decode_markdown_links(action, self._logger)
+
                 # get associated tools
                 associated_tools = []
                 for tool_name in tool_names:
