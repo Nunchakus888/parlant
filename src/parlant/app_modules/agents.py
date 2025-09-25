@@ -33,6 +33,7 @@ class AgentModule:
         max_engine_iterations: int | None,
         composition_mode: CompositionMode | None,
         tags: list[TagId] | None,
+        id: AgentId | None = None,
     ) -> Agent:
         if tags:
             for tag_id in tags:
@@ -41,6 +42,7 @@ class AgentModule:
             tags = list(set(tags))
 
         agent = await self._agent_store.create_agent(
+            id=id,
             name=name,
             description=description,
             max_engine_iterations=max_engine_iterations,

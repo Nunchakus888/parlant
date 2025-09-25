@@ -5,7 +5,7 @@ import time
 from typing import Dict, Any, List, Optional
 from parlant.core.agent_factory import AgentFactory
 import parlant.sdk as p
-from parlant.core.agents import AgentStore
+from parlant.core.agents import AgentStore, AgentId
 from app.tools import ToolManager
 from app.tools.http_config import AgentConfigRequest, HttpConfigLoader
 from app.tools.prompts_format import decode_markdown_links
@@ -58,8 +58,8 @@ class CustomAgentFactory(AgentFactory):
         self._logger.info(f"创建个性化智能体 for config_request: {config_request}")
 
         http_loader = HttpConfigLoader(self._logger)
-        config = await http_loader.load_config_from_http(config_request)
-        # config = self._load_config()
+        # config = await http_loader.load_config_from_http(config_request)
+        config = self._load_config()
 
         self._logger.info(f"✅成功加载配置: {config}")
 
@@ -74,18 +74,16 @@ class CustomAgentFactory(AgentFactory):
         metadata = {
             "k_language": basic_settings.get("language", "English"),
             "tone": basic_settings.get("tone", "Friendly and professional"),
-            "chatbot_id": basic_settings.get("chatbot_id")
+            "chatbot_id": basic_settings.get("chatbot_id"),
+            "md5_checksum": config_request.md5_checksum
         }
         
         agent = await server.create_agent(
+            id=AgentId(config_request.tenant_id) if config_request.tenant_id else None,
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
             max_engine_iterations=3,
             metadata=metadata,
-        )
-
-        agent.create_canned_response(
-            template="Thank you for your inquiry about {just4test}."
         )
         
         # setup tools
