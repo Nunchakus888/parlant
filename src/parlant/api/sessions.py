@@ -2153,11 +2153,11 @@ def create_router(
             logger.info("👤 Step 2: Session and Customer management")
 
             customers = await app.customers.find()
-            logger.error(f"👤 Customers list: {len(customers)} \n{customers}")
+            logger.info(f"👤 Customers list: {len(customers)} \n{customers}")
             # sessions = await app.sessions.find(None, None)
-            # logger.error(f"🔍 Sessions list: {len(sessions)} \n{sessions}")
+            # logger.info(f"🔍 Sessions list: {len(sessions)} \n{sessions}")
             agents = await app.agents.find()
-            logger.error(f"🤖 Agents list: {len(agents)} \n{agents}")
+            logger.info(f"🤖 Agents list: {len(agents)} \n{agents}")
             
             # Get or create session and customer in one unified flow
             session, customer, agent_id = await _ensure_session_and_customer(
