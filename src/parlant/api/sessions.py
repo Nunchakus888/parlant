@@ -455,7 +455,7 @@ chat_request_example: ExampleJson = {
     "chatbot_id": "xxx",
     "md5_checksum": "xxx",
     "is_preview": False,
-    "preview_actionbook_ids": [],
+    "preview_action_book_ids": [],
     "autofill_params": {},
     "session_title": "",
     "timeout": 60,
@@ -494,7 +494,7 @@ class ChatRequestDTO(
         description="Parameters to automatically fill for the data-connector when they are required by the connector but not provided by the user, and the system has access to them.",
         examples=[{"dialogId": "123", "tenantId": "1bgrs2d1sxef47d23a91x4s6z7y9gt8"}],
     )
-    preview_actionbook_ids: Optional[list[str]] = Field(
+    preview_action_book_ids: Optional[list[str]] = Field(
         default=[],
         description="IDs of the actionbooks to preview. If not provided, no actionbooks will be previewed.",
         examples=["act_123xyz", "act_456xyz"],
@@ -1456,7 +1456,7 @@ def create_router(
                 tenant_id=params.tenant_id,
                 chatbot_id=params.chatbot_id,
                 preview=params.is_preview or False,
-                action_book_id=params.preview_actionbook_ids[0] if params.preview_actionbook_ids else None,
+                action_book_id=params.preview_action_book_ids,
                 extra_param=params.autofill_params or {},
                 md5_checksum=params.md5_checksum
             )
