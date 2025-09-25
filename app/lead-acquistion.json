@@ -25,6 +25,26 @@
   ],
   "tools": [
     {
+      "name": "retrieve_knowledge",
+      "description": "Retrieve relevant information from the knowledge base",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpoint": {
+        "url": "http://172.16.92.21:18080/chatbot/ai-inner/retrieve-knowledge",
+        "method": "GET",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "chatbotId": "{chatbotId}",
+          "tenantId": "{tenantId}",
+          "keywords": "{keywords}"
+        }
+      }
+    },
+    {
       "name": "save_customer_information",
       "description": "Save the customer's information when they provide one or more fields",
       "parameters": {

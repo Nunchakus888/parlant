@@ -101,6 +101,8 @@ class HttpConfigLoader:
                         error_message = res.get("message", "未知业务错误")
                         self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
                         raise AgentConfigError(error_message, error_code)
+                    
+                    self.logger.info(f"✅成功加载配置: {json.dumps(res.get('data'), ensure_ascii=False, indent=2)}")
                     return res.get("data")
                 
         except aiohttp.ClientError as e:
