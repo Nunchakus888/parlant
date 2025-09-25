@@ -1297,35 +1297,32 @@ async def _ensure_session_and_customer(
         customer = await app.customers.read(customer_id)
         logger.info(f"👤 Customer found: {customer_id}")
     except ItemNotFoundError as e:
-        logger.info(f"❌ customer not found: {e}, recreating customer and session...")
         customer = await app.customers.create(
             id=customer_id,
             name=None,
             extra={},
             tags=None,
         )
-        logger.info(f"✅ created new customer: {customer.id}")
+        logger.info(f"❌ customer not found: {e}, ✅ created new customer: {customer.id}")
     
     try:
         agent = await app.agents.read(agent_id)
-        logger.info(f"🤖 Agent found: {agent}")
 
         if agent.metadata.get('md5_checksum') != md5_checksum:
-            logger.info(f"🔄 MD5 checksum changed from {agent.metadata.get('md5_checksum')} to {md5_checksum}, updating session...")
+            logger.info(f"🔄 MD5 checksum changed from {agent.metadata.get('md5_checksum')} to {md5_checksum}, updating agent...")
 
             await app.agents.delete(agent_id)
-            logger.info(f"✅ deleted old agent: {agent_id}")
             agent = await agent_creator(params)
             logger.info(f"✅ created new agent: {agent.id}")
+        else:
+          logger.info(f"🤖 🎯🎯 Agent found: {agent}")
 
     except ItemNotFoundError as e:
-        logger.info(f"❌ agent not found: {e}, creating new agent...")
         agent = await agent_creator(params)
-        logger.info(f"✅ created new agent: {agent.id}")
+        logger.info(f"❌ agent not found: {e}, ✅ created new agent: {agent.id}")
 
     try:
         session = await app.sessions.read(session_id)
-        logger.info(f"🔍 Session found: {session.id}")
 
         session = await app.sessions.update(
             session_id=session_id,
@@ -1337,14 +1334,13 @@ async def _ensure_session_and_customer(
         logger.info(f"✅ updated session to the latest status: {session}")
 
     except ItemNotFoundError as e:
-        logger.info(f"❌ session not found: {e}, creating new session...")
         session = await app.sessions.create(
             session_id=session_id,
             customer_id=customer_id,
             agent_id=agent.id,
             allow_greeting=False,
         )
-        logger.info(f"✅ created new session: {session.id}")
+        logger.info(f"❌ session not found: {e}, ✅ created new session: {session.id}")
 
     return session, customer, agent.id
 
