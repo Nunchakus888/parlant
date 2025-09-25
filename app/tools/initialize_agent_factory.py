@@ -58,8 +58,8 @@ class CustomAgentFactory(AgentFactory):
         self._logger.info(f"创建个性化智能体 for config_request: {config_request}")
 
         http_loader = HttpConfigLoader(self._logger)
-        # config = await http_loader.load_config_from_http(config_request)
-        config = self._load_config()
+        config = await http_loader.load_config_from_http(config_request)
+        # config = self._load_config()
 
         self._logger.info(f"✅成功加载配置: {config}")
 
