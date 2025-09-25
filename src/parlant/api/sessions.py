@@ -1291,74 +1291,62 @@ async def _ensure_session_and_customer(
     customer_id = params.customer_id
     session_id = params.session_id
     md5_checksum = params.md5_checksum
+    agent_id = params.tenant_id
 
-    # Step 1: Ensure customer exists and check md5_checksum in customer.extra
     try:
         customer = await app.customers.read(customer_id)
-        logger.debug(f"👤 Customer found: {customer.id}")
-
-        session = await app.sessions.read(session_id)
-        logger.debug(f"🔍 Session found: {session.id}")
-
-        agent = await app.agents.read(session.agent_id)
-        logger.debug(f"🤖 Agent found: {agent.id}")
-
-        if customer.extra.get('md5_checksum') != md5_checksum:
-            logger.info(f"🔄 MD5 checksum changed from {customer.extra.get('md5_checksum')} to {md5_checksum}, updating session...")
-
-            agent = await agent_creator(params)
-            logger.debug(f"🤖 Created new agent: {agent.id}")
-
-            logger.debug(f"🤖 Updated agent with new md5_checksum: {agent.id}")
-
-            await app.customers.update(
-                customer_id=customer_id,
-                name=customer.name,
-                metadata=CustomerMetadataUpdateParams(set={'md5_checksum': md5_checksum}),
-                tags=customer.tags
-            )
-
-            logger.debug(f"� Updated customer with new md5_checksum: {customer.id}")
-
-            await app.sessions.update(
-                session_id=session_id,
-                params={
-                    "agent_id": agent.id,
-                    "customer_id": customer_id,
-                    "allow_greeting": False,
-                },
-            )
-
-            logger.debug(f"🔍 Updated session with new agent: {session.id}")
-            return session, customer, agent.id
-
-        logger.info(f"🔍 MD5 checksum is the same: {customer.extra.get('md5_checksum')}")        
-        return session, customer, agent.id
-            
-    except ItemNotFoundError:
-        logger.info(f"❌ session cache not found: {session_id} customer: {customer_id}, creating...")
-        # Create customer with md5_checksum in extra
-        customer_extra = {'md5_checksum': md5_checksum} if md5_checksum else {}
+        logger.info(f"👤 Customer found: {customer_id}")
+    except ItemNotFoundError as e:
+        logger.info(f"❌ customer not found: {e}, recreating customer and session...")
         customer = await app.customers.create(
             id=customer_id,
             name=None,
-            extra=customer_extra,
+            extra={},
             tags=None,
         )
-        logger.info(f"❌ no cache, created new customer: {customer.id}")
+        logger.info(f"✅ created new customer: {customer.id}")
+    
+    try:
+        agent = await app.agents.read(agent_id)
+        logger.info(f"🤖 Agent found: {agent}")
 
+        if agent.metadata.get('md5_checksum') != md5_checksum:
+            logger.info(f"🔄 MD5 checksum changed from {agent.metadata.get('md5_checksum')} to {md5_checksum}, updating session...")
+
+            await app.agents.delete(agent_id)
+            logger.info(f"✅ deleted old agent: {agent_id}")
+            agent = await agent_creator(params)
+            logger.info(f"✅ created new agent: {agent.id}")
+
+    except ItemNotFoundError as e:
+        logger.info(f"❌ agent not found: {e}, creating new agent...")
         agent = await agent_creator(params)
-        logger.info(f"🤖 Created new agent: {agent.id}")
+        logger.info(f"✅ created new agent: {agent.id}")
 
+    try:
+        session = await app.sessions.read(session_id)
+        logger.info(f"🔍 Session found: {session.id}")
+
+        session = await app.sessions.update(
+            session_id=session_id,
+            params=SessionUpdateParams(
+              agent_id=agent.id,
+              customer_id=customer_id,
+            )
+        )
+        logger.info(f"✅ updated session to the latest status: {session}")
+
+    except ItemNotFoundError as e:
+        logger.info(f"❌ session not found: {e}, creating new session...")
         session = await app.sessions.create(
             session_id=session_id,
             customer_id=customer_id,
             agent_id=agent.id,
             allow_greeting=False,
         )
+        logger.info(f"✅ created new session: {session.id}")
 
-        logger.info(f"❌ no cache, created new session: {session.id}")
-        return session, customer, agent.id
+    return session, customer, agent.id
 
 
 def _get_jailbreak_moderation_service(logger: Logger) -> ModerationService:
@@ -1473,7 +1461,8 @@ def create_router(
                 chatbot_id=params.chatbot_id,
                 preview=params.is_preview or False,
                 action_book_id=params.preview_actionbook_ids[0] if params.preview_actionbook_ids else None,
-                extra_param=params.autofill_params or {}
+                extra_param=params.autofill_params or {},
+                md5_checksum=params.md5_checksum
             )
             
             agent = await agent_factory.create_agent_for_customer(config_request)
@@ -2168,6 +2157,13 @@ def create_router(
             logger.info("✅ Authorization successful")
 
             logger.info("👤 Step 2: Session and Customer management")
+
+            customers = await app.customers.find()
+            logger.error(f"👤 Customers list: {len(customers)} \n{customers}")
+            # sessions = await app.sessions.find(None, None)
+            # logger.error(f"🔍 Sessions list: {len(sessions)} \n{sessions}")
+            agents = await app.agents.find()
+            logger.error(f"🤖 Agents list: {len(agents)} \n{agents}")
             
             # Get or create session and customer in one unified flow
             session, customer, agent_id = await _ensure_session_and_customer(
@@ -2265,6 +2261,18 @@ def create_router(
             correlation_id=None,
         )
 
+        code = 0
+        message = "SUCCESS"
+        if extra_events and extra_events[0] and extra_events[0].data:
+          logger.debug(f"✅ Extra events data: {extra_events[0].data}")
+          type = extra_events[0].data.get('type')
+          if type == "tool_error":
+            code = -1
+            message = "CALL TOOL ERROR"
+          elif type == "skipped":
+            message = "NO ACTIONBOOK MATCHED"
+            code = 1
+
         
         first_event = ai_events[0]
 
@@ -2284,11 +2292,11 @@ def create_router(
         
         response = ChatResponseDTO(
             status=200,
-            code=0,
-            message="SUCCESS",
+            code=code,
+            message=message,
             data=CapabilityChatDataDTO(
                 message=cast(MessageEventData, first_event.data)["message"],
-                success=True if not extra_events else False,
+                success=code == 0,
                 id=first_event.id,
                 correlation_id=first_event.correlation_id,
                 creation_utc=first_event.creation_utc,

@@ -2539,12 +2539,14 @@ class Server:
         max_engine_iterations: int | None = None,
         tags: Sequence[TagId] = [],
         metadata: Dict[str, Any] | None = None,
+        id: AgentId | None = None,
     ) -> Agent:
         """Creates a new agent with the specified name, description, and composition mode."""
 
         self._advance_creation_progress()
 
         agent = await self._container[AgentStore].create_agent(
+            id=id,
             name=name,
             description=description,
             max_engine_iterations=max_engine_iterations or 3,

@@ -27,6 +27,7 @@ class AgentConfigRequest:
     preview: bool = False
     action_book_id: Optional[str] = None
     extra_param: Optional[Dict[str, Any]] = None
+    md5_checksum: Optional[str] = None
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AgentConfigRequest':
@@ -44,7 +45,8 @@ class AgentConfigRequest:
             chatbot_id=data["chatbotId"],
             preview=data.get("preview", False),
             action_book_id=data.get("actionBookId"),
-            extra_param=data.get("extraParam")
+            extra_param=data.get("extraParam"),
+            md5_checksum=data.get("md5Checksum")
         )
 
 
