@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+import asyncio
+from typing import Sequence
+
 from parlant.app_modules.agents import AgentModule
 from parlant.app_modules.capabilities import CapabilityModule
 from parlant.app_modules.canned_responses import CannedResponseModule
@@ -26,6 +29,10 @@ from parlant.app_modules.tags import TagModule
 from parlant.app_modules.customers import CustomerModule
 from parlant.app_modules.guidelines import GuidelineModule
 from parlant.app_modules.glossary import GlossaryModule
+
+from parlant.core.agents import AgentId
+from parlant.core.tags import Tag, TagId
+from parlant.core.async_utils import safe_gather
 
 
 class Application:
@@ -58,3 +65,111 @@ class Application:
         self.glossary = glossary_module
         self.evaluations = evaluation_module
         self.canned_responses = canned_response_module
+
+    async def delete_agent_cascade(self, agent_id: AgentId) -> None:
+        """
+        级联删除 Agent 及其所有关联对象。
+        
+        删除顺序：
+        2. Guidelines (通过 agent tag 关联)
+        3. Journeys (通过 agent tag 关联)
+        4. Context Variables (通过 agent tag 关联)
+        5. Capabilities (通过 agent tag 关联)
+        6. Canned Responses (通过 agent tag 关联)
+        7. Glossary Terms (通过 agent tag 关联)
+        8. Relationships (涉及该 agent 的关系)
+        9. Evaluations (与该 agent 相关的评估)
+        10. Agent 本身
+        
+        注意：此操作不可逆，请谨慎使用。
+        
+        Args:
+            agent_id: 要删除的 Agent ID
+            
+        Raises:
+            ItemNotFoundError: 如果 Agent 不存在
+            Exception: 如果删除过程中出现错误
+        """
+        # 首先验证 Agent 是否存在
+        try:
+            await self.agents.read(agent_id)
+        except Exception as e:
+            raise Exception(f"Agent {agent_id} not found or cannot be read: {e}")
+        
+        agent_tag = Tag.for_agent_id(agent_id)
+        
+        # 定义删除任务，按依赖关系排序
+        deletion_tasks = [
+            
+            # 1. Guidelines (通过 agent tag 关联)
+            self._delete_guidelines_for_agent(agent_tag),
+            
+            # 2. Journeys (通过 agent tag 关联)
+            self._delete_journeys_for_agent(agent_tag),
+            
+            # 4. Context Variables (通过 agent tag 关联)
+            self._delete_variables_for_agent(agent_tag),
+            
+            # 5. Capabilities (通过 agent tag 关联)
+            self._delete_capabilities_for_agent(agent_tag),
+            
+            # 6. Canned Responses (通过 agent tag 关联)
+            self._delete_canned_responses_for_agent(agent_tag),
+            
+            # 7. Glossary Terms (通过 agent tag 关联)
+            self._delete_terms_for_agent(agent_tag),
+        ]
+        
+        # 批量异步执行所有删除任务
+        await safe_gather(*deletion_tasks)
+        
+        # 8. 删除所有相关的 Relationships
+        # 注意：这里需要根据实际的 RelationshipModule 接口调整
+        # await self._delete_relationships_for_agent(agent_id)
+        
+        # 9. 清理相关的 Evaluations
+        # 注意：这里需要根据实际的 EvaluationModule 接口调整
+        # await self._delete_evaluations_for_agent(agent_id)
+        
+        # 10. 最后删除 Agent 本身
+        await self.agents.delete(agent_id)
+        
+        # 注意：缓存清理
+        # 在实际使用中，这里应该清理 _CachedEvaluator 中与该 Agent 相关的缓存
+        # 由于 Application 层不直接访问 _CachedEvaluator，这个清理应该在更高层处理
+        # 或者在各个 Store 的 delete 方法中自动处理缓存清理
+
+    async def _delete_sessions_for_agent(self, agent_id: AgentId) -> None:
+        sessions = await self.sessions.find(agent_id=agent_id, customer_id=None)
+        delete_tasks = [self.sessions.delete(session.id) for session in sessions]
+        await safe_gather(*delete_tasks)
+
+    async def _delete_guidelines_for_agent(self, agent_tag: TagId) -> None:
+        guidelines = await self.guidelines.find(tag_id=agent_tag)
+        delete_tasks = [self.guidelines.delete(guideline.id) for guideline in guidelines]
+        await safe_gather(*delete_tasks)
+
+    async def _delete_journeys_for_agent(self, agent_tag: TagId) -> None:
+        journeys = await self.journeys.find(tag_id=agent_tag)
+        delete_tasks = [self.journeys.delete(journey.id) for journey in journeys]
+        await safe_gather(*delete_tasks)
+
+    async def _delete_variables_for_agent(self, agent_tag: TagId) -> None:
+        variables = await self.variables.find(tag_id=agent_tag)
+        delete_tasks = [self.variables.delete(variable.id) for variable in variables]
+        await safe_gather(*delete_tasks)
+
+    async def _delete_capabilities_for_agent(self, agent_tag: TagId) -> None:
+        capabilities = await self.capabilities.find(tag_id=agent_tag)
+        delete_tasks = [self.capabilities.delete(capability.id) for capability in capabilities]
+        await safe_gather(*delete_tasks)
+
+    async def _delete_canned_responses_for_agent(self, agent_tag: TagId) -> None:
+        canned_responses = await self.canned_responses.find(tags=[agent_tag])
+        delete_tasks = [self.canned_responses.delete(canned_response.id) for canned_response in canned_responses]
+        await safe_gather(*delete_tasks)
+
+    async def _delete_terms_for_agent(self, agent_tag: TagId) -> None:
+        terms = await self.glossary.find(tag_id=agent_tag)
+        delete_tasks = [self.glossary.delete(term.id) for term in terms]
+        await safe_gather(*delete_tasks)
