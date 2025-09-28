@@ -130,8 +130,8 @@ from parlant.core.relationships import (
     RelationshipId,
     RelationshipStore,
 )
-from parlant.core.services.indexing.behavioral_change_evaluation import BehavioralChangeEvaluator
 from parlant.core.services.tools.service_registry import ServiceDocumentRegistry, ServiceRegistry
+from parlant.app_modules.evaluation_manager import EvaluationManager
 from parlant.core.sessions import (
     EventKind,
     EventSource,
@@ -373,291 +373,6 @@ class _CachedJourneyEvaluation(TypedDict, total=False):
     version: Version.String
     node_properties: dict[JourneyStateId, dict[str, JSONSerializable]]
     edge_properties: dict[JourneyTransitionId, dict[str, JSONSerializable]]
-
-
-class _CachedEvaluator:
-    @dataclass(frozen=True)
-    class JourneyEvaluation:
-        node_properties: dict[JourneyStateId, dict[str, JSONSerializable]]
-        edge_properties: dict[JourneyTransitionId, dict[str, JSONSerializable]]
-
-    @dataclass(frozen=True)
-    class GuidelineEvaluation:
-        properties: dict[str, JSONSerializable]
-
-    def __init__(
-        self,
-        db: JSONFileDocumentDatabase,
-        container: Container,
-    ) -> None:
-        self._db: JSONFileDocumentDatabase = db
-        self._guideline_collection: JSONFileDocumentCollection[_CachedGuidelineEvaluation]
-        self._journey_collection: JSONFileDocumentCollection[_CachedJourneyEvaluation]
-
-        self._container = container
-        self._logger = container[Logger]
-        self._exit_stack = AsyncExitStack()
-        self._progress: dict[str, float] = {}
-
-    def _set_progress(self, key: str, pct: float) -> None:
-        self._progress[key] = max(0.0, min(pct, 100.0))
-
-    def _progress_for(self, key: str) -> float:
-        return self._progress.get(key, 0.0)
-
-    async def __aenter__(self) -> _CachedEvaluator:
-        await self._exit_stack.enter_async_context(self._db)
-
-        self._guideline_collection = await self._db.get_or_create_collection(
-            name=f"guideline_evaluations_{VERSION}",
-            schema=_CachedGuidelineEvaluation,
-            document_loader=identity_loader_for(_CachedGuidelineEvaluation),
-        )
-
-        self._journey_collection = await self._db.get_or_create_collection(
-            name=f"journey_evaluations_{VERSION}",
-            schema=_CachedJourneyEvaluation,
-            document_loader=identity_loader_for(_CachedJourneyEvaluation),
-        )
-
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        tb: TracebackType | None,
-    ) -> bool:
-        await self._exit_stack.aclose()
-        return False
-
-    def _hash_guideline_evaluation_request(
-        self,
-        g: GuidelineContent,
-        tool_ids: Sequence[ToolId],
-        journey_state_propositions: bool,
-        properties_proposition: bool,
-    ) -> str:
-        """Generate a hash for the guideline evaluation request."""
-        tool_ids_str = ",".join(str(tool_id) for tool_id in tool_ids) if tool_ids else ""
-
-        return md5(
-            f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}:{journey_state_propositions}:{properties_proposition}".encode()
-        ).hexdigest()
-
-    def _hash_journey_evaluation_request(
-        self,
-        journey: Journey,
-    ) -> str:
-        """Generate a hash for the journey evaluation request."""
-        node_ids_str = ",".join(str(node.id) for node in journey.states) if journey.states else ""
-        edge_ids_str = (
-            ",".join(str(edge.id) for edge in journey.transitions) if journey.transitions else ""
-        )
-
-        return md5(f"{journey.id}:{node_ids_str}:{edge_ids_str}".encode()).hexdigest()
-
-    async def evaluate_state(
-        self,
-        entity_id: JourneyStateId,
-        g: GuidelineContent,
-        tool_ids: Sequence[ToolId] = [],
-    ) -> _CachedEvaluator.GuidelineEvaluation:
-        return await self._evaluate_guideline(
-            entity_id=entity_id,
-            g=g,
-            tool_ids=tool_ids,
-            journey_state_proposition=True,
-            properties_proposition=False,
-        )
-
-    async def evaluate_guideline(
-        self,
-        entity_id: GuidelineId,
-        g: GuidelineContent,
-        tool_ids: Sequence[ToolId] = [],
-    ) -> _CachedEvaluator.GuidelineEvaluation:
-        return await self._evaluate_guideline(
-            entity_id=entity_id,
-            g=g,
-            tool_ids=tool_ids,
-        )
-
-    async def _evaluate_guideline(
-        self,
-        entity_id: GuidelineId | JourneyStateId,
-        g: GuidelineContent,
-        tool_ids: Sequence[ToolId] = [],
-        action_proposition: bool = True,
-        journey_state_proposition: bool = False,
-        properties_proposition: bool = True,
-    ) -> _CachedEvaluator.GuidelineEvaluation:
-        
-        self._logger.debug(f"_evaluate_guideline start ======")
-
-        # First check if we have a cached evaluation for this guideline
-        _hash = self._hash_guideline_evaluation_request(
-            g=g,
-            tool_ids=tool_ids,
-            journey_state_propositions=journey_state_proposition,
-            properties_proposition=properties_proposition,
-        )
-
-        if cached_evaluation := await self._guideline_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(
-                f"Using cached evaluation for guideline: Condition: {g.condition or 'None'}; Action: {g.action or 'None'}"
-            )
-
-            return self.GuidelineEvaluation(
-                properties=cached_evaluation["properties"],
-            )
-
-        self._logger.trace(
-            f"Evaluating guideline: Condition: {g.condition or 'None'}, Action: {g.action or 'None'}"
-        )
-
-        evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
-            payload_descriptors=[
-                PayloadDescriptor(
-                    PayloadKind.GUIDELINE,
-                    GuidelinePayload(
-                        content=GuidelineContent(
-                            condition=g.condition,
-                            action=g.action,
-                        ),
-                        tool_ids=tool_ids,
-                        operation=PayloadOperation.ADD,
-                        action_proposition=action_proposition,
-                        properties_proposition=properties_proposition,
-                        journey_node_proposition=journey_state_proposition,
-                    ),
-                )
-            ],
-        )
-
-        while True:
-            evaluation = await self._container[EvaluationStore].read_evaluation(
-                evaluation_id=evaluation_id,
-            )
-
-            self._set_progress(entity_id, evaluation.progress)
-
-            if evaluation.status in [EvaluationStatus.PENDING, EvaluationStatus.RUNNING]:
-                await asyncio.sleep(0.5)
-                continue
-            elif evaluation.status == EvaluationStatus.FAILED:
-                raise SDKError(f"Evaluation failed: {evaluation.error}")
-            elif evaluation.status == EvaluationStatus.COMPLETED:
-                if not evaluation.invoices:
-                    raise SDKError("Evaluation completed with no invoices.")
-                if not evaluation.invoices[0].approved:
-                    raise SDKError("Evaluation completed with unapproved invoice.")
-
-                invoice = evaluation.invoices[0]
-
-                if not invoice.data:
-                    raise SDKError(
-                        "Evaluation completed with no properties_proposition in the invoice."
-                    )
-
-            assert invoice.data
-
-            # Cache the evaluation result
-            await self._guideline_collection.insert_one(
-                {
-                    "id": ObjectId(_hash),
-                    "version": Version.String(VERSION),
-                    "properties": cast(InvoiceGuidelineData, invoice.data).properties_proposition
-                    or {},
-                }
-            )
-
-            # Return the evaluation result
-            return self.GuidelineEvaluation(
-                properties=cast(InvoiceGuidelineData, invoice.data).properties_proposition or {},
-            )
-
-    async def evaluate_journey(
-        self,
-        journey: Journey,
-    ) -> _CachedEvaluator.JourneyEvaluation:
-        # First check if we have a cached evaluation for this journey
-        _hash = self._hash_journey_evaluation_request(
-            journey=journey,
-        )
-
-        if cached_evaluation := await self._journey_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(
-                f"Using cached evaluation for journey: Title: {journey.title or 'None'};"
-            )
-
-            return self.JourneyEvaluation(
-                node_properties=cached_evaluation["node_properties"],
-                edge_properties=cached_evaluation["edge_properties"],
-            )
-
-        self._logger.trace(f"Evaluating journey: Title: {journey.title or 'None'}")
-
-        evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
-            payload_descriptors=[
-                PayloadDescriptor(
-                    PayloadKind.JOURNEY,
-                    JourneyPayload(
-                        journey_id=journey.id,
-                        operation=PayloadOperation.ADD,
-                    ),
-                )
-            ],
-        )
-
-        while True:
-            evaluation = await self._container[EvaluationStore].read_evaluation(
-                evaluation_id=evaluation_id,
-            )
-
-            self._set_progress(journey.id, evaluation.progress)
-
-            if evaluation.status in [EvaluationStatus.PENDING, EvaluationStatus.RUNNING]:
-                await asyncio.sleep(0.5)
-                continue
-            elif evaluation.status == EvaluationStatus.FAILED:
-                raise SDKError(f"Journey Evaluation failed: {evaluation.error}")
-            elif evaluation.status == EvaluationStatus.COMPLETED:
-                if not evaluation.invoices:
-                    raise SDKError("Journey Evaluation completed with no invoices.")
-                if not evaluation.invoices[0].approved:
-                    raise SDKError("Journey Evaluation completed with unapproved invoice.")
-
-                invoice = evaluation.invoices[0]
-
-                if not invoice.data:
-                    raise SDKError("Journey Evaluation completed with no data in the invoice.")
-
-            assert invoice.data
-
-            # Cache the evaluation result
-            await self._journey_collection.insert_one(
-                {
-                    "id": ObjectId(_hash),
-                    "version": Version.String(VERSION),
-                    "node_properties": cast(
-                        InvoiceJourneyData, invoice.data
-                    ).node_properties_proposition,
-                    "edge_properties": cast(
-                        InvoiceJourneyData, invoice.data
-                    ).edge_properties_proposition
-                    or {},
-                }
-            )
-
-            # Return the evaluation result
-            return self.JourneyEvaluation(
-                node_properties=cast(InvoiceJourneyData, invoice.data).node_properties_proposition
-                or {},
-                edge_properties=cast(InvoiceJourneyData, invoice.data).edge_properties_proposition
-                or {},
-            )
-
 
 @dataclass(frozen=True)
 class Tag:
@@ -2074,7 +1789,7 @@ class Server:
 
         self._migrate = migrate
         self._nlp_service_func = nlp_service
-        self._evaluator: _CachedEvaluator
+        self._evaluation_manager: EvaluationManager
         self._session_store = session_store
         self._customer_store = customer_store
         self._configure_hooks = configure_hooks
@@ -2088,19 +1803,6 @@ class Server:
 
         self._plugin_server: PluginServer
         self._container: Container
-
-        self._guideline_evaluations: dict[
-            GuidelineId,
-            tuple[Any, Callable[..., Coroutine[Any, Any, _CachedEvaluator.GuidelineEvaluation]]],
-        ] = {}
-        self._node_evaluations: dict[
-            JourneyStateId,
-            tuple[Any, Callable[..., Coroutine[Any, Any, _CachedEvaluator.GuidelineEvaluation]]],
-        ] = {}
-        self._journey_evaluations: dict[
-            JourneyId,
-            tuple[Any, Callable[..., Coroutine[Any, Any, _CachedEvaluator.JourneyEvaluation]]],
-        ] = {}
 
         self._creation_progress: Progress | None = Progress(
             TextColumn("{task.description}"),
@@ -2147,9 +1849,6 @@ class Server:
         self._creation_progress.__exit__(None, None, None)
         self._creation_progress = None
 
-        with self._container[ContextualCorrelator].properties({"scope": "Evaluations"}):
-            await self._process_evaluations()
-
         await self._setup_retrievers()
         await self._startup_context_manager.__aexit__(exc_type, exc_value, tb)
         await self._exit_stack.aclose()
@@ -2161,9 +1860,11 @@ class Server:
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId],
     ) -> None:
-        self._guideline_evaluations[guideline_id] = (
-            (guideline_id, guideline_content, tool_ids),
-            self._evaluator.evaluate_guideline,
+        # Register evaluation task with unified manager
+        self._evaluation_manager.register_guideline_evaluation(
+            guideline_id=guideline_id,
+            guideline_content=guideline_content,
+            tool_ids=tool_ids,
         )
 
     def _add_state_evaluation(
@@ -2172,221 +1873,19 @@ class Server:
         guideline_content: GuidelineContent,
         tools: Sequence[ToolId],
     ) -> None:
-        self._node_evaluations[state_id] = (
-            (state_id, guideline_content, tools),
-            self._evaluator.evaluate_state,
+        # Register evaluation task with unified manager
+        self._evaluation_manager.register_state_evaluation(
+            state_id=state_id,
+            guideline_content=guideline_content,
+            tool_ids=tools,
         )
 
     def _add_journey_evaluation(
         self,
         journey: Journey,
     ) -> None:
-        self._journey_evaluations[journey.id] = ((journey,), self._evaluator.evaluate_journey)
-
-    async def _render_guideline(self, guideline_id: GuidelineId) -> str:
-        guideline = await self._container[GuidelineStore].read_guideline(guideline_id)
-
-        return f"When {guideline.content.condition}" + (
-            f", then {guideline.content.action}" if guideline.content.action else ""
-        )
-
-    async def _render_state(self, state_id: JourneyStateId) -> str:
-        state = await self._container[JourneyStore].read_node(state_id)
-
-        return f"State: {state.action}"
-
-    async def _render_journey(self, journey_id: JourneyId) -> str:
-        journey = await self._container[JourneyStore].read_journey(journey_id)
-
-        return f"Journey: {journey.title}"
-
-    async def _process_evaluations(self) -> None:
-        _render_functions: dict[
-            Literal["guideline", "node", "journey"],
-            Callable[[GuidelineId | JourneyStateId | JourneyId], Awaitable[str]],
-        ] = {
-            "guideline": self._render_guideline,  # type: ignore
-            "node": self._render_state,  # type: ignore
-            "journey": self._render_journey,  # type: ignore
-        }
-
-        def create_evaluation_task(
-            evaluation: Coroutine[
-                Any, Any, _CachedEvaluator.GuidelineEvaluation | _CachedEvaluator.JourneyEvaluation
-            ],
-            entity_type: Literal["guideline", "node", "journey"],
-            entity_id: GuidelineId | JourneyStateId | JourneyId,
-        ) -> asyncio.Task[
-            tuple[
-                Literal["guideline", "node", "journey"],
-                GuidelineId | JourneyStateId | JourneyId,
-                _CachedEvaluator.GuidelineEvaluation | _CachedEvaluator.JourneyEvaluation,
-            ]
-        ]:
-            async def task_wrapper() -> (
-                tuple[
-                    Literal["guideline", "node", "journey"],
-                    GuidelineId | JourneyStateId | JourneyId,
-                    _CachedEvaluator.GuidelineEvaluation | _CachedEvaluator.JourneyEvaluation,
-                ]
-            ):
-                result = await evaluation
-                return (entity_type, entity_id, result)
-
-            return asyncio.create_task(task_wrapper(), name=f"{entity_type}_evaluation_{entity_id}")
-
-        tasks: list[
-            asyncio.Task[
-                tuple[
-                    Literal["guideline", "node", "journey"],
-                    GuidelineId | JourneyStateId | JourneyId,
-                    _CachedEvaluator.GuidelineEvaluation | _CachedEvaluator.JourneyEvaluation,
-                ]
-            ]
-        ] = []
-
-        for guideline_id, (args, func) in self._guideline_evaluations.items():
-            tasks.append((create_evaluation_task(func(*args), "guideline", guideline_id)))
-
-        for node_id, (args, func) in self._node_evaluations.items():
-            tasks.append((create_evaluation_task(func(*args), "node", node_id)))
-
-        for journey_id, (args, journey_func) in self._journey_evaluations.items():
-            tasks.append((create_evaluation_task(journey_func(*args), "journey", journey_id)))
-
-        if not tasks:
-            return
-
-        if self.log_level == LogLevel.TRACE:
-            evaluation_results = await async_utils.safe_gather(*tasks)
-        else:
-            max_visible = 5
-
-            overall_progress = Progress(
-                "[progress.description]{task.description}",
-                BarColumn(),
-                TaskProgressColumn(style="bold blue"),
-                TimeElapsedColumn(),
-            )
-
-            entity_progress = Progress(
-                "[progress.description]{task.description}",
-                BarColumn(),
-                TaskProgressColumn(style="bold blue"),
-                TimeElapsedColumn(),
-                transient=True,
-            )
-
-            with Live(Group(overall_progress, entity_progress), refresh_per_second=10):
-                bar_id: dict[str, int] = {}
-
-                for t in tasks:
-                    entity_id = cast(
-                        GuidelineId | JourneyStateId | JourneyId, t.get_name().split("_")[-1]
-                    )
-                    entity_type = t.get_name().split("_")[0]
-                    description = await _render_functions[
-                        cast(Literal["guideline", "node", "journey"], entity_type)
-                    ](entity_id)
-
-                    bar_id[entity_id] = entity_progress.add_task(
-                        description[:50],
-                        total=100,
-                    )
-
-                overall = overall_progress.add_task("Evaluating entities", total=100)
-
-                gather = asyncio.create_task(async_utils.safe_gather(*tasks))
-
-                while not gather.done():
-                    unfinished: list[tuple[str, float]] = []
-
-                    for _id, rich_id in bar_id.items():
-                        pct = self._evaluator._progress_for(_id)
-                        entity_progress.update(TaskID(rich_id), completed=pct)
-
-                        if pct < 100.0:
-                            unfinished.append((_id, pct))
-
-                    if unfinished:
-                        show = {
-                            e_id for e_id, _ in sorted(unfinished, key=lambda x: x[1])[:max_visible]
-                        }
-                    else:
-                        show = set()
-
-                    for e_id, rich_id in bar_id.items():
-                        entity_progress.update(TaskID(rich_id), visible=(e_id in show))
-
-                    overall_pct = sum(self._evaluator._progress_for(e_id) for e_id in bar_id) / len(
-                        bar_id
-                    )
-                    overall_progress.update(overall, completed=overall_pct)
-
-                    await asyncio.sleep(0.2)
-
-                for e_id, rich_id in bar_id.items():
-                    entity_progress.remove_task(
-                        TaskID(rich_id),
-                    )
-
-                entity_progress.refresh()
-                overall_progress.update(overall, completed=100)
-                evaluation_results = await gather
-
-        for entity_type, entity_id, result in evaluation_results:
-            if entity_type == "guideline":
-                guideline = await self._container[GuidelineStore].read_guideline(
-                    guideline_id=cast(GuidelineId, entity_id)
-                )
-
-                properties = cast(_CachedEvaluator.GuidelineEvaluation, result).properties
-
-                properties_to_add = {
-                    k: v for k, v in properties.items() if k not in guideline.metadata
-                }
-
-                for key, value in properties_to_add.items():
-                    await self._container[GuidelineStore].set_metadata(
-                        guideline_id=cast(GuidelineId, entity_id),
-                        key=key,
-                        value=value,
-                    )
-
-            elif entity_type == "node":
-                node = await self._container[JourneyStore].read_node(
-                    node_id=cast(JourneyStateId, entity_id)
-                )
-                properties = cast(_CachedEvaluator.GuidelineEvaluation, result).properties
-
-                properties_to_add = {k: v for k, v in properties.items() if k not in node.metadata}
-
-                for key, value in properties_to_add.items():
-                    await self._container[JourneyStore].set_node_metadata(
-                        node_id=cast(JourneyStateId, entity_id),
-                        key=key,
-                        value=value,
-                    )
-
-            elif entity_type == "journey":
-                for node_id, properties in cast(
-                    _CachedEvaluator.JourneyEvaluation, result
-                ).node_properties.items():
-                    node = await self._container[JourneyStore].read_node(node_id)
-                    properties_to_add = {
-                        k: v
-                        for k, v in properties.items()
-                        if k not in node.metadata or node.metadata[k] is None
-                    }
-
-                    for key, value in properties_to_add.items():
-                        await self._container[JourneyStore].set_node_metadata(
-                            node_id=node_id,
-                            key=key,
-                            value=value,
-                        )
-
-        print()
+        # Register evaluation task with unified manager
+        self._evaluation_manager.register_journey_evaluation(journey=journey)
 
     async def _setup_retrievers(self) -> None:
         async def setup_retriever(
@@ -2996,11 +2495,15 @@ class Server:
             await self._exit_stack.enter_async_context(self._plugin_server)
             self._exit_stack.push_async_callback(self._plugin_server.shutdown)
 
-            self._evaluator = _CachedEvaluator(
+            # Initialize EvaluationManager
+            self._evaluation_manager = EvaluationManager(
                 db=JSONFileDocumentDatabase(c[Logger], PARLANT_HOME_DIR / "evaluation_cache.json"),
+                guideline_store=c[GuidelineStore],
+                journey_store=c[JourneyStore],
                 container=c,
+                logger=c[Logger],
             )
-            await self._exit_stack.enter_async_context(self._evaluator)
+            await self._exit_stack.enter_async_context(self._evaluation_manager)
 
             if self._initialize:
                 await self._initialize(c)

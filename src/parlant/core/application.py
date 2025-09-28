@@ -29,10 +29,12 @@ from parlant.app_modules.tags import TagModule
 from parlant.app_modules.customers import CustomerModule
 from parlant.app_modules.guidelines import GuidelineModule
 from parlant.app_modules.glossary import GlossaryModule
+from parlant.app_modules.evaluation_manager import EvaluationManager
 
 from parlant.core.agents import AgentId
 from parlant.core.tags import Tag, TagId
 from parlant.core.async_utils import safe_gather
+from parlant.core.loggers import Logger
 
 
 class Application:
@@ -51,6 +53,8 @@ class Application:
         evaluation_module: EvaluationModule,
         capability_module: CapabilityModule,
         canned_response_module: CannedResponseModule,
+        evaluation_manager: EvaluationManager,
+        logger: Logger,
     ) -> None:
         self.agents = agent_module
         self.sessions = session_module
@@ -65,12 +69,15 @@ class Application:
         self.glossary = glossary_module
         self.evaluations = evaluation_module
         self.canned_responses = canned_response_module
+        self.evaluation_manager = evaluation_manager
+        self._logger = logger
 
     async def delete_agent_cascade(self, agent_id: AgentId) -> None:
         """
         级联删除 Agent 及其所有关联对象。
         
         删除顺序：
+        1. Sessions (直接引用 agent_id)
         2. Guidelines (通过 agent tag 关联)
         3. Journeys (通过 agent tag 关联)
         4. Context Variables (通过 agent tag 关联)
@@ -79,7 +86,8 @@ class Application:
         7. Glossary Terms (通过 agent tag 关联)
         8. Relationships (涉及该 agent 的关系)
         9. Evaluations (与该 agent 相关的评估)
-        10. Agent 本身
+        10. Cached Evaluations (清理缓存)
+        11. Agent 本身
         
         注意：此操作不可逆，请谨慎使用。
         
@@ -100,11 +108,13 @@ class Application:
         
         # 定义删除任务，按依赖关系排序
         deletion_tasks = [
+            # 1. Sessions (直接引用 agent_id)
+            # self._delete_sessions_for_agent(agent_id),
             
-            # 1. Guidelines (通过 agent tag 关联)
+            # 2. Guidelines (通过 agent tag 关联)
             self._delete_guidelines_for_agent(agent_tag),
             
-            # 2. Journeys (通过 agent tag 关联)
+            # 3. Journeys (通过 agent tag 关联)
             self._delete_journeys_for_agent(agent_tag),
             
             # 4. Context Variables (通过 agent tag 关联)
@@ -131,13 +141,11 @@ class Application:
         # 注意：这里需要根据实际的 EvaluationModule 接口调整
         # await self._delete_evaluations_for_agent(agent_id)
         
-        # 10. 最后删除 Agent 本身
+        # 10. 清理相关的缓存评估
+        await self._clear_evaluation_cache_for_agent(agent_id)
+
+        # 11. 最后删除 Agent 本身
         await self.agents.delete(agent_id)
-        
-        # 注意：缓存清理
-        # 在实际使用中，这里应该清理 _CachedEvaluator 中与该 Agent 相关的缓存
-        # 由于 Application 层不直接访问 _CachedEvaluator，这个清理应该在更高层处理
-        # 或者在各个 Store 的 delete 方法中自动处理缓存清理
 
     async def _delete_sessions_for_agent(self, agent_id: AgentId) -> None:
         sessions = await self.sessions.find(agent_id=agent_id, customer_id=None)
@@ -173,3 +181,11 @@ class Application:
         terms = await self.glossary.find(tag_id=agent_tag)
         delete_tasks = [self.glossary.delete(term.id) for term in terms]
         await safe_gather(*delete_tasks)
+
+    async def _clear_evaluation_cache_for_agent(self, agent_id: AgentId) -> None:
+        """清理指定 Agent 的所有缓存评估"""
+        try:
+            await self.evaluation_manager.clear_cache_for_agent(agent_id)
+            self._logger.info(f"✅ Successfully cleared cached evaluations for agent {agent_id}")
+        except Exception as e:
+            self._logger.error(f"❌ Failed to clear cached evaluations for agent {agent_id}: {e}")

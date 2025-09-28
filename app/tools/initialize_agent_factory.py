@@ -13,7 +13,7 @@ from app.tools.prompts_format import decode_markdown_links
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/lead-acquistion.json"
+        self.config_path = "app/configs/actionbooks/lead-acquistion.json"
         self._config_cache = None
         self.container = container
 
@@ -95,13 +95,12 @@ class CustomAgentFactory(AgentFactory):
             metadata={"type": "default"},
         )
 
-        # _process_evaluations
-        self._logger.info("🔍 处理评估..._process_evaluations")
+        self._logger.info("🔍 处理评估...")
         start_time = time.time()
-        await server._process_evaluations()
+        await server._evaluation_manager.process_evaluations()
         end_time = time.time()
         elapsed_time = end_time - start_time
-        self._logger.info(f"✅⏱️ _process_evaluations 耗时: {elapsed_time:.3f} 秒")
+        self._logger.info(f"⏱️ 评估处理耗时: {elapsed_time:.3f} 秒")
 
         return agent
     

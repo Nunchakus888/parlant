@@ -1311,7 +1311,8 @@ async def _ensure_session_and_customer(
         if not md5_checksum or agent.metadata.get('md5_checksum') != md5_checksum:
             logger.info(f"🔄 MD5 checksum changed from {agent.metadata.get('md5_checksum')} to {md5_checksum}, updating agent...")
 
-            await app.agents.delete(agent_id)
+            await app.delete_agent_cascade(agent_id)
+            logger.info(f"✅ deleted agent: {agent_id}")
             agent = await agent_creator(params)
             logger.info(f"✅ created new agent: {agent.id}")
         else:
