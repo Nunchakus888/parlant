@@ -18,8 +18,8 @@ from collections import defaultdict
 from enum import Enum
 import asyncio
 import hashlib
-from typing import Any, Mapping, NewType, Optional, Sequence, TypeAlias, Union
-from typing_extensions import Self
+from typing import Any, Mapping, NewType, Optional, Sequence, Union
+from typing_extensions import Self, TypeAlias
 
 import nanoid  # type: ignore
 from pydantic import BaseModel, ConfigDict
