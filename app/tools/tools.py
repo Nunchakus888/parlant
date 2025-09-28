@@ -230,6 +230,14 @@ class ToolManager:
         headers = self._replace_placeholders(endpoint.get("headers", {}), params)
         body = self._replace_placeholders(endpoint.get("body"), params) if endpoint.get("body") else None
         
+        # 处理body：如果是字符串，尝试解析为JSON对象
+        if body is not None and isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError as e:
+                self._log_warning(f"Body字符串不是有效的JSON格式，将作为原始字符串发送: {str(e)}")
+                # 如果解析失败，保持原样，但需要特殊处理
+        
         # 处理查询参数
         query_params = {}
         if method == "GET":
@@ -272,10 +280,25 @@ class ToolManager:
                             return self._format_response(response.status, result, get_duration())
                     else:
                         self._log_debug(f"📤 执行{method}请求")
-                        async with session.request(method, url, json=body, params=query_params, headers=headers) as response:
-                            self._log_debug(f"📥 收到响应，状态码: {response.status}")
-                            result = await self._parse_response(response)
-                            return self._format_response(response.status, result, get_duration())
+                        # 根据body类型选择正确的发送方式
+                        if body is None:
+                            # 没有body
+                            async with session.request(method, url, params=query_params, headers=headers) as response:
+                                self._log_debug(f"📥 收到响应，状态码: {response.status}")
+                                result = await self._parse_response(response)
+                                return self._format_response(response.status, result, get_duration())
+                        elif isinstance(body, (dict, list)):
+                            # body是对象或数组，使用json参数
+                            async with session.request(method, url, json=body, params=query_params, headers=headers) as response:
+                                self._log_debug(f"📥 收到响应，状态码: {response.status}")
+                                result = await self._parse_response(response)
+                                return self._format_response(response.status, result, get_duration())
+                        else:
+                            # body是字符串或其他类型，使用data参数
+                            async with session.request(method, url, data=body, params=query_params, headers=headers) as response:
+                                self._log_debug(f"📥 收到响应，状态码: {response.status}")
+                                result = await self._parse_response(response)
+                                return self._format_response(response.status, result, get_duration())
                 except Exception as inner_e:
                     self._log_error(f"🔥 请求执行过程中发生错误: {str(inner_e)}")
                     self._log_error(f"🔥 错误类型: {type(inner_e).__name__}")
