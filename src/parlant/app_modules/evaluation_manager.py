@@ -166,13 +166,13 @@ class EvaluationManager:
         await self._exit_stack.enter_async_context(self._db)
         
         self._guideline_collection = await self._db.get_or_create_collection(
-            name=f"guideline_evaluations_{Version.from_string('0.1.0')}",
+            name=f"guideline_evaluations_{Version.from_string('0.1.0').to_string()}",
             schema=_CachedGuidelineEvaluation,
             document_loader=lambda x: x,
         )
         
         self._journey_collection = await self._db.get_or_create_collection(
-            name=f"journey_evaluations_{Version.from_string('0.1.0')}",
+            name=f"journey_evaluations_{Version.from_string('0.1.0').to_string()}",
             schema=_CachedJourneyEvaluation,
             document_loader=lambda x: x,
         )
