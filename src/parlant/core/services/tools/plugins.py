@@ -70,8 +70,6 @@ from parlant.core.emissions import EventEmitterFactory
 from parlant.core.sessions import SessionId, SessionStatus
 from parlant.core.tools import ToolExecutionError, ToolService
 
-TOOL_RESULT_MAX_PAYLOAD_KB = int(os.environ.get("PARLANT_TOOL_RESULT_MAX_PAYLOAD_KB", 16))
-
 ToolFunction = Union[
     Callable[
         [ToolContext],
@@ -745,6 +743,7 @@ class PluginClient(ToolService):
         self._event_emitter_factory = event_emitter_factory
         self._logger = logger
         self._correlator = correlator
+        self.TOOL_RESULT_MAX_PAYLOAD_KB = int(os.environ.get("PARLANT_TOOL_RESULT_MAX_PAYLOAD_KB", 16))
 
     async def __aenter__(self) -> PluginClient:
         self._http_client = await httpx.AsyncClient(
@@ -903,10 +902,10 @@ class PluginClient(ToolService):
                 )
 
                 async for chunk in response.aiter_text():
-                    if len(chunk) > (TOOL_RESULT_MAX_PAYLOAD_KB * 1024):
+                    if len(chunk) > (self.TOOL_RESULT_MAX_PAYLOAD_KB * 1024):
                         raise ToolResultError(
                             tool_name=name,
-                            message=f"url='{self.url}', arguments='{arguments}', Response exceeds {TOOL_RESULT_MAX_PAYLOAD_KB}KB limit",
+                            message=f"url='{self.url}', arguments='{arguments}', Response exceeds {self.TOOL_RESULT_MAX_PAYLOAD_KB}KB limit",
                         )
 
                     chunk_dict = json.loads(chunk)
