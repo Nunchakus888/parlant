@@ -267,8 +267,7 @@ class EvaluationManager:
                         "version": Version.String("0.1.0"),
                         "node_properties": cast(InvoiceJourneyData, invoice.data).node_properties_proposition or {},
                         "edge_properties": cast(InvoiceJourneyData, invoice.data).edge_properties_proposition or {},
-                    },
-                    upsert=True
+                    }
                 )
                 
                 return EvaluationResult(
@@ -548,8 +547,7 @@ class EvaluationManager:
                         "id": ObjectId(_hash),
                         "version": Version.String("0.1.0"),
                         "properties": properties,
-                    },
-                    upsert=True
+                    }
                 )
                 
                 return EvaluationResult(
