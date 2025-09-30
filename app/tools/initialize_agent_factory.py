@@ -76,7 +76,7 @@ class CustomAgentFactory(AgentFactory):
         }
         
         agent = await server.create_agent(
-            id=AgentId(config_request.tenant_id) if config_request.tenant_id else None,
+            id=AgentId(config_request.chatbot_id) if config_request.chatbot_id else None,
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
             max_engine_iterations=3,

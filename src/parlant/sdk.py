@@ -362,12 +362,6 @@ class NLPServices:
         return SnowflakeCortexService(container[Logger])
 
 
-class _CachedGuidelineEvaluation(TypedDict, total=False):
-    id: ObjectId
-    version: Version.String
-    properties: dict[str, JSONSerializable]
-
-
 class _CachedJourneyEvaluation(TypedDict, total=False):
     id: ObjectId
     version: Version.String
@@ -1052,6 +1046,7 @@ class Journey:
             guideline.id,
             GuidelineContent(condition=condition, action=action),
             tool_ids,
+            agent_id=None,  # todo Journey guidelines don't have agent_id
         )
 
         await self._container[RelationshipStore].create_relationship(
@@ -1496,6 +1491,7 @@ class Agent:
             guideline.id,
             GuidelineContent(condition=condition, action=action),
             tool_ids,
+            agent_id=self.id,  # Pass agent_id
         )
 
         for t in list(tools):
@@ -1541,6 +1537,7 @@ class Agent:
             guideline.id,
             GuidelineContent(condition=condition, action=None),
             [ToolId(service_name=INTEGRATED_TOOL_SERVICE_NAME, tool_name=tool.tool.name)],
+            agent_id=self.id,  # Pass agent_id for tool attachments
         )
 
         await self._container[GuidelineToolAssociationStore].create_association(
@@ -1859,12 +1856,14 @@ class Server:
         guideline_id: GuidelineId,
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId],
+        agent_id: Optional[AgentId] = None,
     ) -> None:
         # Register evaluation task with unified manager
         self._evaluation_manager.register_guideline_evaluation(
             guideline_id=guideline_id,
             guideline_content=guideline_content,
             tool_ids=tool_ids,
+            agent_id=agent_id,
         )
 
     def _add_state_evaluation(
@@ -2221,6 +2220,7 @@ class Server:
                 guideline.id,
                 GuidelineContent(condition=str_condition, action=None),
                 tool_ids=[],
+                agent_id=None,  # todo Journey guidelines don't have agent_id
             )
 
             condition_guidelines.append(

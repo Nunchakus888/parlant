@@ -1291,7 +1291,7 @@ async def _ensure_session_and_customer(
     customer_id = params.customer_id
     session_id = params.session_id
     md5_checksum = params.md5_checksum
-    agent_id = params.tenant_id
+    agent_id = params.chatbot_id
 
     try:
         customer = await app.customers.read(customer_id)

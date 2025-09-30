@@ -126,13 +126,14 @@ class EvaluationManager:
     - Caching and evaluation execution
     - Task orchestration and progress tracking  
     - Result processing and metadata updates
-    - Agent-level evaluation management
+    - Agent-level evaluation management with isolation
     
     Design principles:
     - Single responsibility: Manage all evaluation-related operations
     - Simple interface: One class for all evaluation needs
     - Minimal state: Only essential state management
     - Clear separation: Internal complexity hidden from callers
+    - Agent isolation: Each agent has independent cache collections
     """
     
     def __init__(
@@ -150,9 +151,9 @@ class EvaluationManager:
         self._logger = logger
         self._exit_stack = AsyncExitStack()
         
-        # Collections (initialized in __aenter__)
-        self._guideline_collection: JSONFileDocumentCollection[_CachedGuidelineEvaluation]
-        self._journey_collection: JSONFileDocumentCollection[_CachedJourneyEvaluation]
+        # Agent-specific collections (initialized on demand)
+        self._guideline_collections: Dict[AgentId, JSONFileDocumentCollection[_CachedGuidelineEvaluation]] = {}
+        self._journey_collections: Dict[AgentId, JSONFileDocumentCollection[_CachedJourneyEvaluation]] = {}
         
         # Simple state management
         self._pending_tasks: Dict[str, EvaluationTask] = {}
@@ -164,19 +165,6 @@ class EvaluationManager:
     
     async def __aenter__(self) -> "EvaluationManager":
         await self._exit_stack.enter_async_context(self._db)
-        
-        self._guideline_collection = await self._db.get_or_create_collection(
-            name=f"guideline_evaluations_{Version.from_string('0.1.0').to_string()}",
-            schema=_CachedGuidelineEvaluation,
-            document_loader=lambda x: x,
-        )
-        
-        self._journey_collection = await self._db.get_or_create_collection(
-            name=f"journey_evaluations_{Version.from_string('0.1.0').to_string()}",
-            schema=_CachedJourneyEvaluation,
-            document_loader=lambda x: x,
-        )
-        
         return self
     
     async def __aexit__(
@@ -195,12 +183,14 @@ class EvaluationManager:
         guideline_id: GuidelineId,
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId] = [],
+        agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
-        """Evaluate a guideline with caching."""
+        """Evaluate a guideline with agent-specific caching."""
         return await self._evaluate_guideline_impl(
             entity_id=guideline_id,
             g=guideline_content,
             tool_ids=tool_ids,
+            agent_id=agent_id,
         )
     
     async def evaluate_state(
@@ -208,22 +198,27 @@ class EvaluationManager:
         state_id: JourneyStateId,
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId] = [],
+        agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
-        """Evaluate a journey state with caching."""
+        """Evaluate a journey state with agent-specific caching."""
         return await self._evaluate_guideline_impl(
             entity_id=state_id,
             g=guideline_content,
             tool_ids=tool_ids,
             journey_state_proposition=True,
             properties_proposition=False,
+            agent_id=agent_id,
         )
     
-    async def evaluate_journey(self, journey: Journey) -> EvaluationResult:
-        """Evaluate a journey with caching."""
-        # Check cache first
-        _hash = self._hash_journey_evaluation_request(journey)
+    async def evaluate_journey(self, journey: Journey, agent_id: Optional[AgentId] = None) -> EvaluationResult:
+        """Evaluate a journey with agent-specific caching."""
+        # Get agent-specific collection
+        journey_collection = await self._get_journey_collection(agent_id)
         
-        if cached_evaluation := await self._journey_collection.find_one({"id": {"$eq": _hash}}):
+        # Check cache first
+        _hash = self._hash_journey_evaluation_request(journey, agent_id)
+        
+        if cached_evaluation := await journey_collection.find_one({"id": {"$eq": _hash}}):
             self._logger.trace(f"Using cached evaluation for journey: {journey.title}")
             return EvaluationResult(
                 entity_type="journey",
@@ -264,13 +259,17 @@ class EvaluationManager:
                 if not invoice.data:
                     raise RuntimeError("No evaluation data")
                 
-                # Cache result
-                await self._journey_collection.insert_one({
-                    "id": ObjectId(_hash),
-                    "version": Version.String("0.1.0"),
-                    "node_properties": cast(InvoiceJourneyData, invoice.data).node_properties_proposition or {},
-                    "edge_properties": cast(InvoiceJourneyData, invoice.data).edge_properties_proposition or {},
-                })
+                # Cache result (replace existing if any)
+                await journey_collection.update_one(
+                    {"id": {"$eq": _hash}},
+                    {
+                        "id": ObjectId(_hash),
+                        "version": Version.String("0.1.0"),
+                        "node_properties": cast(InvoiceJourneyData, invoice.data).node_properties_proposition or {},
+                        "edge_properties": cast(InvoiceJourneyData, invoice.data).edge_properties_proposition or {},
+                    },
+                    upsert=True
+                )
                 
                 return EvaluationResult(
                     entity_type="journey",
@@ -344,33 +343,36 @@ class EvaluationManager:
         log_level: LogLevel = LogLevel.INFO,
         max_visible_tasks: int = 5,
     ) -> Sequence[EvaluationResult]:
-        """Process all registered evaluation tasks."""
+        """Process all registered evaluation tasks with agent isolation."""
         if not self._pending_tasks:
             self._logger.info("No evaluation tasks to process")
             return []
         
         self._logger.info(f"Processing {len(self._pending_tasks)} evaluation tasks")
         
-        # Create async tasks
+        # Create async tasks with agent_id from task
         tasks = []
         for task_id, task in self._pending_tasks.items():
             async def task_wrapper() -> EvaluationResult:
-                # Create coroutine based on task type and parameters
+                # Create coroutine based on task type and parameters, using task's agent_id
                 if task.entity_type == "guideline":
                     result = await self.evaluate_guideline(
                         guideline_id=task.evaluation_params["guideline_id"],
                         guideline_content=task.evaluation_params["guideline_content"],
                         tool_ids=task.evaluation_params["tool_ids"],
+                        agent_id=task.agent_id,  # Use task's agent_id
                     )
                 elif task.entity_type == "node":
                     result = await self.evaluate_state(
                         state_id=task.evaluation_params["state_id"],
                         guideline_content=task.evaluation_params["guideline_content"],
                         tool_ids=task.evaluation_params["tool_ids"],
+                        agent_id=task.agent_id,  # Use task's agent_id
                     )
                 elif task.entity_type == "journey":
                     result = await self.evaluate_journey(
-                        journey=task.evaluation_params["journey"]
+                        journey=task.evaluation_params["journey"],
+                        agent_id=task.agent_id,  # Use task's agent_id
                     )
                 else:
                     raise ValueError(f"Unknown entity type: {task.entity_type}")
@@ -379,7 +381,7 @@ class EvaluationManager:
             
             asyncio_task = asyncio.create_task(
                 task_wrapper(),
-                name=f"{task.entity_type}_evaluation_{task.entity_id}"
+                name=f"{task.entity_type}_evaluation_{task.entity_id}_agent_{task.agent_id or 'default'}"
             )
             tasks.append(asyncio_task)
         
@@ -398,37 +400,76 @@ class EvaluationManager:
         
         return results
     
+    
+    # ==================== Agent-Specific Collection Management ====================
+    
+    async def _get_guideline_collection(self, agent_id: Optional[AgentId]) -> JSONFileDocumentCollection[_CachedGuidelineEvaluation]:
+        """Get agent-specific guideline collection."""
+        if agent_id is None:
+            # Fallback to default collection for backward compatibility
+            agent_id = AgentId("default")
+        
+        if agent_id not in self._guideline_collections:
+            collection_name = f"guideline_evaluations_agent_{agent_id}"
+            async def guideline_loader(doc):
+                return doc
+            
+            self._guideline_collections[agent_id] = await self._db.get_or_create_collection(
+                name=collection_name,
+                schema=_CachedGuidelineEvaluation,
+                document_loader=guideline_loader,
+            )
+        return self._guideline_collections[agent_id]
+    
+    async def _get_journey_collection(self, agent_id: Optional[AgentId]) -> JSONFileDocumentCollection[_CachedJourneyEvaluation]:
+        """Get agent-specific journey collection."""
+        if agent_id is None:
+            # Fallback to default collection for backward compatibility
+            agent_id = AgentId("default")
+        
+        if agent_id not in self._journey_collections:
+            collection_name = f"journey_evaluations_agent_{agent_id}"
+            async def journey_loader(doc):
+                return doc
+            
+            self._journey_collections[agent_id] = await self._db.get_or_create_collection(
+                name=collection_name,
+                schema=_CachedJourneyEvaluation,
+                document_loader=journey_loader,
+            )
+        return self._journey_collections[agent_id]
+    
     # ==================== Cache Management ====================
     
     async def clear_cache_for_agent(self, agent_id: AgentId) -> None:
         """Clear all cached evaluations for a specific agent."""
         self._logger.info(f"Clearing cached evaluations for agent {agent_id}")
-        agent_tag = Tag.for_agent_id(agent_id)
         
-        # Find and clear guideline caches
-        guidelines = await self._guideline_store.list_guidelines(tags=[agent_tag])
-        for guideline in guidelines:
-            _hash = self._hash_guideline_evaluation_request(
-                g=guideline.content,
-                tool_ids=[],
-                journey_state_propositions=False,
-                properties_proposition=True,
-            )
-            await self._guideline_collection.delete_one({"id": {"$eq": _hash}})
+        # Clear agent-specific collections directly
+        if agent_id in self._guideline_collections:
+            await self._guideline_collections[agent_id].delete_many({})
+            del self._guideline_collections[agent_id]
         
-        # Find and clear journey caches
-        journeys = await self._journey_store.list_journeys(tags=[agent_tag])
-        for journey in journeys:
-            _hash = self._hash_journey_evaluation_request(journey=journey)
-            await self._journey_collection.delete_one({"id": {"$eq": _hash}})
+        if agent_id in self._journey_collections:
+            await self._journey_collections[agent_id].delete_many({})
+            del self._journey_collections[agent_id]
         
         self._logger.info(f"Cleared cached evaluations for agent {agent_id}")
     
     async def clear_all_cache(self) -> None:
-        """Clear all cached evaluations."""
-        await self._guideline_collection.delete_many({})
-        await self._journey_collection.delete_many({})
-        self._logger.info("Cleared all cached evaluations")
+        """Clear all cached evaluations for all agents."""
+        # Clear all agent-specific collections
+        for agent_id in list(self._guideline_collections.keys()):
+            await self._guideline_collections[agent_id].delete_many({})
+        
+        for agent_id in list(self._journey_collections.keys()):
+            await self._journey_collections[agent_id].delete_many({})
+        
+        # Clear collections cache
+        self._guideline_collections.clear()
+        self._journey_collections.clear()
+        
+        self._logger.info("Cleared all cached evaluations for all agents")
     
     # ==================== Private Implementation ====================
     
@@ -439,18 +480,23 @@ class EvaluationManager:
         tool_ids: Sequence[ToolId] = [],
         journey_state_proposition: bool = False,
         properties_proposition: bool = True,
+        agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
-        """Internal guideline evaluation implementation."""
-        # Check cache
+        """Internal guideline evaluation implementation with agent isolation."""
+        # Get agent-specific collection
+        guideline_collection = await self._get_guideline_collection(agent_id)
+        
+        # Check cache with agent-specific hash
         _hash = self._hash_guideline_evaluation_request(
             g=g,
             tool_ids=tool_ids,
             journey_state_propositions=journey_state_proposition,
             properties_proposition=properties_proposition,
+            agent_id=agent_id,
         )
         
-        if cached_evaluation := await self._guideline_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(f"Using cached evaluation for guideline: {g.condition}")
+        if cached_evaluation := await guideline_collection.find_one({"id": {"$eq": _hash}}):
+            self._logger.trace(f"Using cached evaluation for guideline: {g.condition} (agent: {agent_id})")
             return EvaluationResult(
                 entity_type="guideline",
                 entity_id=str(entity_id),
@@ -494,13 +540,17 @@ class EvaluationManager:
                 if not invoice.data:
                     raise RuntimeError("No evaluation data")
                 
-                # Cache result
+                # Cache result in agent-specific collection (replace existing if any)
                 properties = cast(InvoiceGuidelineData, invoice.data).properties_proposition or {}
-                await self._guideline_collection.insert_one({
-                    "id": ObjectId(_hash),
-                    "version": Version.String("0.1.0"),
-                    "properties": properties,
-                })
+                await guideline_collection.update_one(
+                    {"id": {"$eq": _hash}},
+                    {
+                        "id": ObjectId(_hash),
+                        "version": Version.String("0.1.0"),
+                        "properties": properties,
+                    },
+                    upsert=True
+                )
                 
                 return EvaluationResult(
                     entity_type="guideline",
@@ -647,18 +697,21 @@ class EvaluationManager:
         tool_ids: Sequence[ToolId],
         journey_state_propositions: bool,
         properties_proposition: bool,
+        agent_id: Optional[AgentId] = None,
     ) -> str:
-        """Generate hash for guideline evaluation request."""
+        """Generate hash for guideline evaluation request with agent isolation."""
         tool_ids_str = ",".join(str(tool_id) for tool_id in tool_ids) if tool_ids else ""
+        agent_suffix = f"_{agent_id}" if agent_id else ""
         return hashlib.md5(
-            f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}:{journey_state_propositions}:{properties_proposition}".encode()
+            f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}:{journey_state_propositions}:{properties_proposition}{agent_suffix}".encode()
         ).hexdigest()
     
-    def _hash_journey_evaluation_request(self, journey: Journey) -> str:
-        """Generate hash for journey evaluation request."""
+    def _hash_journey_evaluation_request(self, journey: Journey, agent_id: Optional[AgentId] = None) -> str:
+        """Generate hash for journey evaluation request with agent isolation."""
         node_ids_str = ",".join(str(node.id) for node in journey.states) if journey.states else ""
         edge_ids_str = ",".join(str(edge.id) for edge in journey.transitions) if journey.transitions else ""
-        return hashlib.md5(f"{journey.id}:{node_ids_str}:{edge_ids_str}".encode()).hexdigest()
+        agent_suffix = f"_{agent_id}" if agent_id else ""
+        return hashlib.md5(f"{journey.id}:{node_ids_str}:{edge_ids_str}{agent_suffix}".encode()).hexdigest()
     
     # ==================== Public Interface ====================
     
