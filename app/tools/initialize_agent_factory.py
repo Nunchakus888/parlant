@@ -13,7 +13,7 @@ from app.tools.prompts_format import decode_markdown_links
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/configs/actionbooks/lead-acquistion.json"
+        self.config_path = "app/configs/actionbooks/yc-case.json"
         self._config_cache = None
         self.container = container
 
@@ -71,6 +71,7 @@ class CustomAgentFactory(AgentFactory):
             "k_language": basic_settings.get("language", "English"),
             "tone": basic_settings.get("tone", "Friendly and professional"),
             "chatbot_id": basic_settings.get("chatbot_id"),
+            "tenant_id": config_request.tenant_id,
             "md5_checksum": config_request.md5_checksum
         }
         
@@ -89,11 +90,11 @@ class CustomAgentFactory(AgentFactory):
         await self._create_guidelines(agent, config.get("action_books", []), tools)
 
         # default guideline
-        await agent.create_guideline(
-            condition="The customer's inquiry does not match any specific business guidelines or the customer asks about topics outside our expertise",
-            action="Politely explain that you specialize in our business area and would be happy to help with related questions. Ask how you can assist them with our services.",
-            metadata={"type": "default"},
-        )
+        # await agent.create_guideline(
+        #     condition="The customer's inquiry does not match any specific business guidelines or the customer asks about topics outside our expertise",
+        #     action="Politely explain that you specialize in our business area and would be happy to help with related questions. Ask how you can assist them with our services.",
+        #     metadata={"type": "default"},
+        # )
 
         self._logger.info("🔍 处理评估...")
         start_time = time.time()
