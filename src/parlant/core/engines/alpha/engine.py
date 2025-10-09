@@ -305,16 +305,17 @@ class AlphaEngine(Engine):
                 # all of the information we have prepared.
                 message_generation_inspections = await self._generate_messages(context, latch)
 
-                # Mark that the agent is ready to receive and respond to new events.
-                await self._emit_ready_event(context)
-
-                # Save results for later inspection.
+                # Save results for inspection immediately after message generation
+                # This ensures inspection is available when API response is prepared
                 await self._entity_commands.create_inspection(
                     session_id=context.session.id,
                     correlation_id=self._correlator.correlation_id,
                     preparation_iterations=preparation_iteration_inspections,
                     message_generations=message_generation_inspections,
                 )
+
+                # Mark that the agent is ready to receive and respond to new events.
+                await self._emit_ready_event(context)
 
                 await self._add_agent_state(
                     context=context,
@@ -628,7 +629,7 @@ class AlphaEngine(Engine):
         # 详细日志分析
         self._logger.info(f"=== Guideline Matching Analysis ===")
         self._logger.info(f"Total resolved guidelines: {guideline_and_journey_matching_result.resolved_guidelines}")
-        self._logger.info(f"Non-default guidelines: {len(non_default_guidelines)}, {non_default_guidelines}")
+        self._logger.info(f"Non-default guidelines: {len(non_default_guidelines)}")
         
         # 检查是否需要发送事件
         has_non_default_guidelines = len(non_default_guidelines) > 0
