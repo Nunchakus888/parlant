@@ -296,7 +296,10 @@ class SessionModule:
         with self._correlator.scope("process", {"session": session}):
             await self._background_task_service.restart(
                 self._process_session(session),
-                tag=f"process-session({session.id})",
+                # todo..
+                # 刚性对话，一问一答，当前 session_id + correlation_id 标记会话任务的唯一性，不被取消
+                # 下个版本使用 session_id，同一会话多次消息则取消之前的任务，以最后一次为准
+                tag=f"process-session({session.id})-{self._correlator.correlation_id}",
             )
 
             return self._correlator.correlation_id
