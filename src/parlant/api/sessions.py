@@ -373,9 +373,11 @@ class EventDTO(
     id: EventIdPath
     source: EventSourceDTO
     kind: EventKindDTO
+    offset: EventOffsetField
     creation_utc: EventCreationUTCField
     correlation_id: EventCorrelationIdField
     data: JSONSerializableDTO
+    deleted: bool = False
 
 class ChatDataDTO(DefaultBaseModel):
     """Chat data."""  
