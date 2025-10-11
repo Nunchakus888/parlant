@@ -272,6 +272,7 @@ class Inspection:
     preparation_iterations: Sequence[PreparationIteration]
     evaluation_generations:  Sequence[GenerationInfo] | None = None
     usage_info: UsageInfo | None = None
+    creation_utc: Optional[datetime] = None
     
     @classmethod
     def create_with_usage_info(
@@ -279,6 +280,7 @@ class Inspection:
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
         evaluation_generations: Sequence[GenerationInfo] | None = None,
+        creation_utc: Optional[datetime] = None,
     ) -> "Inspection":
         """创建Inspection并自动计算usage_info"""
         # 收集所有generation_info用于聚合
@@ -365,6 +367,7 @@ class Inspection:
             preparation_iterations=preparation_iterations,
             evaluation_generations=evaluation_generations,
             usage_info=usage_info,
+            creation_utc=creation_utc or datetime.now(timezone.utc),
         )
 
 
@@ -396,6 +399,7 @@ class Session:
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
     updated_utc: Optional[datetime] = datetime.now(timezone.utc)
+    tenant_id: Optional[str] = None
 
 
 class SessionUpdateParams(TypedDict, total=False):
@@ -406,6 +410,7 @@ class SessionUpdateParams(TypedDict, total=False):
     updated_utc: Optional[datetime] = datetime.now(timezone.utc)
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
+    tenant_id: Optional[str]
 
 
 class SessionStore(ABC):
@@ -417,6 +422,7 @@ class SessionStore(ABC):
         session_id: Optional[SessionId] = None,
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Session: ...
 
     @abstractmethod
@@ -538,6 +544,7 @@ class _SessionDocument(TypedDict, total=False):
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[_AgentStateDocument]
     updated_utc: str
+    tenant_id: Optional[str]
 
 
 class _EventDocument(TypedDict, total=False):
@@ -654,6 +661,7 @@ class _InspectionDocument(TypedDict, total=False):
     message_generations: Sequence[_MessageGenerationInspectionDocument]
     preparation_iterations: Sequence[_PreparationIterationDocument]
     usage_info: UsageInfo
+    creation_utc: str
 
 
 class _MessageEventData_v0_5_0(TypedDict):
@@ -1017,6 +1025,8 @@ class SessionDocumentStore(SessionStore):
                 )
                 for s in params["agent_states"]
             ]
+        if "tenant_id" in params:
+            doc_params["tenant_id"] = params["tenant_id"]
 
         return doc_params
 
@@ -1042,6 +1052,7 @@ class SessionDocumentStore(SessionStore):
                 for s in session.agent_states
             ],
             updated_utc=session.updated_utc.isoformat() if session.updated_utc else datetime.now(timezone.utc).isoformat(),
+            tenant_id=session.tenant_id,
         )
 
     def _deserialize_session(
@@ -1065,6 +1076,7 @@ class SessionDocumentStore(SessionStore):
                 for s in session_document["agent_states"]
             ],
             updated_utc=datetime.fromisoformat(session_document["updated_utc"]) if session_document.get("updated_utc") else datetime.now(timezone.utc),
+            tenant_id=session_document.get("tenant_id"),
         )
 
     def _serialize_event(
@@ -1160,6 +1172,7 @@ class SessionDocumentStore(SessionStore):
                 for i in inspection.preparation_iterations
             ],
             usage_info=serialize_usage_info(inspection.usage_info) if inspection.usage_info else None,
+            creation_utc=(inspection.creation_utc or datetime.now(timezone.utc)).isoformat(),
         )
 
     def _deserialize_message_inspection(
@@ -1219,6 +1232,7 @@ class SessionDocumentStore(SessionStore):
                 for i in inspection_document["preparation_iterations"]
             ],
             usage_info=deserialize_usage_info(usage_doc) if (usage_doc := inspection_document.get("usage_info")) else None,
+            creation_utc=datetime.fromisoformat(inspection_document["creation_utc"]) if inspection_document.get("creation_utc") else datetime.now(timezone.utc),
         )
 
     @override
@@ -1230,6 +1244,7 @@ class SessionDocumentStore(SessionStore):
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
         mode: Optional[SessionMode] = None,
+        tenant_id: Optional[str] = None,
     ) -> Session:
         async with self._lock.writer_lock:
             creation_utc = creation_utc or datetime.now(timezone.utc)
@@ -1245,6 +1260,7 @@ class SessionDocumentStore(SessionStore):
                 consumption_offsets=consumption_offsets,
                 title=title,
                 agent_states=[],
+                tenant_id=tenant_id,
             )
 
             await self._session_collection.insert_one(document=self._serialize_session(session))
