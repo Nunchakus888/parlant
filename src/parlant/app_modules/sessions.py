@@ -98,6 +98,7 @@ class SessionModule:
         session_id: SessionId | None = None,
         title: str | None = None,
         allow_greeting: bool = False,
+        tenant_id: str | None = None,
     ) -> Session:
         _ = await self._agent_store.read_agent(agent_id=agent_id)
 
@@ -107,6 +108,7 @@ class SessionModule:
             customer_id=customer_id,
             agent_id=agent_id,
             title=title,
+            tenant_id=tenant_id,
         )
 
         if allow_greeting:
