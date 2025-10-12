@@ -5,12 +5,13 @@ import ErrorBoundary from '../error-boundary/error-boundary';
 import ChatHeader from '../chat-header/chat-header';
 import {useDialog} from '@/hooks/useDialog';
 import {Helmet} from 'react-helmet';
-import AgentList, {NEW_SESSION_ID} from '../agents-list/agent-list';
+import {NEW_SESSION_ID} from '../agents-list/agent-list';
 import {useAtom} from 'jotai';
-import {agentAtom, dialogAtom, sessionAtom, sessionsAtom} from '@/store';
+import {dialogAtom, sessionAtom, sessionsAtom} from '@/store';
 import {twMerge} from 'tailwind-merge';
 import SessionView from '../session-view/session-view';
 import {spaceClick} from '@/utils/methods';
+import {useCreateSession} from '@/hooks/useCreateSession';
 
 export const SessionProvider = createContext({});
 
@@ -30,20 +31,17 @@ export default function Chatbot(): ReactElement {
 	const {openDialog, DialogComponent, closeDialog} = useDialog();
 	const [showMessage, setShowMessage] = useState(false);
 	const [sessions] = useAtom(sessionsAtom);
-	const [session, setSession] = useAtom(sessionAtom);
+	const [session] = useAtom(sessionAtom);
 	const [, setDialog] = useAtom(dialogAtom);
 	const [filterSessionVal, setFilterSessionVal] = useState('');
-	const [, setAgent] = useAtom(agentAtom);
-	const [dialog] = useAtom(dialogAtom);
+	const {createNewSession} = useCreateSession();
 
 	useEffect(() => {
-		if (sessions) {
-			setShowMessage(!!sessions.length);
-		}
+		// Always show message after a delay, regardless of sessions availability
 		setTimeout(() => {
 			setShowMessage(true);
-		}, 500);
-	}, [sessions]);
+		}, 300);
+	}, []);
 
 	useEffect(() => {
 		if (session?.id) {
@@ -61,11 +59,6 @@ export default function Chatbot(): ReactElement {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const createNewSession = () => {
-		setSession(null);
-		setAgent(null);
-		dialog.openDialog('', <AgentList />, {height: '536px', width: '604px'});
-	};
 
 	return (
 		<ErrorBoundary>
@@ -83,9 +76,9 @@ export default function Chatbot(): ReactElement {
 							</div>
 						) : (
 							<div className='flex-1 flex flex-col gap-[27px] items-center justify-center'>
-								<img className='pointer-events-none' src='select-session.svg' fetchPriority='high' alt='' />
+								{/* <img className='pointer-events-none' src='select-session.svg' fetchPriority='high' alt='' /> */}
 								<p className='text-[#3C8C71] select-none font-light text-[18px] flex flex-col gap-[10px] items-center'>
-									{showMessage && !sessions.length ? 'Start a session to begin chatting' : 'Select or start a session to begin chatting'}
+									{showMessage && (!sessions || sessions.length === 0) ? 'Start a session to begin chatting' : 'Select or start a session to begin chatting'}
 									<div className='group'>
 										<img src='buttons/new-session.svg' alt='add session' className='shadow-main cursor-pointer group-hover:hidden w-[76px]' tabIndex={1} role='button' onKeyDown={spaceClick} onClick={createNewSession} />
 										<img src='buttons/new-session-hover.svg' alt='add session' className='shadow-main cursor-pointer hidden group-hover:block w-[76px]' tabIndex={1} role='button' onKeyDown={spaceClick} onClick={createNewSession} />

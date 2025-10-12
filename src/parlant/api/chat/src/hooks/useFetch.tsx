@@ -11,6 +11,22 @@ interface useFetchResponse<T> {
 	abortFetch: () => void;
 }
 
+/**
+ * Encodes path segments in URL endpoint
+ * Same logic as in api.ts to ensure consistency
+ */
+function encodeEndpoint(endpoint: string): string {
+	return endpoint.split('/').map(segment => {
+		if (!segment || segment.includes('?') || segment.includes('=')) {
+			return segment;
+		}
+		if (segment !== encodeURIComponent(segment)) {
+			return encodeURIComponent(segment);
+		}
+		return segment;
+	}).join('/');
+}
+
 function objToUrlParams(obj: Record<string, unknown>) {
 	const params = [];
 	for (const key in obj) {
@@ -26,6 +42,9 @@ const ABORT_REQ_CODE = 20;
 const NOT_FOUND_CODE = 404;
 const TIMEOUT_ERROR_MESSAGE = 'Error: Gateway Timeout';
 
+// Non-critical endpoints that should not crash the app if they fail
+const nonCriticalEndpoints = ['agents', 'customers', 'sessions'];
+
 export default function useFetch<T>(url: string, body?: Record<string, unknown>, dependencies: unknown[] = [], retry = false, initiate = true, checkErr = true): useFetchResponse<T> {
 	const [data, setData] = useState<T | null>(null);
 	const [loading, setLoading] = useState<boolean>(false);
@@ -36,7 +55,17 @@ export default function useFetch<T>(url: string, body?: Record<string, unknown>,
 	const controllerRef = useRef<AbortController | null>(null);
 
 	useEffect(() => {
-		if (error && error.message !== TIMEOUT_ERROR_MESSAGE) throw new Error(`Failed to fetch "${url}"`);
+		if (error && error.message !== TIMEOUT_ERROR_MESSAGE) {
+			// Check if this is a non-critical endpoint
+			const isNonCritical = nonCriticalEndpoints.some(endpoint => url.includes(endpoint));
+			if (isNonCritical) {
+				// Log error but don't throw for non-critical endpoints
+				console.warn(`⚠️ Non-critical endpoint failed: ${url}`, error);
+			} else {
+				// Throw error for critical endpoints
+				throw new Error(`Failed to fetch "${url}"`);
+			}
+		}
 	}, [error, url]);
 
 	const ErrorTemplate = () => {
@@ -67,8 +96,9 @@ export default function useFetch<T>(url: string, body?: Record<string, unknown>,
 			setTimeout(() => setLoading(true), 0);
 			setError(null);
 			const reqParams = customParams || params;
+			const encodedUrl = encodeEndpoint(url);
 
-			fetch(`${BASE_URL}/${url}${reqParams}`, {signal})
+			fetch(`${BASE_URL}/${encodedUrl}${reqParams}`, {signal})
 				.then(async (response) => {
 					if (!response.ok) {
 						if (response.status === NOT_FOUND_CODE) {

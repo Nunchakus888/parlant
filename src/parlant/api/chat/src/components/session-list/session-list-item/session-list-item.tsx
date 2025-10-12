@@ -12,7 +12,7 @@ import {NEW_SESSION_ID} from '../../chat-header/chat-header';
 import {spaceClick} from '@/utils/methods';
 import {ClassNameValue, twJoin, twMerge} from 'tailwind-merge';
 import {useAtom} from 'jotai';
-import {agentAtom, agentsAtom, customerAtom, customersAtom, dialogAtom, newSessionAtom, sessionAtom, sessionsAtom} from '@/store';
+import {agentAtom, agentsAtom, customerAtom, dialogAtom, newSessionAtom, sessionAtom, sessionsAtom} from '@/store';
 import {copy, exportToCsv, getIndexedItemsFromIndexedDB} from '@/lib/utils';
 import Avatar from '@/components/avatar/avatar';
 import CopyText from '@/components/ui/custom/copy-text';
@@ -45,9 +45,7 @@ export const DeleteDialog = ({session, closeDialog, deleteClicked}: {session: Se
 export default function SessionListItem({session, isSelected, refetch, editingTitle, setEditingTitle, tabIndex, disabled, className}: Props): ReactElement {
 	const sessionNameRef = useRef<HTMLInputElement>(null);
 	const [agents] = useAtom(agentsAtom);
-	const [customers] = useAtom(customersAtom);
 	const [agentsMap, setAgentsMap] = useState(new Map());
-	const [customerMap, setCustomerMap] = useState(new Map());
 	const [, setSession] = useAtom(sessionAtom);
 	const [, setAgent] = useAtom(agentAtom);
 	const [, setCustomer] = useAtom(customerAtom);
@@ -62,7 +60,8 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 		if (session.id === NEW_SESSION_ID && !session.agent_id) setAgent(null);
 		else {
 			setAgent(agents?.find((a) => a.id === session.agent_id) || null);
-			setCustomer(customers?.find((c) => c.id === session.customer_id) || null);
+			// Create a simple customer object from session data
+			setCustomer({id: session.customer_id, name: session.customer_id});
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isSelected, setAgent, session.id, session.agent_id, session.title]);
@@ -71,9 +70,6 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 		if (agents) setAgentsMap(new Map(agents.map((agent) => [agent.id, agent])));
 	}, [agents]);
 
-	useEffect(() => {
-		if (customers) setCustomerMap(new Map(customers.map((customer) => [customer.id, customer])));
-	}, [customers]);
 
 	const deleteSession = async (e: React.MouseEvent) => {
 		e.stopPropagation();
@@ -223,7 +219,8 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 		{title: 'delete', onClick: deleteSession, imgPath: 'icons/delete.svg'},
 	];
 	const agent = agentsMap.get(session.agent_id);
-	const customer = customerMap.get(session.customer_id);
+	// Create customer object from session data
+	const customer = {id: session.customer_id, name: session.customer_id};
 
 	return (
 		<Tooltip

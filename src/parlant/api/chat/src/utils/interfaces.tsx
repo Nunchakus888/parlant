@@ -41,11 +41,20 @@ export interface EventInterface {
 }
 
 export interface SessionInterface {
-	id: string;
+	id: string;  // session_id
 	title: string;
 	customer_id: string;
-	agent_id: string;
 	creation_utc: string;
+	mode?: string;
+	agent_id?: string;  // Backend field name
+	// Additional fields for /chat API
+	tenant_id?: string;
+	chatbot_id?: string;  // Mapped from agent_id for chat requests
+	md5_checksum?: string;
+	is_preview?: boolean;
+	preview_action_book_ids?: string[];
+	autofill_params?: Record<string, any>;
+	timeout?: number;
 }
 
 export interface SessionCsvInterface {
@@ -57,4 +66,38 @@ export interface SessionCsvInterface {
 	Tags: string;
 	Flag: string;
 	'Correlation ID': string;
+}
+
+export interface ChatConfigInterface {
+	tenant_id: string;
+	chatbot_id: string;
+	customer_id?: string;
+	session_id?: string;
+	md5_checksum?: string;
+	is_preview?: boolean;
+	preview_action_book_ids?: string[];
+	autofill_params?: Record<string, any>;
+	timeout?: number;
+	session_title?: string;
+}
+
+export interface ChatRequestInterface extends ChatConfigInterface {
+	message: string;
+	customer_id?: string;
+	session_id?: string;
+}
+
+export interface ChatResponseInterface {
+	status: number;
+	code: number;
+	message: string;
+	data?: {
+		total_tokens: number;
+		message: string;
+		success: boolean;
+		correlation_id: string;
+		creation_utc: string;
+		id: string;
+		session_id: string;
+	} | null;
 }

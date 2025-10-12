@@ -10,13 +10,15 @@ import LogFilters, {Level, Type} from '../log-filters/log-filters';
 import CannedResponses from '../canned-responses/canned-responses';
 import EmptyState from './empty-state';
 import FilterTabs from './filter-tabs';
-import MessageDetailsHeader from './message-details-header';
+// import MessageDetailsHeader from './message-details-header';
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../ui/resizable';
 import {ImperativePanelHandle} from 'react-resizable-panels';
 import Tooltip from '../ui/custom/tooltip';
 import {copy} from '@/lib/utils';
 import MessageLogs from './message-logs';
 import CopyText from '../ui/custom/copy-text';
+import {useAtom} from 'jotai';
+import {sessionAtom} from '@/store';
 
 interface DefInterface {
 	level?: Level;
@@ -52,11 +54,11 @@ const getDefaultSelectedActiveTab = (filterTabs: Filter[]) => {
 
 const MessageDetails = ({
 	event,
-	closeLogs,
-	regenerateMessageFn,
-	resendMessageFn,
-	flaggedChanged,
-	sameCorrelationMessages,
+	// closeLogs,
+	// regenerateMessageFn,
+	// resendMessageFn,
+	// flaggedChanged,
+	// sameCorrelationMessages,
 }: {
 	event?: EventInterface | null;
 	sameCorrelationMessages?: EventInterface[];
@@ -72,6 +74,9 @@ const MessageDetails = ({
 	const [filteredLogs, setFilteredLogs] = useState<Log[]>([]);
 	const messagesRef = useRef<HTMLDivElement | null>(null);
 	const resizableRef = useRef<ImperativePanelHandle | null>(null);
+	
+	// Get session data
+	const [session] = useAtom(sessionAtom);
 
 	useEffect(() => {
 		(setFilterTabs as React.Dispatch<React.SetStateAction<Filter[]>>)((prev) => {
@@ -124,9 +129,16 @@ const MessageDetails = ({
 
 	useEffect(() => {
 		if (!event?.correlation_id) return;
+		console.log('Fetching logs for correlation_id:', event.correlation_id);
 		const setLogsFn = async () => {
-			const logs = await getMessageLogs(event.correlation_id);
-			setLogs(logs);
+			try {
+				const logs = await getMessageLogs(event.correlation_id);
+				console.log('Logs fetched:', logs?.length || 0, 'items');
+				setLogs(logs);
+			} catch (error) {
+				console.error('Error fetching logs:', error);
+				setLogs([]);  // Set to empty array on error
+			}
 		};
 		setLogsFn();
 	}, [event?.correlation_id]);
@@ -151,7 +163,7 @@ const MessageDetails = ({
 
 	return (
 		<div className={twJoin('w-full h-full animate-fade-in duration-200 overflow-auto flex flex-col justify-start pt-0 pe-0 bg-[#FBFBFB]')}>
-			<MessageDetailsHeader
+			{/* <MessageDetailsHeader
 				event={event || null}
 				closeLogs={closeLogs}
 				sameCorrelationMessages={sameCorrelationMessages}
@@ -159,10 +171,79 @@ const MessageDetails = ({
 				regenerateMessageFn={regenerateMessageFn}
 				className={twJoin('shadow-main h-[60px] min-h-[60px]', Object.keys(filters || {}).length ? 'border-[#F3F5F9]' : '')}
 				flaggedChanged={flaggedChanged}
-			/>
-			<div className='ps-[20px] pt-[10px] flex items-center gap-[3px] text-[14px] font-normal bg-white'>
-				<CopyText textToCopy={event?.correlation_id?.split('::')?.[0]} preText='Correlation ID: ' text={`${event?.correlation_id?.split('::')?.[0]}`} className='whitespace-nowrap [&_span]:text-ellipsis [&_span]:overflow-hidden [&_span]:block' />
+			/> */}
+			<div className='ps-[20px] pt-[10px] pb-[10px] flex flex-col gap-[8px] bg-white border-b border-[#F3F5F9]'>
+				<div className='flex items-center gap-[3px] text-[14px] font-normal'>
+					<CopyText textToCopy={event?.correlation_id?.split('::')?.[0]} preText='Correlation ID: ' text={`${event?.correlation_id?.split('::')?.[0]}`} className='whitespace-nowrap [&_span]:text-ellipsis [&_span]:overflow-hidden [&_span]:block' />
+				</div>
 			</div>
+			
+			{/* Session Information Section */}
+			{session && (
+				<div className='ps-[20px] pt-[10px] pb-[10px] flex flex-col gap-[8px] bg-[#F8F9FA] border-b border-[#F3F5F9]'>
+					<div className='text-[14px] font-semibold text-[#333] mb-[4px]'>Session Information</div>
+					{session?.id && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Session ID:</span> 
+							<CopyText 
+								textToCopy={session.id} 
+								text={session.id} 
+								className='font-mono text-[13px] cursor-pointer hover:text-[#333]' 
+							/>
+						</div>
+					)}
+					{session?.chatbot_id && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Chatbot ID:</span> 
+							<CopyText 
+								textToCopy={session.chatbot_id} 
+								text={session.chatbot_id} 
+								className='font-mono text-[13px] cursor-pointer hover:text-[#333]' 
+							/>
+						</div>
+					)}
+					{session?.tenant_id && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Tenant ID:</span> 
+							<CopyText 
+								textToCopy={session.tenant_id} 
+								text={session.tenant_id} 
+								className='font-mono text-[13px] cursor-pointer hover:text-[#333]' 
+							/>
+						</div>
+					)}
+					{session?.customer_id && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Customer ID:</span> 
+							<CopyText 
+								textToCopy={session.customer_id} 
+								text={session.customer_id} 
+								className='font-mono text-[13px] cursor-pointer hover:text-[#333]' 
+							/>
+						</div>
+					)}
+					{session?.mode && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Mode:</span> <span className='capitalize'>{session.mode}</span>
+						</div>
+					)}
+					{session?.creation_utc && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Created:</span> <span className='text-[13px]'>{new Date(session.creation_utc).toLocaleString()}</span>
+						</div>
+					)}
+					{session?.is_preview !== undefined && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Preview Mode:</span> <span className='text-[13px]'>{session.is_preview ? 'Yes' : 'No'}</span>
+						</div>
+					)}
+					{session?.timeout && (
+						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
+							<span className='font-medium'>Timeout:</span> <span className='text-[13px]'>{session.timeout}ms</span>
+						</div>
+					)}
+				</div>
+			)}
 			<ResizablePanelGroup direction='vertical' className={twJoin('w-full h-full overflow-auto flex flex-col justify-start pt-0 pe-0 bg-[#FBFBFB]')}>
 				<ResizablePanel ref={resizableRef} minSize={0} maxSize={isError ? 99 : 0} defaultSize={isError ? 50 : 0}>
 					{isError && <MessageError event={event} />}
