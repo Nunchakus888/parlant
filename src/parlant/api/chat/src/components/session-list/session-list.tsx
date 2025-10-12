@@ -3,7 +3,7 @@ import useFetch from '@/hooks/useFetch';
 import Session from './session-list-item/session-list-item';
 import {AgentInterface, SessionInterface} from '@/utils/interfaces';
 import {useAtom} from 'jotai';
-import {agentAtom, agentsAtom, customerAtom, customersAtom, sessionAtom, sessionsAtom} from '@/store';
+import {agentAtom, agentsAtom, customerAtom, refreshTriggerAtom, sessionAtom, sessionsAtom} from '@/store';
 import {NEW_SESSION_ID} from '../agents-list/agent-list';
 import {twJoin} from 'tailwind-merge';
 
@@ -12,13 +12,12 @@ export default function SessionList({filterSessionVal}: {filterSessionVal: strin
 	const [session] = useAtom(sessionAtom);
 	const {data, ErrorTemplate, loading, refetch} = useFetch<SessionInterface[]>('sessions');
 	const {data: agentsData} = useFetch<AgentInterface[]>('agents');
-	const {data: customersData} = useFetch<AgentInterface[]>('customers');
 	const [, setAgents] = useAtom(agentsAtom);
-	const [, setCustomers] = useAtom(customersAtom);
 	const [agent] = useAtom(agentAtom);
 	const [customer] = useAtom(customerAtom);
 	const [sessions, setSessions] = useAtom(sessionsAtom);
 	const [filteredSessions, setFilteredSessions] = useState(sessions);
+	const [refreshTrigger] = useAtom(refreshTriggerAtom);
 
 	useEffect(() => {
 		if (agentsData) {
@@ -27,12 +26,15 @@ export default function SessionList({filterSessionVal}: {filterSessionVal: strin
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [agentsData]);
 
+
+	// 监听全局刷新触发器
 	useEffect(() => {
-		if (customersData) {
-			setCustomers(customersData);
+		if (refreshTrigger > 0) {
+			console.log('🔄 Session list refreshing due to global trigger...');
+			refetch();
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [customersData]);
+	}, [refreshTrigger]);
 
 	useEffect(() => {
 		if (data) setSessions(data);

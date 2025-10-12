@@ -14,7 +14,7 @@ import {useQuestionDialog} from '@/hooks/useQuestionDialog';
 import {twJoin, twMerge} from 'tailwind-merge';
 import MessageDetails from '../message-details/message-details';
 import {useAtom} from 'jotai';
-import {agentAtom, agentsAtom, emptyPendingMessage, newSessionAtom, pendingMessageAtom, sessionAtom, sessionsAtom, viewingMessageDetailsAtom} from '@/store';
+import {agentAtom, agentsAtom, chatConfigAtom, customerAtom, emptyPendingMessage, newSessionAtom, pendingMessageAtom, sessionAtom, sessionsAtom, viewingMessageDetailsAtom} from '@/store';
 import ErrorBoundary from '../error-boundary/error-boundary';
 import DateHeader from './date-header/date-header';
 // import SessoinViewHeader from './session-view-header/session-view-header';
@@ -50,7 +50,9 @@ const SessionView = (): ReactElement => {
 	const [newSession, setNewSession] = useAtom(newSessionAtom);
 	const [, setViewingMessage] = useAtom(viewingMessageDetailsAtom);
 	const [, setSessions] = useAtom(sessionsAtom);
-	const {data: lastEvents, refetch, ErrorTemplate, abortFetch} = useFetch<EventInterface[]>(`sessions/${session?.id}/events`, {min_offset: lastOffset}, [], session?.id !== NEW_SESSION_ID, !!(session?.id && session?.id !== NEW_SESSION_ID), false);
+	const [chatConfig] = useAtom(chatConfigAtom);
+	const [customer] = useAtom(customerAtom);
+	const {data: lastEvents, refetch, ErrorTemplate, abortFetch} = useFetch<EventInterface[]>(`sessions/${session?.id}/events`, {min_offset: lastOffset, wait_for_data: 0}, [session?.id, lastOffset], session?.id !== NEW_SESSION_ID, !!(session?.id && session?.id !== NEW_SESSION_ID), false);
 
 	const resetChat = () => {
 		setMessage('');
@@ -126,7 +128,10 @@ const SessionView = (): ReactElement => {
 		if (!lastEvent) return;
 
 		const offset = lastEvent?.offset;
-		if (offset || offset === 0) setLastOffset(offset + 1);
+		// 只在有新消息时才更新 lastOffset，避免无限循环
+		if ((offset || offset === 0) && offset > lastOffset) {
+			setLastOffset(offset + 1);
+		}
 
 		const correlationsMap = groupBy(lastEvents || [], (item: EventInterface) => item?.correlation_id.split('::')[0]);
 
@@ -197,9 +202,6 @@ const SessionView = (): ReactElement => {
 		getSessionFlaggedItems();
 	}, [session?.id, refreshFlag]);
 
-	useEffect(() => {
-		if (lastOffset === 0) refetch();
-	}, [lastOffset]);
 	useEffect(() => setViewingMessage(showLogsForMessage), [showLogsForMessage]);
 	useEffect(formatMessagesFromEvents, [lastEvents]);
 	useEffect(scrollToLastMessage, [messages?.length, pendingMessage, isFirstScroll]);
@@ -211,35 +213,131 @@ const SessionView = (): ReactElement => {
 		if (agents && agent?.id) setIsMissingAgent(!agents?.find((a) => a.id === agent?.id));
 	}, [agents, agent?.id]);
 
-	const createSession = async (): Promise<SessionInterface | undefined> => {
-		if (!newSession) return;
-		const {customer_id, title} = newSession;
-		return postData('sessions?allow_greeting=false', {customer_id, agent_id: agent?.id, title} as object)
-			.then((res: SessionInterface) => {
-				if (newSession) {
-					setSession(res);
-					setNewSession(null);
-				}
-				setSessions((sessions) => [...sessions, res]);
-				return res;
-			})
-			.catch(() => {
-				toast.error('Something went wrong');
-				return undefined;
-			});
-	};
+	// Session creation now handled via /chat API in postMessage
 
 	const postMessage = async (content: string): Promise<void> => {
 		setPendingMessage((pendingMessage) => ({...pendingMessage, sessionId: session?.id, data: {message: content}}));
 		setMessage('');
-		const eventSession = newSession ? (await createSession())?.id : session?.id;
-		const useContentFilteringStatus = useContentFiltering ? 'auto' : 'none';
-		postData(`sessions/${eventSession}/events?moderation=${useContentFilteringStatus}`, {kind: 'message', message: content, source: 'customer'})
-			.then(() => {
-				soundDoubleBlip();
-				refetch();
-			})
-			.catch(() => toast.error('Something went wrong'));
+		
+		console.log('----session', session);
+    // Use /chat API for all messages
+		const isNewSession = session?.id === NEW_SESSION_ID;
+		
+		try {
+			let chatRequest: any;
+			
+			if (isNewSession) {
+				// New session: use chatConfig or session data
+				// IMPORTANT: In backend, agent_id from session is actually the chatbot_id
+				chatRequest = {
+					message: content,
+					// Use session_id from chatConfig if provided, otherwise let backend generate one
+					session_id: chatConfig?.session_id,
+					// Required fields - fallback chain: chatConfig -> session
+					tenant_id: chatConfig?.tenant_id || session?.tenant_id || '',
+					chatbot_id: chatConfig?.chatbot_id || session?.chatbot_id || '',
+					// Session info (Note: agent_id is NOT in ChatRequestDTO, it's determined server-side)
+					customer_id: customer?.id || chatConfig?.customer_id || session?.customer_id,
+					session_title: session?.title || chatConfig?.session_title || 'New Conversation',
+					// Optional config fields
+					md5_checksum: chatConfig?.md5_checksum || session?.md5_checksum,
+					is_preview: chatConfig?.is_preview ?? session?.is_preview ?? false,
+					preview_action_book_ids: chatConfig?.preview_action_book_ids || session?.preview_action_book_ids || [],
+					autofill_params: chatConfig?.autofill_params || session?.autofill_params || {},
+					timeout: chatConfig?.timeout || session?.timeout || 57,
+				};
+				
+				// Remove undefined fields
+				Object.keys(chatRequest).forEach(key => {
+					if (chatRequest[key] === undefined) {
+						delete chatRequest[key];
+					}
+				});
+				
+				console.log('📤 Sending first message (new session):', chatRequest);
+			} else {
+				// Existing session: get all parameters from session object
+				// IMPORTANT: Map session.agent_id to chatbot_id for chat requests
+				chatRequest = {
+					message: content,
+					session_id: session?.id,
+					// Required fields - all from session object
+					tenant_id: session?.tenant_id || '',
+					chatbot_id: session?.agent_id || session?.chatbot_id || '',  // Map agent_id to chatbot_id
+					// Optional fields from session
+					customer_id: session?.customer_id,
+					md5_checksum: session?.md5_checksum,
+					is_preview: session?.is_preview,
+					preview_action_book_ids: session?.preview_action_book_ids,
+					autofill_params: session?.autofill_params,
+					timeout: session?.timeout,
+				};
+				
+				// Remove undefined fields
+				Object.keys(chatRequest).forEach(key => {
+					if (chatRequest[key] === undefined) {
+						delete chatRequest[key];
+					}
+				});
+				
+				console.log('📤 Sending message (existing session):', chatRequest);
+				console.log('🔍 Session object:', session);
+			}
+			
+			// Validate required fields before sending
+			if (!chatRequest.chatbot_id) {
+				const missing = [];
+				// if (!chatRequest.tenant_id) missing.push('tenant_id');
+				if (!chatRequest.chatbot_id) missing.push('chatbot_id');
+				const errorMsg = `缺少必填参数: ${missing.join(', ')}。会话对象中缺少必要信息，请检查会话数据。`;
+				console.error('❌ Missing required parameters:', missing);
+				console.error('❌ ChatRequest:', chatRequest);
+				console.error('❌ Session object:', session);
+				toast.error(errorMsg);
+				return;
+			}
+			
+			const response: any = await postData('sessions/chat', chatRequest);
+			console.log('✅ Chat API response:', response);
+			
+			// Check for error response
+			if (response.status !== 200) {
+				const errorMsg = response.message || 'Chat request failed';
+				console.error('❌ Chat API error response:', response);
+				toast.error(`发送失败: ${errorMsg}`);
+				return;
+			}
+			
+			if (isNewSession && response.data?.session_id) {
+				// Update session with actual session_id from backend, preserve all config
+				const actualSession: SessionInterface = {
+					...session!,
+					id: response.data.session_id,
+					// Preserve config for future messages
+					tenant_id: chatRequest.tenant_id,
+					chatbot_id: chatRequest.chatbot_id,
+					md5_checksum: chatRequest.md5_checksum,
+					is_preview: chatRequest.is_preview,
+					preview_action_book_ids: chatRequest.preview_action_book_ids,
+					autofill_params: chatRequest.autofill_params,
+					timeout: chatRequest.timeout,
+				};
+				setSession(actualSession);
+				setNewSession(null);
+				// Keep chatConfig for potential future use
+				// setChatConfig(null);
+				
+				// Add session to sessions list
+				setSessions((sessions) => [actualSession, ...sessions]);
+			}
+			
+			soundDoubleBlip();
+			refetch();
+		} catch (err: any) {
+			console.error('❌ Chat API error:', err);
+			const errorMsg = err?.message || err?.data?.message || '发送消息失败';
+			toast.error(`错误: ${errorMsg}`);
+		}
 	};
 
 	const handleTextareaKeydown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -349,9 +447,16 @@ const SessionView = (): ReactElement => {
 										rows={1}
 										className='box-shadow-none placeholder:text-[#282828] resize-none border-none h-full rounded-none min-h-[unset] p-0 whitespace-nowrap no-scrollbar font-inter font-light text-[16px] leading-[100%] bg-white'
 									/>
-									<Button variant='ghost' data-testid='submit-button' className='max-w-[60px] rounded-full hover:bg-white' ref={submitButtonRef} disabled={!message?.trim() || !agent?.id} onClick={() => postMessage(message)}>
-										<img src='icons/send.svg' alt='Send' height={19.64} width={21.52} className='h-10' />
-									</Button>
+								<Button 
+									variant='ghost' 
+									data-testid='submit-button' 
+									className='max-w-[60px] rounded-full hover:bg-white' 
+									ref={submitButtonRef} 
+									disabled={!message?.trim()} 
+									onClick={() => postMessage(message)}
+								>
+									<img src='icons/send.svg' alt='Send' height={19.64} width={21.52} className='h-10' />
+								</Button>
 								</div>
 								<Spacer />
 							</div>
