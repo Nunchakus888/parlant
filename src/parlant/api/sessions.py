@@ -2160,6 +2160,7 @@ def create_router(
         try:
             # await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
             # logger.info("✅ Authorization successful")
+            params.chatbot_id = AgentId(f"{params.chatbot_id}_{params.session_id}")
 
             logger.info("👤 Step 2: Session and Customer management")
 
