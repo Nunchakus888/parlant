@@ -278,7 +278,6 @@ class GuidelineEvaluator:
 
             results.append(invoice_data)
 
-        self._logger.debug(f"GuidelineEvaluator._build_invoice_data:\n ======\n {results}")
         return results
 
     async def evaluate(

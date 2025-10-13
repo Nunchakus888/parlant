@@ -2158,18 +2158,18 @@ def create_router(
         logger.info(f"🚀 Chat request started - {params}")
         
         try:
-            # await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
-            # logger.info("✅ Authorization successful")
+            await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
+            logger.info("✅ Authorization successful")
             params.chatbot_id = AgentId(f"{params.chatbot_id}_{params.session_id}")
 
             logger.info("👤 Step 2: Session and Customer management")
 
             customers = await app.customers.find()
-            logger.info(f"👤 Customers list: {len(customers)} \n{customers}")
+            logger.info(f"👤 Customers list: {len(customers)}")
             # sessions = await app.sessions.find(None, None)
             # logger.info(f"🔍 Sessions list: {len(sessions)} \n{sessions}")
             agents = await app.agents.find()
-            logger.info(f"🤖 Agents list: {len(agents)} \n{agents}")
+            logger.info(f"🤖 Agents list: {len(agents)}")
             
             # Get or create session and customer in one unified flow
             session, customer, agent_id = await _ensure_session_and_customer(

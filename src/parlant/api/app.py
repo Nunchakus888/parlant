@@ -134,7 +134,7 @@ class AppWrapper:
 
 async def create_api_app(container: Container) -> ASGIApplication:
     logger = container[Logger]
-    websocket_logger = container[WebSocketLogger]
+    # websocket_logger = container[WebSocketLogger]  # 已移除WebSocket日志功能
     correlator = container[ContextualCorrelator]
     authorization_policy = container[AuthorizationPolicy]
     session_listener = container[SessionListener]
