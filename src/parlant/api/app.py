@@ -27,7 +27,7 @@ from starlette.types import Receive, Scope, Send
 
 from lagom import Container
 
-from parlant.adapters.loggers.websocket import WebSocketLogger
+# from parlant.adapters.loggers.websocket import WebSocketLogger
 from parlant.api import agents, capabilities
 from parlant.api import evaluations
 from parlant.api import journeys
@@ -39,7 +39,7 @@ from parlant.api import context_variables as variables
 from parlant.api import services
 from parlant.api import tags
 from parlant.api import customers
-from parlant.api import logs
+# from parlant.api import logs
 from parlant.api import canned_responses
 from parlant.api.authorization import (
     AuthorizationException,
