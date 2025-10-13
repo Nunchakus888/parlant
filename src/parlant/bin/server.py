@@ -42,7 +42,7 @@ from pathlib import Path
 import sys
 import uvicorn
 
-from parlant.adapters.loggers.websocket import WebSocketLogger
+# from parlant.adapters.loggers.websocket import WebSocketLogger
 from parlant.api.authorization import (
     AuthorizationPolicy,
     DevelopmentAuthorizationPolicy,
@@ -462,9 +462,10 @@ async def setup_container() -> AsyncIterator[Container]:
 
     c[BackgroundTaskService] = BACKGROUND_TASK_SERVICE
     c[ContextualCorrelator] = CORRELATOR
-    web_socket_logger = WebSocketLogger(CORRELATOR, LogLevel.INFO)
-    c[WebSocketLogger] = web_socket_logger
-    c[Logger] = CompositeLogger([LOGGER, web_socket_logger])
+    # WebSocket日志记录器已移除，改用标准输出日志
+    # web_socket_logger = WebSocketLogger(CORRELATOR, LogLevel.INFO)
+    # c[WebSocketLogger] = web_socket_logger
+    c[Logger] = CompositeLogger([LOGGER])
 
     _define_singleton(c, IdGenerator, IdGenerator)
 
@@ -659,7 +660,8 @@ async def initialize_container(
         }[log_level],
     )
 
-    await c[BackgroundTaskService].start(c[WebSocketLogger].start(), tag="websocket-logger")
+    # WebSocket日志后台任务已移除
+    # await c[BackgroundTaskService].start(c[WebSocketLogger].start(), tag="websocket-logger")
 
     try_define(SessionListener, PollingSessionListener)
 

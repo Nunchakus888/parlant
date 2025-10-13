@@ -42,16 +42,6 @@ from typing import (
 from contextlib import AsyncExitStack
 from types import TracebackType
 
-from rich.console import Group
-from rich.progress import (
-    BarColumn,
-    Progress,
-    TaskProgressColumn,
-    TimeElapsedColumn,
-    TaskID,
-    TextColumn,
-)
-from rich.live import Live
 
 from parlant.core.agents import AgentId
 from parlant.core.guidelines import GuidelineContent, GuidelineId, GuidelineStore
@@ -158,10 +148,6 @@ class EvaluationManager:
         # Simple state management
         self._pending_tasks: Dict[str, EvaluationTask] = {}
         self._progress: Dict[str, float] = {}
-        
-        # UI components (only when needed)
-        self._progress_ui: Optional[Progress] = None
-        self._live_display: Optional[Live] = None
     
     async def __aenter__(self) -> "EvaluationManager":
         await self._exit_stack.enter_async_context(self._db)
@@ -561,52 +547,9 @@ class EvaluationManager:
         tasks: list[asyncio.Task[EvaluationResult]],
         max_visible_tasks: int,
     ) -> Sequence[EvaluationResult]:
-        """Process tasks with progress UI."""
-        self._progress_ui = Progress(
-            "[progress.description]{task.description}",
-            BarColumn(),
-            TaskProgressColumn(style="bold blue"),
-            TimeElapsedColumn(),
-        )
-        
-        # Create progress bars
-        bar_id: Dict[str, int] = {}
-        for task in tasks:
-            entity_id = task.get_name().split("_")[-1]
-            description = await self._render_entity_description(entity_id)
-            bar_id[entity_id] = self._progress_ui.add_task(description[:50], total=100)
-        
-        # Process with live UI
-        with Live(self._progress_ui, refresh_per_second=10) as self._live_display:
-            gather = asyncio.create_task(safe_gather(*tasks))
-            
-            while not gather.done():
-                await self._update_progress_display(bar_id, max_visible_tasks)
-                await asyncio.sleep(0.2)
-            
-            return await gather
-    
-    async def _update_progress_display(
-        self,
-        bar_id: Dict[str, int],
-        max_visible_tasks: int,
-    ) -> None:
-        """Update progress display."""
-        unfinished = []
-        for entity_id, rich_id in bar_id.items():
-            pct = self._progress.get(entity_id, 0.0)
-            self._progress_ui.update(TaskID(rich_id), completed=pct)
-            if pct < 100.0:
-                unfinished.append((entity_id, pct))
-        
-        # Show only most active tasks
-        if unfinished:
-            show = {e_id for e_id, _ in sorted(unfinished, key=lambda x: x[1])[:max_visible_tasks]}
-        else:
-            show = set()
-        
-        for entity_id, rich_id in bar_id.items():
-            self._progress_ui.update(TaskID(rich_id), visible=(entity_id in show))
+        """Process tasks without UI to avoid concurrent conflicts."""
+        # 直接处理任务，不使用 UI 显示以避免 "Only one live display may be active at once" 错误
+        return await safe_gather(*tasks)
     
     async def _process_results(self, results: Sequence[EvaluationResult]) -> None:
         """Process evaluation results and update metadata."""
