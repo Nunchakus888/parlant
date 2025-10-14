@@ -35,6 +35,7 @@ from parlant.core.agents import AgentId
 from parlant.core.tags import Tag, TagId
 from parlant.core.async_utils import safe_gather
 from parlant.core.loggers import Logger
+from parlant.core.resource_manager import ResourceManager
 
 
 class Application:
@@ -71,6 +72,9 @@ class Application:
         self.canned_responses = canned_response_module
         self.evaluation_manager = evaluation_manager
         self._logger = logger
+        
+        # LRU 资源管理器
+        self.resource_manager = ResourceManager(self, logger)
 
     async def delete_agent_cascade(self, agent_id: AgentId) -> None:
         """
