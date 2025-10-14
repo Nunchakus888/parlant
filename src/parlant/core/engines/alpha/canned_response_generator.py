@@ -788,7 +788,19 @@ You will now be given the current state of the interaction to which you must gen
         ) -> list[EmittedEvent]:
             emitted_events: list[EmittedEvent] = []
             if generation_result is not None:
-                sub_messages = generation_result.message.strip().split("\n\n")
+                message = generation_result.message.strip()
+                
+                # Check if streaming is enabled via policy
+                should_stream = await self._perceived_performance_policy.should_stream_message_segments(
+                    loaded_context
+                )
+
+                if should_stream:
+                    # Streaming mode: Split message and send with delays (for WebSocket/SSE)
+                    sub_messages = message.split("\n\n")
+                else:
+                    # Complete mode: Send full message at once (for sync API)
+                    sub_messages = [message]
 
                 while sub_messages:
                     m = sub_messages.pop(0)
@@ -821,7 +833,8 @@ You will now be given the current state of the interaction to which you must gen
                             },
                         )
 
-                    if next_message := sub_messages[0] if sub_messages else None:
+                    # Add delay only in streaming mode and if there are more segments
+                    if should_stream and (next_message := sub_messages[0] if sub_messages else None):
                         await self._perceived_performance_policy.get_follow_up_delay()
                         await context.event_emitter.emit_status_event(
                             correlation_id=self._correlator.correlation_id,

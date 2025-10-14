@@ -91,9 +91,31 @@ class PerceivedPerformancePolicy(ABC):
         """
         ...
 
+    @abstractmethod
+    async def should_stream_message_segments(
+        self,
+        context: LoadedContext | None = None,
+    ) -> bool:
+        """
+        Returns whether messages should be split and streamed with delays.
+
+        :param context: The loaded context containing session and interaction details.
+        :return: True for streaming mode (split by \\n\\n with delays), False for complete mode (send full message at once).
+        """
+        ...
+
 
 class BasicPerceivedPerformancePolicy(PerceivedPerformancePolicy):
     """A default implementation of the perceived performance policy that uses reasonable, randomized delays."""
+
+    def __init__(self, enable_streaming: bool = False) -> None:
+        """
+        Initialize the policy.
+
+        :param enable_streaming: If True, enables message segment streaming with delays (for WebSocket/SSE).
+                                 If False, sends complete messages at once (for sync API). Default: False.
+        """
+        self._enable_streaming = enable_streaming
 
     @override
     async def get_processing_indicator_delay(
@@ -150,6 +172,13 @@ class BasicPerceivedPerformancePolicy(PerceivedPerformancePolicy):
             return True
 
         return False
+
+    @override
+    async def should_stream_message_segments(
+        self,
+        context: LoadedContext | None = None,
+    ) -> bool:
+        return self._enable_streaming
 
     def _last_agent_message_is_preamble(self, context: LoadedContext) -> bool:
         last_agent_message = next(
@@ -227,3 +256,10 @@ class NullPerceivedPerformancePolicy(PerceivedPerformancePolicy):
         context: LoadedContext | None = None,
     ) -> bool:
         return False
+
+    @override
+    async def should_stream_message_segments(
+        self,
+        context: LoadedContext | None = None,
+    ) -> bool:
+        return False  # No streaming for high-performance scenarios

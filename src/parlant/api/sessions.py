@@ -1320,7 +1320,7 @@ async def _ensure_session_and_customer(
             agent = await agent_creator(params)
             logger.info(f"✅ created new agent: {agent.id}")
         else:
-          logger.info(f"🤖 🎯🎯 Agent found: {agent}")
+          logger.info(f"🤖 🎯🎯 Agent found: {agent.id}")
 
     except ItemNotFoundError as e:
         agent = await agent_creator(params)
@@ -1490,7 +1490,6 @@ def create_router(
             )
             
             total_tokens = inspection.usage_info.total_tokens if inspection.usage_info else 0
-            logger.info(f"✅ Successfully read inspection, total_tokens={total_tokens}")
             return total_tokens
         except Exception as e:
             logger.warning(f"❌ Failed to get total tokens for correlation_id {correlation_id}: {e}")
@@ -2214,18 +2213,23 @@ def create_router(
         )
         logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
         
+        # Infer processing correlation_id from customer event correlation_id
+        # The dispatch_processing_task creates a scope "process", resulting in: customer_correlation_id::process
+        processing_correlation_id = f"{customer_event.correlation_id}::process"
+        logger.info(f"🔗 Inferred processing correlation_id: {processing_correlation_id}")
+        
         # Step 6: Wait for AI response or system status
         logger.info("⏳ Step 6: Waiting for AI response or system status")
         timeout = params.timeout or 60
         logger.info(f"⏰ Timeout set to: {timeout} seconds")
         
-        # Use a single efficient wait for any relevant events
-        # This avoids multiple polling and reduces performance overhead
+        # Use a single efficient wait with specific correlation_id for better performance
         wait_result = await session_listener.wait_for_events(
             session_id=session.id,
             min_offset=customer_event.offset + 1,
             source=EventSource.AI_AGENT,
             kinds=[EventKind.MESSAGE],
+            correlation_id=processing_correlation_id,
             timeout=Timeout(timeout),
         )
         logger.info(f"⏳ Wait result: {wait_result}")
@@ -2241,13 +2245,13 @@ def create_router(
             )
         
         logger.info("✅ AI response detected, retrieving events")
-        # Get the AI response
+        # Get the AI response - use specific correlation_id for precise query
         ai_events = await app.sessions.find_events(
             session_id=session.id,
             min_offset=customer_event.offset + 1,
             source=EventSource.AI_AGENT,
             kinds=[EventKind.MESSAGE],
-            correlation_id=None,
+            correlation_id=processing_correlation_id,
         )
         logger.info(f"📊 Retrieved {len(ai_events)} AI events")
         
@@ -2260,18 +2264,23 @@ def create_router(
                 data=None
             )
 
+        # Get the first AI message event (guaranteed to be from current request)
+        first_event = ai_events[0]
+        logger.info(f"🔍 Processing event - event_id: {first_event.id}, correlation_id: {first_event.correlation_id}, offset: {first_event.offset}")
+
+        # Get extra events (custom events) with the same correlation_id
         extra_events = await app.sessions.find_events(
             session_id=session.id,
             min_offset=customer_event.offset + 1,
             source=EventSource.AI_AGENT,
             kinds=[EventKind.CUSTOM],
-            correlation_id=None,
+            correlation_id=processing_correlation_id,
         )
 
         code = 0
         message = "SUCCESS"
         if extra_events and extra_events[0] and extra_events[0].data:
-          logger.debug(f"✅ Extra events data: {extra_events[0].data}")
+          logger.debug(f"⚠️ Extra events data: {extra_events[0].data}")
           type = extra_events[0].data.get('type')
           if type == "tool_error":
             code = -1
@@ -2280,21 +2289,9 @@ def create_router(
             message = "NO ACTIONBOOK MATCHED"
             code = 1
 
-        
-        first_event = ai_events[0]
-
-        if not first_event:
-            return ChatResponseDTO(
-                status=500,
-                code=500,
-                message="NO_EVENTS_FOUND",
-                data=None
-            )
-        
-        logger.info(f"✅ Processing event - event_id: {first_event.id}, source: {first_event.source}, kind: {first_event.kind}")
-
-        total_tokens = await _get_total_tokens_for_event(session.id, first_event.correlation_id)
-        logger.info(f"✅ Total tokens: {total_tokens}")
+        # Get tokens for the current correlation_id
+        total_tokens = await _get_total_tokens_for_event(session.id, processing_correlation_id)
+        logger.info(f"✅ Total tokens for correlation_id {processing_correlation_id}: {total_tokens}")
 
         
         response = ChatResponseDTO(
