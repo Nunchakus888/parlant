@@ -6,7 +6,7 @@ import {Button} from '../ui/button';
 import {deleteData, postData} from '@/utils/api';
 import {groupBy} from '@/utils/obj';
 import Message from '../message/message';
-import {EventInterface, ServerStatus, SessionInterface} from '@/utils/interfaces';
+import {EventInterface, ServerStatus, SessionInterface, processSessionObject} from '@/utils/interfaces';
 import Spacer from '../ui/custom/spacer';
 import {toast} from 'sonner';
 import {NEW_SESSION_ID} from '../chat-header/chat-header';
@@ -257,13 +257,13 @@ const SessionView = (): ReactElement => {
 				console.log('📤 Sending first message (new session):', chatRequest);
 			} else {
 				// Existing session: get all parameters from session object
-				// IMPORTANT: Map session.agent_id to chatbot_id for chat requests
+				// IMPORTANT: Use chatbot_id directly from session object (parsed by backend API)
 				chatRequest = {
 					message: content,
 					session_id: session?.id,
 					// Required fields - all from session object
 					tenant_id: session?.tenant_id || '',
-					chatbot_id: session?.agent_id || session?.chatbot_id || '',  // Map agent_id to chatbot_id
+					chatbot_id: session?.chatbot_id || '',  // Use chatbot_id directly from API
 					// Optional fields from session
 					customer_id: session?.customer_id,
 					md5_checksum: session?.md5_checksum,
@@ -310,7 +310,7 @@ const SessionView = (): ReactElement => {
 			
 			if (isNewSession && response.data?.session_id) {
 				// Update session with actual session_id from backend, preserve all config
-				const actualSession: SessionInterface = {
+				const actualSession: SessionInterface = processSessionObject({
 					...session!,
 					id: response.data.session_id,
 					// Preserve config for future messages
@@ -321,7 +321,7 @@ const SessionView = (): ReactElement => {
 					preview_action_book_ids: chatRequest.preview_action_book_ids,
 					autofill_params: chatRequest.autofill_params,
 					timeout: chatRequest.timeout,
-				};
+				});
 				setSession(actualSession);
 				setNewSession(null);
 				// Keep chatConfig for potential future use

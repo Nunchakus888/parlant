@@ -46,16 +46,55 @@ export interface SessionInterface {
 	customer_id: string;
 	creation_utc: string;
 	mode?: string;
-	agent_id?: string;  // Backend field name
+	agent_id?: string;  // Backend field name (format: chatbot_id_session_id)
 	// Additional fields for /chat API
 	tenant_id?: string;
-	chatbot_id?: string;  // Mapped from agent_id for chat requests
+	chatbot_id?: string;  // Parsed from agent_id on client side
 	md5_checksum?: string;
 	is_preview?: boolean;
 	preview_action_book_ids?: string[];
 	autofill_params?: Record<string, any>;
 	timeout?: number;
 }
+
+/**
+ * Parse agent_id to extract chatbot_id
+ * Format: chatbot_id_session_id (chatbot_id may contain multiple underscores)
+ * 
+ * @param agentId - The agent_id string to parse
+ * @returns Object with chatbotId and sessionId
+ */
+export const parseAgentId = (agentId?: string) => {
+	if (!agentId) return { chatbotId: '', sessionId: '' };
+	const lastUnderscoreIndex = agentId.lastIndexOf('_');
+	if (lastUnderscoreIndex > 0) {
+		return {
+			chatbotId: agentId.substring(0, lastUnderscoreIndex),
+			sessionId: agentId.substring(lastUnderscoreIndex + 1)
+		};
+	}
+	return { chatbotId: agentId, sessionId: '' };
+};
+
+/**
+ * Process session object to add chatbot_id field parsed from agent_id
+ * This ensures chatbot_id is always available for use throughout the application
+ * 
+ * @param session - The session object from API
+ * @returns Session object with chatbot_id field populated
+ */
+export const processSessionObject = (session: SessionInterface): SessionInterface => {
+	if (!session.agent_id || session.chatbot_id) {
+		// If no agent_id or chatbot_id already exists, return as is
+		return session;
+	}
+	
+	const { chatbotId } = parseAgentId(session.agent_id);
+	return {
+		...session,
+		chatbot_id: chatbotId
+	};
+};
 
 export interface SessionCsvInterface {
 	Source: 'AI Agent' | 'Customer';

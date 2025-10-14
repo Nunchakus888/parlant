@@ -1,7 +1,7 @@
 import {ReactElement, useEffect, useState} from 'react';
 import useFetch from '@/hooks/useFetch';
 import Session from './session-list-item/session-list-item';
-import {AgentInterface, SessionInterface} from '@/utils/interfaces';
+import {AgentInterface, SessionInterface, processSessionObject} from '@/utils/interfaces';
 import {useAtom} from 'jotai';
 import {agentAtom, agentsAtom, refreshTriggerAtom, sessionAtom, sessionsAtom} from '@/store';
 import {NEW_SESSION_ID} from '../agents-list/agent-list';
@@ -36,7 +36,11 @@ export default function SessionList({filterSessionVal}: {filterSessionVal: strin
 	}, [refreshTrigger]);
 
 	useEffect(() => {
-		if (data) setSessions(data);
+		if (data) {
+			// Process session objects to add chatbot_id field
+			const processedSessions = data.map(processSessionObject);
+			setSessions(processedSessions);
+		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [data]);
 

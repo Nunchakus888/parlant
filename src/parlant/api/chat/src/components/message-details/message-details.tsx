@@ -18,7 +18,6 @@ import {copy} from '@/lib/utils';
 import MessageLogs from './message-logs';
 import CopyText from '../ui/custom/copy-text';
 import {useAtom} from 'jotai';
-import {parseAgentId} from '@/utils/agentIdParser';
 import {sessionAtom} from '@/store';
 
 interface DefInterface {
@@ -162,7 +161,8 @@ const MessageDetails = ({
 	const cannedResponseEntries = Object.entries(event?.data?.canned_responses || {}).map(([id, value]) => ({id, value}));
 	const isError = event?.serverStatus === 'error';
 
-  const { chatbotId } = parseAgentId(session?.agent_id);
+  // Use chatbot_id directly from session object (processed by processSessionObject)
+  const chatbotId = session?.chatbot_id;
 
 	return (
 		<div className={twJoin('w-full h-full animate-fade-in duration-200 overflow-auto flex flex-col justify-start pt-0 pe-0 bg-[#FBFBFB]')}>
