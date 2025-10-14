@@ -2189,6 +2189,8 @@ def create_router(
         
         logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
 
+        await app.resource_manager.track_session(session.id, agent_id)
+
         logger.info("📤 Step 4: Sending customer message")
         logger.info(f"📝 Message content: '{params.message}'")
         
