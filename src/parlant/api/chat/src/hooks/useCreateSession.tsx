@@ -1,5 +1,5 @@
 import { useAtom } from 'jotai';
-import { agentAtom, chatConfigAtom, dialogAtom, sessionAtom } from '@/store';
+import { agentAtom, chatConfigAtom, customerAtom, dialogAtom, sessionAtom } from '@/store';
 import { ChatConfigInterface, SessionInterface } from '@/utils/interfaces';
 import { NEW_SESSION_ID } from '@/components/agents-list/agent-list';
 import ChatConfigForm from '@/components/chat-config-form/chat-config-form';
@@ -8,12 +8,14 @@ export const useCreateSession = () => {
 	const [, setSession] = useAtom(sessionAtom);
 	const [, setAgent] = useAtom(agentAtom);
 	const [, setChatConfig] = useAtom(chatConfigAtom);
+	const [, setCustomer] = useAtom(customerAtom);
 	const [dialog] = useAtom(dialogAtom);
 
 	const createNewSession = () => {
 		setSession(null);
 		setAgent(null);
 		setChatConfig(null);
+		setCustomer(null); // 清理 customer 状态，避免变量污染
 		
 		// 弹出 ChatConfigForm 来收集配置信息
 		dialog.openDialog('', 

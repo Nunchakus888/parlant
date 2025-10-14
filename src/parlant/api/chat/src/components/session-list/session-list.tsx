@@ -3,7 +3,7 @@ import useFetch from '@/hooks/useFetch';
 import Session from './session-list-item/session-list-item';
 import {AgentInterface, SessionInterface} from '@/utils/interfaces';
 import {useAtom} from 'jotai';
-import {agentAtom, agentsAtom, customerAtom, refreshTriggerAtom, sessionAtom, sessionsAtom} from '@/store';
+import {agentAtom, agentsAtom, refreshTriggerAtom, sessionAtom, sessionsAtom} from '@/store';
 import {NEW_SESSION_ID} from '../agents-list/agent-list';
 import {twJoin} from 'tailwind-merge';
 
@@ -14,7 +14,6 @@ export default function SessionList({filterSessionVal}: {filterSessionVal: strin
 	const {data: agentsData} = useFetch<AgentInterface[]>('agents');
 	const [, setAgents] = useAtom(agentsAtom);
 	const [agent] = useAtom(agentAtom);
-	const [customer] = useAtom(customerAtom);
 	const [sessions, setSessions] = useAtom(sessionsAtom);
 	const [filteredSessions, setFilteredSessions] = useState(sessions);
 	const [refreshTrigger] = useAtom(refreshTriggerAtom);
@@ -52,7 +51,7 @@ export default function SessionList({filterSessionVal}: {filterSessionVal: strin
 		<div className={twJoin('flex flex-col items-center h-[calc(100%-68px)] border-e')}>
 			<div data-testid='sessions' className='bg-white px-[12px] border-b-[12px] border-white flex-1 fixed-scroll justify-center w-[352px] overflow-auto rounded-es-[16px] rounded-ee-[16px]'>
 				{loading && !sessions?.length && <div>loading...</div>}
-				{session?.id === NEW_SESSION_ID && <Session className='opacity-50' data-testid='session' isSelected={true} session={{...session, agent_id: agent?.id || '', customer_id: customer?.id || ''}} key={NEW_SESSION_ID} />}
+				{session?.id === NEW_SESSION_ID && <Session className='opacity-50' data-testid='session' isSelected={true} session={{...session, agent_id: agent?.id || '', customer_id: session?.customer_id || ''}} key={NEW_SESSION_ID} />}
 				{filteredSessions.toReversed().map((s, i) => (
 					<Session data-testid='session' tabIndex={sessions.length - i} editingTitle={editingTitle} setEditingTitle={setEditingTitle} isSelected={s.id === session?.id} refetch={refetch} session={s} key={s.id} />
 				))}

@@ -56,8 +56,8 @@ class CustomAgentFactory(AgentFactory):
             raise RuntimeError("Server 对象不可用，无法创建智能体")
 
         http_loader = HttpConfigLoader(self._logger)
-        config = await http_loader.load_config_from_http(config_request)
-        # config = self._load_config()
+        # config = await http_loader.load_config_from_http(config_request)
+        config = self._load_config()
 
         basic_settings = config.get("basic_settings", {})
 
@@ -72,11 +72,12 @@ class CustomAgentFactory(AgentFactory):
             "tone": basic_settings.get("tone", "Friendly and professional"),
             "chatbot_id": basic_settings.get("chatbot_id"),
             "tenant_id": config_request.tenant_id,
-            "md5_checksum": config_request.md5_checksum
+            "md5_checksum": config_request.md5_checksum,
+            "session_id": config_request.session_id
         }
         
         agent = await server.create_agent(
-            id=AgentId(config_request.chatbot_id) if config_request.chatbot_id else None,
+            id=AgentId(f"{config_request.chatbot_id}_{config_request.session_id}") if config_request.chatbot_id else None,
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
             max_engine_iterations=3,

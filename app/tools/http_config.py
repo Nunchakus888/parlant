@@ -28,6 +28,7 @@ class AgentConfigRequest:
     action_book_id: Optional[str] = None
     extra_param: Optional[Dict[str, Any]] = None
     md5_checksum: Optional[str] = None
+    session_id: Optional[str] = None
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AgentConfigRequest':
@@ -46,7 +47,8 @@ class AgentConfigRequest:
             preview=data.get("preview", False),
             action_book_id=data.get("actionBookId"),
             extra_param=data.get("extraParam"),
-            md5_checksum=data.get("md5Checksum")
+            md5_checksum=data.get("md5Checksum"),
+            session_id=data.get("sessionId")
         )
 
 
@@ -81,7 +83,7 @@ class HttpConfigLoader:
             "chatbotId": request.chatbot_id,
             "preview": request.preview,
             "actionBookId": request.action_book_id,
-            "extraParam": request.extra_param or {}
+            "extraParam": request.extra_param or {},
         }
         
         try:
