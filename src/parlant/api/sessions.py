@@ -1295,7 +1295,7 @@ async def _ensure_session_and_customer(
     customer_id = params.customer_id
     session_id = params.session_id
     md5_checksum = params.md5_checksum
-    agent_id = params.chatbot_id
+    agent_id = AgentId(f"{params.chatbot_id}_{params.session_id}")
 
     try:
         customer = await app.customers.read(customer_id)
@@ -1463,7 +1463,8 @@ def create_router(
                 preview=params.is_preview or False,
                 action_book_id=params.preview_action_book_ids[0] if params.preview_action_book_ids else None,
                 extra_param=params.autofill_params or {},
-                md5_checksum=params.md5_checksum
+                md5_checksum=params.md5_checksum,
+                session_id=params.session_id
             )
             
             agent = await agent_factory.create_agent_for_customer(config_request)

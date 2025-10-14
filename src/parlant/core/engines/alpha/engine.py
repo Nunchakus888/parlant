@@ -303,15 +303,8 @@ class AlphaEngine(Engine):
             with CancellationSuppressionLatch() as latch:
                 # Money time: communicate with the customer given
                 # all of the information we have prepared.
-                message_generation_inspections = await self._generate_messages(context, latch)
-
-                # Save results for inspection immediately after message generation
-                # This ensures inspection is available when API response is prepared
-                await self._entity_commands.create_inspection(
-                    session_id=context.session.id,
-                    correlation_id=self._correlator.correlation_id,
-                    preparation_iterations=preparation_iteration_inspections,
-                    message_generations=message_generation_inspections,
+                await self._generate_messages(
+                    context, latch, preparation_iteration_inspections
                 )
 
                 # Mark that the agent is ready to receive and respond to new events.
@@ -401,15 +394,16 @@ class AlphaEngine(Engine):
             # Money time: communicate with the customer given the
             # specified utterance requests.
             with CancellationSuppressionLatch() as latch:
-                message_generation_inspections = await self._generate_messages(context, latch)
+                await self._generate_messages(context, latch, [])
+            
 
             # Save results for later inspection.
-            await self._entity_commands.create_inspection(
-                session_id=context.session.id,
-                correlation_id=self._correlator.correlation_id,
-                preparation_iterations=[],
-                message_generations=message_generation_inspections,
-            )
+            # await self._entity_commands.create_inspection(
+            #     session_id=context.session.id,
+            #     correlation_id=self._correlator.correlation_id,
+            #     preparation_iterations=[],
+            #     message_generations=message_generation_inspections,
+            # )
 
         except asyncio.CancelledError:
             self._logger.warning("Uttering cancelled")
@@ -928,6 +922,7 @@ class AlphaEngine(Engine):
         self,
         context: LoadedContext,
         latch: CancellationSuppressionLatch,
+        preparation_iteration_inspections: Sequence[PreparationIteration],
     ) -> Sequence[MessageGenerationInspection]:
         message_generation_inspections = []
 
@@ -950,6 +945,15 @@ class AlphaEngine(Engine):
                     ],
                 )
             )
+
+        # Save results for inspection immediately after message generation
+        # This ensures inspection is available when API response is prepared
+        await self._entity_commands.create_inspection(
+            session_id=context.session.id,
+            correlation_id=self._correlator.correlation_id,
+            preparation_iterations=preparation_iteration_inspections,
+            message_generations=message_generation_inspections,
+        )
 
         return message_generation_inspections
 

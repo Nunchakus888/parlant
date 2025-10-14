@@ -16,6 +16,7 @@ import {agentAtom, agentsAtom, customerAtom, dialogAtom, newSessionAtom, session
 import {copy, exportToCsv, getIndexedItemsFromIndexedDB} from '@/lib/utils';
 import Avatar from '@/components/avatar/avatar';
 import CopyText from '@/components/ui/custom/copy-text';
+import {parseAgentId} from '@/utils/agentIdParser';
 
 interface Props {
 	session: SessionInterface;
@@ -221,6 +222,8 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 	const agent = agentsMap.get(session.agent_id);
 	// Create customer object from session data
 	const customer = {id: session.customer_id, name: session.customer_id};
+	
+	const { chatbotId } = parseAgentId(session.agent_id);
 
 	return (
 		<Tooltip
@@ -253,7 +256,12 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 								<Avatar agent={agent || {id: '', name: 'N/A'}} customer={customer || {id: '', name: 'N/A'}} />
 							</div>
 							<div className={twJoin(!agent && 'opacity-50', 'ms-[4px] text-[15px]')}>
-								{session.title}
+								{/* Display chatbot_id and agent_id information */}
+								{(chatbotId || session.chatbot_id) && (
+									<div className='text-[12px] text-[#666] font-mono mt-1'>
+										{chatbotId && <span>{chatbotId}</span>}
+									</div>
+								)}
 								<small className='text-[13px] text-[#A9A9A9] -mb-[7px] font-light flex gap-[6px]'>
 									{getDateStr(session.creation_utc)}
 									<img src='icons/dot-saparetor.svg' alt='' height={18} width={3} />

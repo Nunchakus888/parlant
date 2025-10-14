@@ -14,7 +14,7 @@ import {useQuestionDialog} from '@/hooks/useQuestionDialog';
 import {twJoin, twMerge} from 'tailwind-merge';
 import MessageDetails from '../message-details/message-details';
 import {useAtom} from 'jotai';
-import {agentAtom, agentsAtom, chatConfigAtom, customerAtom, emptyPendingMessage, newSessionAtom, pendingMessageAtom, sessionAtom, sessionsAtom, viewingMessageDetailsAtom} from '@/store';
+import {agentAtom, agentsAtom, chatConfigAtom, emptyPendingMessage, newSessionAtom, pendingMessageAtom, refreshTriggerAtom, sessionAtom, sessionsAtom, viewingMessageDetailsAtom} from '@/store';
 import ErrorBoundary from '../error-boundary/error-boundary';
 import DateHeader from './date-header/date-header';
 // import SessoinViewHeader from './session-view-header/session-view-header';
@@ -51,7 +51,7 @@ const SessionView = (): ReactElement => {
 	const [, setViewingMessage] = useAtom(viewingMessageDetailsAtom);
 	const [, setSessions] = useAtom(sessionsAtom);
 	const [chatConfig] = useAtom(chatConfigAtom);
-	const [customer] = useAtom(customerAtom);
+	const [, setRefreshTrigger] = useAtom(refreshTriggerAtom);
 	const {data: lastEvents, refetch, ErrorTemplate, abortFetch} = useFetch<EventInterface[]>(`sessions/${session?.id}/events`, {min_offset: lastOffset, wait_for_data: 0}, [session?.id, lastOffset], session?.id !== NEW_SESSION_ID, !!(session?.id && session?.id !== NEW_SESSION_ID), false);
 
 	const resetChat = () => {
@@ -237,7 +237,7 @@ const SessionView = (): ReactElement => {
 					tenant_id: chatConfig?.tenant_id || session?.tenant_id || '',
 					chatbot_id: chatConfig?.chatbot_id || session?.chatbot_id || '',
 					// Session info (Note: agent_id is NOT in ChatRequestDTO, it's determined server-side)
-					customer_id: customer?.id || chatConfig?.customer_id || session?.customer_id,
+					customer_id: chatConfig?.customer_id,
 					session_title: session?.title || chatConfig?.session_title || 'New Conversation',
 					// Optional config fields
 					md5_checksum: chatConfig?.md5_checksum || session?.md5_checksum,
@@ -329,6 +329,9 @@ const SessionView = (): ReactElement => {
 				
 				// Add session to sessions list
 				setSessions((sessions) => [actualSession, ...sessions]);
+				
+				// Trigger global refresh to update session list in sidebar
+				setRefreshTrigger(prev => prev + 1);
 			}
 			
 			soundDoubleBlip();

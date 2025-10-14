@@ -18,6 +18,7 @@ import {copy} from '@/lib/utils';
 import MessageLogs from './message-logs';
 import CopyText from '../ui/custom/copy-text';
 import {useAtom} from 'jotai';
+import {parseAgentId} from '@/utils/agentIdParser';
 import {sessionAtom} from '@/store';
 
 interface DefInterface {
@@ -161,6 +162,8 @@ const MessageDetails = ({
 	const cannedResponseEntries = Object.entries(event?.data?.canned_responses || {}).map(([id, value]) => ({id, value}));
 	const isError = event?.serverStatus === 'error';
 
+  const { chatbotId } = parseAgentId(session?.agent_id);
+
 	return (
 		<div className={twJoin('w-full h-full animate-fade-in duration-200 overflow-auto flex flex-col justify-start pt-0 pe-0 bg-[#FBFBFB]')}>
 			{/* <MessageDetailsHeader
@@ -192,12 +195,12 @@ const MessageDetails = ({
 							/>
 						</div>
 					)}
-					{session?.chatbot_id && (
+					{chatbotId && (
 						<div className='flex items-center gap-[3px] text-[14px] font-normal text-[#656565]'>
 							<span className='font-medium'>Chatbot ID:</span> 
 							<CopyText 
-								textToCopy={session.chatbot_id} 
-								text={session.chatbot_id} 
+								textToCopy={chatbotId} 
+								text={chatbotId} 
 								className='font-mono text-[13px] cursor-pointer hover:text-[#333]' 
 							/>
 						</div>

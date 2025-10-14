@@ -347,13 +347,13 @@ async def create_api_app(container: Container) -> ASGIApplication:
     #     ),
     # )
 
-    api_app.include_router(
-        prefix="/customers",
-        router=customers.create_router(
-            authorization_policy=authorization_policy,
-            app=application,
-        ),
-    )
+    # api_app.include_router(
+    #     prefix="/customers",
+    #     router=customers.create_router(
+    #         authorization_policy=authorization_policy,
+    #         app=application,
+    #     ),
+    # )
 
     # api_app.include_router(
     #     prefix="/canned_responses",
