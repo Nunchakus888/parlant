@@ -580,7 +580,7 @@ class AlphaEngine(Engine):
                 await self._load_matched_guidelines_and_journeys(context)
             )
 
-            self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
+            # self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
 
             matching_finished = True
 

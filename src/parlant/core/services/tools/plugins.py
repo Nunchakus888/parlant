@@ -856,7 +856,6 @@ class PluginClient(ToolService):
             tool = await self.read_tool(name)
             validate_tool_arguments(tool, arguments)
             TOOL_RESULT_MAX_PAYLOAD_KB = int(os.environ.get("TOOL_RESULT_MAX_PAYLOAD_KB", 16))
-            self._logger.info(f"TOOL_RESULT_MAX_PAYLOAD_KB: {TOOL_RESULT_MAX_PAYLOAD_KB}")
 
 
             async with self._http_client.stream(
