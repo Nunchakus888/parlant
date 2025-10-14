@@ -18,6 +18,7 @@ LRU Resource Manager - 精简高效的内存管理
 基于 LRU 策略自动淘汰最少使用的 Session 和 Agent，防止内存泄漏。
 """
 
+import os
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
@@ -36,11 +37,10 @@ class ResourceManager:
         self,
         app: "Application",
         logger: Logger,
-        max_sessions: int = 1000,
     ) -> None:
         self._app = app
         self._logger = logger
-        self._max_sessions = max_sessions
+        self._max_sessions = int(os.getenv('MAX_SESSIONS_CACHED', '1000'))
         self._session_order: OrderedDict[SessionId, AgentId] = OrderedDict()
     
     async def track_session(self, session_id: SessionId, agent_id: AgentId) -> None:
