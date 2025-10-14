@@ -16,7 +16,6 @@ import {agentAtom, agentsAtom, customerAtom, dialogAtom, newSessionAtom, session
 import {copy, exportToCsv, getIndexedItemsFromIndexedDB} from '@/lib/utils';
 import Avatar from '@/components/avatar/avatar';
 import CopyText from '@/components/ui/custom/copy-text';
-import {parseAgentId} from '@/utils/agentIdParser';
 
 interface Props {
 	session: SessionInterface;
@@ -223,7 +222,8 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 	// Create customer object from session data
 	const customer = {id: session.customer_id, name: session.customer_id};
 	
-	const { chatbotId } = parseAgentId(session.agent_id);
+	// Use chatbot_id directly from session object (processed by processSessionObject)
+	const chatbotId = session.chatbot_id;
 
 	return (
 		<Tooltip
