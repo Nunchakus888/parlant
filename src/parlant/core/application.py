@@ -149,10 +149,11 @@ class Application:
         # 注意：这里需要根据实际的 EvaluationModule 接口调整
         # await self._delete_evaluations_for_agent(agent_id)
         
-        # 10. 清理相关的缓存评估
-        await self._clear_evaluation_cache_for_agent(agent_id)
-
-        # 11. 最后删除 Agent 本身
+        # 注意：不再清理评估缓存，因为现在基于 chatbot_id 共享缓存
+        # 同一个 chatbot 的其他 agent 可能还在使用这些缓存
+        # 如果需要清理 chatbot 的缓存，应该在 chatbot 配置变更时使用新的 chatbot_id
+        
+        # 10. 最后删除 Agent 本身
         await self.agents.delete(agent_id)
 
     async def _delete_sessions_for_agent(self, agent_id: AgentId) -> None:
@@ -197,11 +198,3 @@ class Application:
             self._logger.info(f"✅ Successfully cleaned up tools for agent {agent_id}")
         except Exception as e:
             self._logger.error(f"❌ Failed to cleanup tools for agent {agent_id}: {e}")
-
-    async def _clear_evaluation_cache_for_agent(self, agent_id: AgentId) -> None:
-        """清理指定 Agent 的所有缓存评估"""
-        try:
-            await self.evaluation_manager.clear_cache_for_agent(agent_id)
-            self._logger.info(f"✅ Successfully cleared cached evaluations for agent {agent_id}")
-        except Exception as e:
-            self._logger.error(f"❌ Failed to clear cached evaluations for agent {agent_id}: {e}")

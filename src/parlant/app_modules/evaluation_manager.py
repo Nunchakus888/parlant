@@ -141,9 +141,10 @@ class EvaluationManager:
         self._logger = logger
         self._exit_stack = AsyncExitStack()
         
-        # Agent-specific collections (initialized on demand)
-        self._guideline_collections: Dict[AgentId, JSONFileDocumentCollection[_CachedGuidelineEvaluation]] = {}
-        self._journey_collections: Dict[AgentId, JSONFileDocumentCollection[_CachedJourneyEvaluation]] = {}
+        # Chatbot-specific collections (initialized on demand)
+        # 使用 chatbot_id 而不是 agent_id，实现跨 agent 共享缓存
+        self._guideline_collections: Dict[str, JSONFileDocumentCollection[_CachedGuidelineEvaluation]] = {}
+        self._journey_collections: Dict[str, JSONFileDocumentCollection[_CachedJourneyEvaluation]] = {}
         
         # Simple state management
         self._pending_tasks: Dict[str, EvaluationTask] = {}
@@ -197,15 +198,18 @@ class EvaluationManager:
         )
     
     async def evaluate_journey(self, journey: Journey, agent_id: Optional[AgentId] = None) -> EvaluationResult:
-        """Evaluate a journey with agent-specific caching."""
-        # Get agent-specific collection
-        journey_collection = await self._get_journey_collection(agent_id)
+        """Evaluate a journey with chatbot-specific caching."""
+        # Get chatbot_id from agent metadata
+        chatbot_id = await self._get_chatbot_id(agent_id)
+        
+        # Get chatbot-specific collection
+        journey_collection = await self._get_journey_collection(chatbot_id)
         
         # Check cache first
-        _hash = self._hash_journey_evaluation_request(journey, agent_id)
+        _hash = self._hash_journey_evaluation_request(journey, chatbot_id)
         
         if cached_evaluation := await journey_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(f"Using cached evaluation for journey: {journey.title}")
+            self._logger.info(f"✅ 使用缓存的 Journey 评估结果 (chatbot: {chatbot_id}, journey: {journey.title})")
             return EvaluationResult(
                 entity_type="journey",
                 entity_id=str(journey.id),
@@ -213,7 +217,7 @@ class EvaluationManager:
             )
         
         # Perform evaluation
-        self._logger.trace(f"Evaluating journey: {journey.title}")
+        self._logger.info(f"🔄 执行 Journey 完整评估 (chatbot: {chatbot_id}, journey: {journey.title})")
         
         evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
             payload_descriptors=[
@@ -253,7 +257,8 @@ class EvaluationManager:
                         "version": Version.String("0.1.0"),
                         "node_properties": cast(InvoiceJourneyData, invoice.data).node_properties_proposition or {},
                         "edge_properties": cast(InvoiceJourneyData, invoice.data).edge_properties_proposition or {},
-                    }
+                    },
+                    upsert=True
                 )
                 
                 return EvaluationResult(
@@ -338,29 +343,30 @@ class EvaluationManager:
         # Create async tasks with agent_id from task
         tasks = []
         for task_id, task in self._pending_tasks.items():
-            async def task_wrapper() -> EvaluationResult:
+            # 🔧 修复闭包陷阱：使用默认参数捕获当前循环变量的值
+            async def task_wrapper(_task: EvaluationTask = task) -> EvaluationResult:
                 # Create coroutine based on task type and parameters, using task's agent_id
-                if task.entity_type == "guideline":
+                if _task.entity_type == "guideline":
                     result = await self.evaluate_guideline(
-                        guideline_id=task.evaluation_params["guideline_id"],
-                        guideline_content=task.evaluation_params["guideline_content"],
-                        tool_ids=task.evaluation_params["tool_ids"],
-                        agent_id=task.agent_id,  # Use task's agent_id
+                        guideline_id=_task.evaluation_params["guideline_id"],
+                        guideline_content=_task.evaluation_params["guideline_content"],
+                        tool_ids=_task.evaluation_params["tool_ids"],
+                        agent_id=_task.agent_id,  # Use task's agent_id
                     )
-                elif task.entity_type == "node":
+                elif _task.entity_type == "node":
                     result = await self.evaluate_state(
-                        state_id=task.evaluation_params["state_id"],
-                        guideline_content=task.evaluation_params["guideline_content"],
-                        tool_ids=task.evaluation_params["tool_ids"],
-                        agent_id=task.agent_id,  # Use task's agent_id
+                        state_id=_task.evaluation_params["state_id"],
+                        guideline_content=_task.evaluation_params["guideline_content"],
+                        tool_ids=_task.evaluation_params["tool_ids"],
+                        agent_id=_task.agent_id,  # Use task's agent_id
                     )
-                elif task.entity_type == "journey":
+                elif _task.entity_type == "journey":
                     result = await self.evaluate_journey(
-                        journey=task.evaluation_params["journey"],
-                        agent_id=task.agent_id,  # Use task's agent_id
+                        journey=_task.evaluation_params["journey"],
+                        agent_id=_task.agent_id,  # Use task's agent_id
                     )
                 else:
-                    raise ValueError(f"Unknown entity type: {task.entity_type}")
+                    raise ValueError(f"Unknown entity type: {_task.entity_type}")
                 
                 return result
             
@@ -386,75 +392,84 @@ class EvaluationManager:
         return results
     
     
-    # ==================== Agent-Specific Collection Management ====================
+    # ==================== Chatbot-Specific Collection Management ====================
     
-    async def _get_guideline_collection(self, agent_id: Optional[AgentId]) -> JSONFileDocumentCollection[_CachedGuidelineEvaluation]:
-        """Get agent-specific guideline collection."""
+    async def _get_chatbot_id(self, agent_id: Optional[AgentId]) -> str:
+        """从 Agent metadata 中获取 chatbot_id，如果没有则使用 agent_id 作为后备。"""
         if agent_id is None:
-            # Fallback to default collection for backward compatibility
-            agent_id = AgentId("default")
+            return "default"
         
-        if agent_id not in self._guideline_collections:
-            collection_name = f"guideline_evaluations_agent_{agent_id}"
+        try:
+            from parlant.core.agents import AgentStore
+            agent = await self._container[AgentStore].read_agent(agent_id)
+            chatbot_id = agent.metadata.get("chatbot_id") if agent.metadata else None
+            return chatbot_id or str(agent_id)
+        except Exception as e:
+            self._logger.warning(f"无法获取 agent {agent_id} 的 chatbot_id，使用 agent_id 作为后备: {e}")
+            return str(agent_id)
+    
+    async def _get_guideline_collection(self, chatbot_id: str) -> JSONFileDocumentCollection[_CachedGuidelineEvaluation]:
+        """Get chatbot-specific guideline collection."""
+        if chatbot_id not in self._guideline_collections:
+            collection_name = f"guideline_evaluations_chatbot_{chatbot_id}"
             async def guideline_loader(doc):
                 return doc
             
-            self._guideline_collections[agent_id] = await self._db.get_or_create_collection(
+            self._guideline_collections[chatbot_id] = await self._db.get_or_create_collection(
                 name=collection_name,
                 schema=_CachedGuidelineEvaluation,
                 document_loader=guideline_loader,
             )
-        return self._guideline_collections[agent_id]
+        return self._guideline_collections[chatbot_id]
     
-    async def _get_journey_collection(self, agent_id: Optional[AgentId]) -> JSONFileDocumentCollection[_CachedJourneyEvaluation]:
-        """Get agent-specific journey collection."""
-        if agent_id is None:
-            # Fallback to default collection for backward compatibility
-            agent_id = AgentId("default")
-        
-        if agent_id not in self._journey_collections:
-            collection_name = f"journey_evaluations_agent_{agent_id}"
+    async def _get_journey_collection(self, chatbot_id: str) -> JSONFileDocumentCollection[_CachedJourneyEvaluation]:
+        """Get chatbot-specific journey collection."""
+        if chatbot_id not in self._journey_collections:
+            collection_name = f"journey_evaluations_chatbot_{chatbot_id}"
             async def journey_loader(doc):
                 return doc
             
-            self._journey_collections[agent_id] = await self._db.get_or_create_collection(
+            self._journey_collections[chatbot_id] = await self._db.get_or_create_collection(
                 name=collection_name,
                 schema=_CachedJourneyEvaluation,
                 document_loader=journey_loader,
             )
-        return self._journey_collections[agent_id]
+        return self._journey_collections[chatbot_id]
     
     # ==================== Cache Management ====================
     
-    async def clear_cache_for_agent(self, agent_id: AgentId) -> None:
-        """Clear all cached evaluations for a specific agent."""
-        self._logger.info(f"Clearing cached evaluations for agent {agent_id}")
+    async def clear_cache_for_chatbot(self, chatbot_id: str) -> None:
+        """清除指定 chatbot 的所有缓存评估。
         
-        # Clear agent-specific collections directly
-        if agent_id in self._guideline_collections:
-            await self._guideline_collections[agent_id].delete_many({})
-            del self._guideline_collections[agent_id]
+        注意：通常不需要调用此方法，因为 chatbot 配置变更时应该使用新的 chatbot_id。
+        """
+        self._logger.info(f"Clearing cached evaluations for chatbot {chatbot_id}")
         
-        if agent_id in self._journey_collections:
-            await self._journey_collections[agent_id].delete_many({})
-            del self._journey_collections[agent_id]
+        # Clear chatbot-specific collections directly
+        if chatbot_id in self._guideline_collections:
+            await self._guideline_collections[chatbot_id].delete_many({})
+            del self._guideline_collections[chatbot_id]
         
-        self._logger.info(f"Cleared cached evaluations for agent {agent_id}")
+        if chatbot_id in self._journey_collections:
+            await self._journey_collections[chatbot_id].delete_many({})
+            del self._journey_collections[chatbot_id]
+        
+        self._logger.info(f"Cleared cached evaluations for chatbot {chatbot_id}")
     
     async def clear_all_cache(self) -> None:
-        """Clear all cached evaluations for all agents."""
-        # Clear all agent-specific collections
-        for agent_id in list(self._guideline_collections.keys()):
-            await self._guideline_collections[agent_id].delete_many({})
+        """清除所有 chatbot 的缓存评估。"""
+        # Clear all chatbot-specific collections
+        for chatbot_id in list(self._guideline_collections.keys()):
+            await self._guideline_collections[chatbot_id].delete_many({})
         
-        for agent_id in list(self._journey_collections.keys()):
-            await self._journey_collections[agent_id].delete_many({})
+        for chatbot_id in list(self._journey_collections.keys()):
+            await self._journey_collections[chatbot_id].delete_many({})
         
         # Clear collections cache
         self._guideline_collections.clear()
         self._journey_collections.clear()
         
-        self._logger.info("Cleared all cached evaluations for all agents")
+        self._logger.info("Cleared all cached evaluations for all chatbots")
     
     # ==================== Private Implementation ====================
     
@@ -467,21 +482,24 @@ class EvaluationManager:
         properties_proposition: bool = True,
         agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
-        """Internal guideline evaluation implementation with agent isolation."""
-        # Get agent-specific collection
-        guideline_collection = await self._get_guideline_collection(agent_id)
+        """Internal guideline evaluation implementation with chatbot-specific caching."""
+        # Get chatbot_id from agent metadata
+        chatbot_id = await self._get_chatbot_id(agent_id)
         
-        # Check cache with agent-specific hash
+        # Get chatbot-specific collection
+        guideline_collection = await self._get_guideline_collection(chatbot_id)
+        
+        # Check cache with chatbot-specific hash
         _hash = self._hash_guideline_evaluation_request(
             g=g,
             tool_ids=tool_ids,
             journey_state_propositions=journey_state_proposition,
             properties_proposition=properties_proposition,
-            agent_id=agent_id,
+            chatbot_id=chatbot_id,
         )
         
         if cached_evaluation := await guideline_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(f"Using cached evaluation for guideline: {g.condition} (agent: {agent_id})")
+            self._logger.info(f"✅ 使用缓存的 Guideline 评估结果 (chatbot: {chatbot_id}, hash: {_hash[:8]}...)")
             return EvaluationResult(
                 entity_type="guideline",
                 entity_id=str(entity_id),
@@ -489,7 +507,7 @@ class EvaluationManager:
             )
         
         # Perform evaluation
-        self._logger.trace(f"Evaluating guideline: {g.condition}")
+        self._logger.info(f"🔄 执行 Guideline 完整评估 (chatbot: {chatbot_id}, condition: {g.condition[:50]}...)")
         
         evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
             payload_descriptors=[
@@ -533,7 +551,8 @@ class EvaluationManager:
                         "id": ObjectId(_hash),
                         "version": Version.String("0.1.0"),
                         "properties": properties,
-                    }
+                    },
+                    upsert=True
                 )
                 
                 return EvaluationResult(
@@ -638,21 +657,23 @@ class EvaluationManager:
         tool_ids: Sequence[ToolId],
         journey_state_propositions: bool,
         properties_proposition: bool,
-        agent_id: Optional[AgentId] = None,
+        chatbot_id: Optional[str] = None,
     ) -> str:
-        """Generate hash for guideline evaluation request with agent isolation."""
+        """Generate hash for guideline evaluation request with chatbot-level isolation."""
         tool_ids_str = ",".join(str(tool_id) for tool_id in tool_ids) if tool_ids else ""
-        agent_suffix = f"_{agent_id}" if agent_id else ""
-        return hashlib.md5(
-            f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}:{journey_state_propositions}:{properties_proposition}{agent_suffix}".encode()
-        ).hexdigest()
+        # 使用 chatbot_id 而不是 agent_id，实现跨 agent 共享缓存
+        chatbot_suffix = f"_{chatbot_id}" if chatbot_id else ""
+        
+        hash_input = f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}:{journey_state_propositions}:{properties_proposition}{chatbot_suffix}"
+        return hashlib.md5(hash_input.encode()).hexdigest()
     
-    def _hash_journey_evaluation_request(self, journey: Journey, agent_id: Optional[AgentId] = None) -> str:
-        """Generate hash for journey evaluation request with agent isolation."""
+    def _hash_journey_evaluation_request(self, journey: Journey, chatbot_id: Optional[str] = None) -> str:
+        """Generate hash for journey evaluation request with chatbot-level isolation."""
         node_ids_str = ",".join(str(node.id) for node in journey.states) if journey.states else ""
         edge_ids_str = ",".join(str(edge.id) for edge in journey.transitions) if journey.transitions else ""
-        agent_suffix = f"_{agent_id}" if agent_id else ""
-        return hashlib.md5(f"{journey.id}:{node_ids_str}:{edge_ids_str}{agent_suffix}".encode()).hexdigest()
+        # 使用 chatbot_id 而不是 agent_id，实现跨 agent 共享缓存
+        chatbot_suffix = f"_{chatbot_id}" if chatbot_id else ""
+        return hashlib.md5(f"{journey.id}:{node_ids_str}:{edge_ids_str}{chatbot_suffix}".encode()).hexdigest()
     
     # ==================== Public Interface ====================
     

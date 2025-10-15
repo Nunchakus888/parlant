@@ -14,23 +14,18 @@ class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
         self.config_path = "app/configs/actionbooks/yc-case.json"
-        self._config_cache = None
         self.container = container
 
     def _load_config(self) -> Dict[str, Any]:
-        """加载配置文件，使用缓存避免重复读取"""
-        if self._config_cache is None:
-            try:
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    self._config_cache = json.load(f)
-                self._logger.info(f"成功加载配置文件: {self.config_path}")
-            except FileNotFoundError:
-                self._logger.error(f"配置文件不存在: {self.config_path}")
-                raise
-            except json.JSONDecodeError as e:
-                self._logger.error(f"配置文件格式错误: {e}")
-                raise
-        return self._config_cache
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            self._logger.error(f"配置文件不存在: {self.config_path}")
+            raise
+        except json.JSONDecodeError as e:
+            self._logger.error(f"配置文件格式错误: {e}")
+            raise
     
     def _get_server_from_container(self):
         if hasattr(self.container, '_server_ref') and self.container._server_ref:
@@ -77,7 +72,7 @@ class CustomAgentFactory(AgentFactory):
         }
         
         agent = await server.create_agent(
-            id=AgentId(f"{config_request.chatbot_id}_{config_request.session_id}") if config_request.chatbot_id else None,
+            id=AgentId(config_request.session_id) if config_request.session_id else None,
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
             max_engine_iterations=int(os.getenv("MAX_ENGINE_ITERATIONS", "1")),
