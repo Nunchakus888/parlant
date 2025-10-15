@@ -400,6 +400,7 @@ class Session:
     agent_states: Sequence[AgentState]
     updated_utc: Optional[datetime] = datetime.now(timezone.utc)
     tenant_id: Optional[str] = None
+    chatbot_id: Optional[str] = None
 
 
 class SessionUpdateParams(TypedDict, total=False):
@@ -411,6 +412,7 @@ class SessionUpdateParams(TypedDict, total=False):
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
     tenant_id: Optional[str]
+    chatbot_id: Optional[str]
 
 
 class SessionStore(ABC):
@@ -423,6 +425,7 @@ class SessionStore(ABC):
         creation_utc: Optional[datetime] = None,
         title: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        chatbot_id: Optional[str] = None,
     ) -> Session: ...
 
     @abstractmethod
@@ -545,6 +548,7 @@ class _SessionDocument(TypedDict, total=False):
     agent_states: Sequence[_AgentStateDocument]
     updated_utc: str
     tenant_id: Optional[str]
+    chatbot_id: Optional[str]
 
 
 class _EventDocument(TypedDict, total=False):
@@ -1027,6 +1031,8 @@ class SessionDocumentStore(SessionStore):
             ]
         if "tenant_id" in params:
             doc_params["tenant_id"] = params["tenant_id"]
+        if "chatbot_id" in params:
+            doc_params["chatbot_id"] = params["chatbot_id"]
 
         return doc_params
 
@@ -1053,6 +1059,7 @@ class SessionDocumentStore(SessionStore):
             ],
             updated_utc=session.updated_utc.isoformat() if session.updated_utc else datetime.now(timezone.utc).isoformat(),
             tenant_id=session.tenant_id,
+            chatbot_id=session.chatbot_id,
         )
 
     def _deserialize_session(
@@ -1077,6 +1084,7 @@ class SessionDocumentStore(SessionStore):
             ],
             updated_utc=datetime.fromisoformat(session_document["updated_utc"]) if session_document.get("updated_utc") else datetime.now(timezone.utc),
             tenant_id=session_document.get("tenant_id"),
+            chatbot_id=session_document.get("chatbot_id"),
         )
 
     def _serialize_event(
@@ -1245,6 +1253,7 @@ class SessionDocumentStore(SessionStore):
         title: Optional[str] = None,
         mode: Optional[SessionMode] = None,
         tenant_id: Optional[str] = None,
+        chatbot_id: Optional[str] = None,
     ) -> Session:
         async with self._lock.writer_lock:
             creation_utc = creation_utc or datetime.now(timezone.utc)
@@ -1261,6 +1270,7 @@ class SessionDocumentStore(SessionStore):
                 title=title,
                 agent_states=[],
                 tenant_id=tenant_id,
+                chatbot_id=chatbot_id,
             )
 
             await self._session_collection.insert_one(document=self._serialize_session(session))

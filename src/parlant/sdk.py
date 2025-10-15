@@ -935,7 +935,8 @@ class Journey:
         }[state_type]
 
         for t in list(tools):
-            await self._server._plugin_server.enable_tool(t)
+            # 🔧 FIX: 传递agent_id确保工具隔离
+            await self._server._plugin_server.enable_tool(t, agent_id=self.id)
 
         if len(tools) == 1 and not action:
             action = f"Use the tool {tools[0].tool.name}"
@@ -1026,7 +1027,8 @@ class Journey:
         ]
 
         for t in list(tools):
-            await self._server._plugin_server.enable_tool(t)
+            # 🔧 FIX: 传递agent_id确保工具隔离
+            await self._server._plugin_server.enable_tool(t, agent_id=self.id)
 
         guideline = await self._container[GuidelineStore].create_guideline(
             condition=condition,
@@ -1470,7 +1472,8 @@ class Agent:
         ]
 
         for t in list(tools):
-            await self._server._plugin_server.enable_tool(t)
+            # 🔧 FIX: 传递agent_id确保工具隔离
+            await self._server._plugin_server.enable_tool(t, agent_id=self.id)
 
         guideline = await self._container[GuidelineStore].create_guideline(
             condition=condition,

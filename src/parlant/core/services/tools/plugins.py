@@ -495,7 +495,11 @@ class PluginServer:
         plugin_data: Mapping[str, Any] = {},
         hosted: bool = False,
     ) -> None:
-        self.tools = {entry.tool.name: entry for entry in tools}
+        # 🔧 FIX: 改为agent维度维护tools，确保agent间工具隔离
+        # 参见: docs/ROOT_CAUSE_FOUND.md
+        self.tools_by_agent: dict[str, dict[str, ToolEntry]] = {}
+        # self.tools = {entry.tool.name: entry for entry in tools}  # 保持向后兼容
+        self.tools = {}
         self.plugin_data = plugin_data
         self.host = host
         self.port = port
@@ -533,8 +537,24 @@ class PluginServer:
 
         return False
 
-    async def enable_tool(self, entry: ToolEntry) -> None:
-        self.tools[entry.tool.name] = entry
+    async def enable_tool(self, entry: ToolEntry, agent_id: str = None) -> None:
+        """启用工具，支持按agent_id隔离"""
+        # 🔧 FIX: 按agent_id维度维护tools，确保agent间工具隔离
+        if agent_id:
+            if agent_id not in self.tools_by_agent:
+                self.tools_by_agent[agent_id] = {}
+            self.tools_by_agent[agent_id][entry.tool.name] = entry
+    
+    async def disable_agent_tools(self, agent_id: str) -> None:
+        """删除指定agent的所有工具"""
+        if agent_id in self.tools_by_agent:
+            del self.tools_by_agent[agent_id]
+    
+    def get_tool_for_agent(self, tool_name: str, agent_id: str = None) -> ToolEntry:
+        """获取指定agent的工具"""
+        if agent_id and agent_id in self.tools_by_agent:
+            return self.tools_by_agent[agent_id].get(tool_name)
+        return self.tools.get(tool_name)
 
     async def serve(self) -> None:
         app = self._create_app()
@@ -572,29 +592,40 @@ class PluginServer:
         app = FastAPI()
 
         @app.get("/tools")
-        async def list_tools() -> ListToolsResponse:
-            return ListToolsResponse(tools=[t.tool for t in self.tools.values()])
+        async def list_tools(agent_id: str = None) -> ListToolsResponse:
+            # 🔧 FIX: 支持按agent_id列出工具
+            if agent_id and agent_id in self.tools_by_agent:
+                tools = [t.tool for t in self.tools_by_agent[agent_id].values()]
+            else:
+                tools = [t.tool for t in self.tools.values()]
+            return ListToolsResponse(tools=tools)
+        
+        @app.delete("/agents/{agent_id}/tools")
+        async def delete_agent_tools(agent_id: str) -> dict:
+            """删除指定Agent的所有工具"""
+            await self.disable_agent_tools(agent_id)
+            return {"status": "success", "message": f"Deleted all tools for agent {agent_id}"}
 
         @app.get("/tools/{name}")
-        async def read_tool(name: str) -> ReadToolResponse:
-            try:
-                spec = self.tools[name]
-            except KeyError:
+        async def read_tool(name: str, agent_id: str = None) -> ReadToolResponse:
+            # 🔧 FIX: 支持按agent_id获取工具
+            spec = self.get_tool_for_agent(name, agent_id)
+            if not spec:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Tool: '{name}' does not exists",
+                    detail=f"Tool: '{name}' does not exist for agent '{agent_id}'",
                 )
 
             return ReadToolResponse(tool=spec.tool)
 
         @app.get("/tools/{name}/resolve")
         async def resolve_tool(name: str, context: ToolContextQuery) -> ReadToolResponse:
-            try:
-                spec = self.tools[name]
-            except KeyError:
+            # 🔧 FIX: 支持按agent_id解析工具
+            spec = self.get_tool_for_agent(name, context.agent_id)
+            if not spec:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Tool: '{name}' does not exists",
+                    detail=f"Tool: '{name}' does not exist for agent '{context.agent_id}'",
                 )
 
             tool = await _recompute_and_marshal_tool(
@@ -610,12 +641,12 @@ class PluginServer:
             name: str,
             request: CallToolRequest,
         ) -> StreamingResponse:
-            try:
-                self.tools[name]
-            except KeyError:
+            # 🔧 FIX: 检查工具是否存在，支持agent维度隔离
+            tool_entry = self.get_tool_for_agent(name, request.agent_id)
+            if not tool_entry:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Tool: '{name}' does not exists",
+                    detail=f"Tool: '{name}' does not exist for agent '{request.agent_id}'",
                 )
 
             end = asyncio.Event()
@@ -699,14 +730,15 @@ class PluginServer:
                 plugin_data=self.plugin_data,
             )
 
-            func = self.tools[name].function
+            # 🔧 FIX: 使用之前已经获取的tool_entry
+            func = tool_entry.function
 
             try:
                 tool_params = inspect.signature(func).parameters
                 normalized_args = normalize_tool_arguments(tool_params, request.arguments)
                 adapted_args = await adapt_tool_arguments(tool_params, normalized_args)
 
-                result = self.tools[name].function(context, **adapted_args)  # type: ignore
+                result = tool_entry.function(context, **adapted_args)  # type: ignore
             except BaseException as exc:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -853,7 +885,7 @@ class PluginClient(ToolService):
         arguments: Mapping[str, JSONSerializable],
     ) -> ToolResult:
         try:
-            tool = await self.read_tool(name)
+            tool = await self.resolve_tool(name, context)
             validate_tool_arguments(tool, arguments)
             MAX_TOOL_RESULT_PAYLOAD_KB = int(os.environ.get("MAX_TOOL_RESULT_PAYLOAD_KB", 16))
 
@@ -950,6 +982,14 @@ class PluginClient(ToolService):
             tool_name=name,
             message=f"url='{self.url}', Unexpected response (no result chunk)",
         )
+    
+    async def delete_agent_tools(self, agent_id: str) -> None:
+        """删除指定Agent的所有工具"""
+        try:
+            response = await self._http_client.delete(self._get_url(f"/agents/{agent_id}/tools"))
+            response.raise_for_status()
+        except Exception as e:
+            raise Exception(f"Failed to delete tools for agent {agent_id}: {e}")
 
     def _get_url(self, path: str) -> str:
         return urljoin(f"{self.url}", path)
