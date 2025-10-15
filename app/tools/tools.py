@@ -2,6 +2,7 @@
 工具管理器
 
 精简的工具管理实现，支持动态工具创建和配置管理。
+纯函数式设计
 """
 
 import json
@@ -9,18 +10,36 @@ import asyncio
 import aiohttp
 import time
 from typing import Dict, Any, List, Optional, Annotated, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import Parameter, Signature
 from pydantic import BaseModel
 
 
-@dataclass
+@dataclass(frozen=True)
+class ToolEndpointConfig:
+    """工具端点配置 - 不可变"""
+    url: str
+    method: str = "GET"
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: Optional[Any] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "url": self.url,
+            "method": self.method,
+            "headers": dict(self.headers),
+            "body": self.body
+        }
+
+
+@dataclass(frozen=True)
 class ToolConfig:
-    """工具配置"""
+    """工具配置 - 不可变"""
     name: str
     description: str
     parameters: Dict[str, Any]
-    endpoint: Dict[str, Any]
+    endpoint: ToolEndpointConfig
 
 
 class ApiResponse(BaseModel):
@@ -92,11 +111,19 @@ class ToolManager:
             configs = []
             for raw_config in raw_configs:
                 try:
+                    endpoint_data = raw_config.get("endpoint", {})
+                    endpoint = ToolEndpointConfig(
+                        url=endpoint_data.get("url", ""),
+                        method=endpoint_data.get("method", "GET"),
+                        headers=dict(endpoint_data.get("headers", {})),
+                        body=endpoint_data.get("body")
+                    )
+                    
                     config = ToolConfig(
                         name=raw_config["name"],
                         description=raw_config["description"],
                         parameters=raw_config.get("parameters", {}),
-                        endpoint=raw_config.get("endpoint", {})
+                        endpoint=endpoint
                     )
                     configs.append(config)
                 except Exception as e:
@@ -113,7 +140,10 @@ class ToolManager:
             return []
     
     def _create_tool(self, config: ToolConfig):
-        """创建工具函数"""
+        """
+        创建工具函数
+        纯函数式设计
+        """
         import parlant.sdk as p
         from parlant.core.tools import ToolParameterOptions
         
@@ -160,9 +190,11 @@ class ToolManager:
         # 创建函数签名
         signature = Signature(sig_params, return_annotation=p.ToolResult)
         
-        # 定义函数体
+        # 定义纯函数体，避免闭包
         async def dynamic_tool_func(*args, **kwargs):
             try:
+                tool_config = dynamic_tool_func._tool_config
+
                 bound_args = signature.bind(*args, **kwargs)
                 bound_args.apply_defaults()
                 
@@ -176,22 +208,24 @@ class ToolManager:
                 self._log_debug(f"工具参数: {params}")
                 
                 # 调用API
-                result = await self._call_api(config, params)
+                result = await self._call_api(tool_config.endpoint, params)
                 
                 if result.success:
                     duration_info = f" - duration: {result.duration:.3f}s" if result.duration else ""
-                    self._log_info(f"工具 {config.name} 执行成功{duration_info}")
+                    self._log_info(f"工具 {tool_config.name} 执行成功{duration_info}")
                 else:
                     duration_info = f" - duration: {result.duration:.3f}s" if result.duration else ""
-                    self._log_error(f"工具 {config.name} 执行失败: {result.message or result.error or '未知错误'}{duration_info}")
+                    self._log_error(f"工具 {tool_config.name} 执行失败: {result.message or result.error or '未知错误'}{duration_info}")
                 
                 return p.ToolResult(data=result.dict())
                 
             except Exception as e:
+                # 从函数属性获取配置
+                tool_config = dynamic_tool_func._tool_config
                 # 构建详细的错误消息
-                detailed_message = f"Tool execution failed: {config.name} - {type(e).__name__}: {str(e)}"
+                detailed_message = f"Tool execution failed: {tool_config.name} - {type(e).__name__}: {str(e)}"
                 
-                self._log_error(f"工具 {config.name} 执行失败: {str(e)}")
+                self._log_error(f"工具 {tool_config.name} 执行失败: {str(e)}")
                 
                 error_response = ApiResponse(
                     success=False,
@@ -202,33 +236,31 @@ class ToolManager:
                 )
                 return p.ToolResult(data=error_response.dict())
         
-        # 设置元数据
+        # 🔧 设置元数据和配置属性（避免闭包）
         dynamic_tool_func.__name__ = config.name
         dynamic_tool_func.__doc__ = config.description
         dynamic_tool_func.__signature__ = signature
+        dynamic_tool_func._tool_config = config  # 不可变配置作为函数属性，无需担心共享
         
         return p.tool(dynamic_tool_func)
     
-    async def _call_api(self, config: ToolConfig, params: Dict[str, Any]) -> ApiResponse:
+    async def _call_api(self, endpoint: ToolEndpointConfig, params: Dict[str, Any]) -> ApiResponse:
         start_time = time.time()
 
         def get_duration():
             return (time.time() - start_time) or self.timeout
         
-        endpoint = config.endpoint
-        
         # 检查是否为静态响应
-        if endpoint.get("url", "").startswith("static://"):
-            self._log_info(f"🔧 static tool call: {config.name}")
-            static_response = endpoint.get("response", {})
-            self._log_debug(f"📨 static response: {static_response}")
-            return ApiResponse(success=True, data=static_response, duration=get_duration())
+        if endpoint.url.startswith("static://"):
+            self._log_info(f"🔧 static tool call")
+            # 静态响应暂不实现，可以扩展
+            return ApiResponse(success=True, data={}, duration=get_duration())
         
-        # 替换占位符
-        url = self._replace_placeholders(endpoint["url"], params)
-        method = endpoint.get("method", "GET").upper()
-        headers = self._replace_placeholders(endpoint.get("headers", {}), params)
-        body = self._replace_placeholders(endpoint.get("body"), params) if endpoint.get("body") else None
+        # 🔧 替换工具参数占位符（如 {assignee_id}、{type} 等）
+        url = self._replace_placeholders(endpoint.url, params)
+        method = endpoint.method.upper()
+        headers = self._replace_placeholders(endpoint.headers, params)
+        body = self._replace_placeholders(endpoint.body, params) if endpoint.body else None
         
         # 处理body：如果是字符串，尝试解析为JSON对象
         if body is not None and isinstance(body, str):
@@ -244,11 +276,11 @@ class ToolManager:
             # 收集已使用的参数
             used_params = set()
             for param_name in params:
-                if f"{{{param_name}}}" in endpoint.get("url", ""):
+                if f"{{{param_name}}}" in endpoint.url:
                     used_params.add(param_name)
-                if f"{{{param_name}}}" in str(endpoint.get("headers", {})):
+                if f"{{{param_name}}}" in str(endpoint.headers):
                     used_params.add(param_name)
-                if endpoint.get("body") and f"{{{param_name}}}" in str(endpoint.get("body")):
+                if endpoint.body and f"{{{param_name}}}" in str(endpoint.body):
                     used_params.add(param_name)
             
             # 剩余参数作为查询参数
