@@ -855,7 +855,7 @@ class PluginClient(ToolService):
         try:
             tool = await self.read_tool(name)
             validate_tool_arguments(tool, arguments)
-            TOOL_RESULT_MAX_PAYLOAD_KB = int(os.environ.get("TOOL_RESULT_MAX_PAYLOAD_KB", 16))
+            MAX_TOOL_RESULT_PAYLOAD_KB = int(os.environ.get("MAX_TOOL_RESULT_PAYLOAD_KB", 16))
 
 
             async with self._http_client.stream(
@@ -903,10 +903,10 @@ class PluginClient(ToolService):
                 )
 
                 async for chunk in response.aiter_text():
-                    if len(chunk) > (TOOL_RESULT_MAX_PAYLOAD_KB * 1024):
+                    if len(chunk) > (MAX_TOOL_RESULT_PAYLOAD_KB * 1024):
                         raise ToolResultError(
                             tool_name=name,
-                            message=f"url='{self.url}', arguments='{arguments}', Response exceeds {TOOL_RESULT_MAX_PAYLOAD_KB}KB limit",
+                            message=f"url='{self.url}', arguments='{arguments}', Response exceeds {MAX_TOOL_RESULT_PAYLOAD_KB}KB limit",
                         )
 
                     chunk_dict = json.loads(chunk)

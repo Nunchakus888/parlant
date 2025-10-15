@@ -72,10 +72,14 @@ class AgentIntentionProposer:
                     hints={"type": self.__class__.__name__}
                 )
             )
+            
+            max_attempts = self._optimization_policy.get_max_guideline_proposition_attempts(
+                hints={"type": self.__class__.__name__}
+            )
 
             last_generation_exception: Exception | None = None
 
-            for generation_attempt in range(3):
+            for generation_attempt in range(max_attempts):
                 try:
                     proposition = await self._generate_agent_intention(
                         guideline, generation_attempt_temperatures[generation_attempt]
