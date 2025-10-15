@@ -210,6 +210,7 @@ class SessionDTO(
     mode: SessionModeField
     consumption_offsets: ConsumptionOffsetsDTO
     tenant_id: Optional[str] = None
+    chatbot_id: Optional[str] = None
 
 
 SessionCreationParamsCustomerIdField: TypeAlias = Annotated[
@@ -238,6 +239,7 @@ class SessionCreationParamsDTO(
     agent_id: SessionAgentIdPath
     customer_id: SessionCreationParamsCustomerIdField = None
     title: SessionTitleField | None = None
+    chatbot_id: Optional[str] = None
 
 
 message_example = "Hello, I need help with my order"
@@ -1295,7 +1297,7 @@ async def _ensure_session_and_customer(
     customer_id = params.customer_id
     session_id = params.session_id
     md5_checksum = params.md5_checksum
-    agent_id = AgentId(f"{params.chatbot_id}_{params.session_id}")
+    agent_id = AgentId(params.session_id)
 
     try:
         customer = await app.customers.read(customer_id)
@@ -1345,6 +1347,7 @@ async def _ensure_session_and_customer(
             agent_id=agent.id,
             allow_greeting=False,
             tenant_id=params.tenant_id,
+            chatbot_id=params.chatbot_id,
         )
         logger.info(f"✅ created new session: {session.id}")
 
@@ -1543,6 +1546,7 @@ def create_router(
             title=params.title,
             allow_greeting=allow_greeting,
             tenant_id=params.tenant_id,
+            chatbot_id=params.chatbot_id,
         )
 
         return SessionDTO(
@@ -1554,6 +1558,7 @@ def create_router(
             title=session.title,
             mode=SessionModeDTO(session.mode),
             tenant_id=session.tenant_id,
+            chatbot_id=session.chatbot_id,
         )
 
     @router.get(
@@ -1589,6 +1594,7 @@ def create_router(
             ),
             mode=SessionModeDTO(session.mode),
             tenant_id=session.tenant_id,
+            chatbot_id=session.chatbot_id,
         )
 
     @router.get(

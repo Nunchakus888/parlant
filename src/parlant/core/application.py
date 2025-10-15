@@ -132,6 +132,10 @@ class Application:
             
             # 7. Glossary Terms (通过 agent tag 关联)
             self._delete_terms_for_agent(agent_tag),
+            
+            # 8. 🔧 FIX: 清理Agent的工具，确保工具隔离
+            # 参见: docs/ROOT_CAUSE_FOUND.md
+            self._cleanup_agent_tools(agent_id),
         ]
         
         # 批量异步执行所有删除任务
@@ -185,6 +189,14 @@ class Application:
         terms = await self.glossary.find(tag_id=agent_tag)
         delete_tasks = [self.glossary.delete(term.id) for term in terms]
         await safe_gather(*delete_tasks)
+
+    async def _cleanup_agent_tools(self, agent_id: AgentId) -> None:
+        """清理指定Agent的所有工具"""
+        try:
+            await self.services.cleanup_agent_tools(agent_id)
+            self._logger.info(f"✅ Successfully cleaned up tools for agent {agent_id}")
+        except Exception as e:
+            self._logger.error(f"❌ Failed to cleanup tools for agent {agent_id}: {e}")
 
     async def _clear_evaluation_cache_for_agent(self, agent_id: AgentId) -> None:
         """清理指定 Agent 的所有缓存评估"""
