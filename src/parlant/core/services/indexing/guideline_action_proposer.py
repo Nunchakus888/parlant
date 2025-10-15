@@ -71,10 +71,14 @@ class GuidelineActionProposer:
                     hints={"type": self.__class__.__name__}
                 )
             )
+            
+            max_attempts = self._optimization_policy.get_max_guideline_proposition_attempts(
+                hints={"type": self.__class__.__name__}
+            )
 
             last_generation_exception: Exception | None = None
 
-            for generation_attempt in range(3):
+            for generation_attempt in range(max_attempts):
                 try:
                     tools: list[Tool] = []
                     for tid in tool_ids:

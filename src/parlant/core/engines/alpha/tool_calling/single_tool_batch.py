@@ -20,6 +20,7 @@ import json
 import traceback
 from typing import Any, Literal, Optional, Sequence, TypeAlias
 from typing_extensions import override
+from pydantic import ValidationError
 
 from parlant.core.agents import Agent
 from parlant.core.common import DefaultBaseModel, generate_id
@@ -157,6 +158,28 @@ class SingleToolBatch(ToolCallBatch):
             ),
         )
 
+    def _should_retry_on_exception(self, exc: Exception) -> bool:
+        """Determine if an exception should trigger a retry.
+        
+        Returns False for:
+        - ValidationError: Schema validation errors (retrying won't help)
+        - Exceptions containing "not found" or "missing": Missing data/config (retrying won't help)
+        
+        Returns True for other exceptions (likely transient errors).
+        """
+        # Pydantic validation errors - model output doesn't match schema
+        if isinstance(exc, ValidationError):
+            return False
+        
+        # Check error message for non-retryable patterns
+        error_msg = str(exc).lower()
+        non_retryable_patterns = ['not found', 'missing', 'invalid', 'forbidden', 'unauthorized']
+        if any(pattern in error_msg for pattern in non_retryable_patterns):
+            return False
+        
+        # Other exceptions (network errors, timeouts, etc.) are retryable
+        return True
+
     async def _validate_argument_value(
         self,
         parameter: tuple[ToolParameterDescriptor, ToolParameterOptions],
@@ -209,10 +232,11 @@ class SingleToolBatch(ToolCallBatch):
             generation_attempt_temperatures = (
                 self._optimization_policy.get_tool_calling_batch_retry_temperatures()
             )
+            max_attempts = self._optimization_policy.get_max_tool_evaluation_attempts()
 
             last_generation_exception: Exception | None = None
 
-            for generation_attempt in range(3):
+            for generation_attempt in range(max_attempts):
                 try:
                     generation_info, inference_output = await self._run_inference(
                         prompt=inference_prompt,
@@ -230,11 +254,27 @@ class SingleToolBatch(ToolCallBatch):
                     return generation_info, tool_calls, evaluations, missing_data, invalid_data
 
                 except Exception as exc:
-                    self._logger.warning(
-                        f"SingleToolBatch attempt {generation_attempt} failed: {traceback.format_exception(exc)}"
-                    )
-
                     last_generation_exception = exc
+                    
+                    # Check if this exception should trigger a retry
+                    should_retry = self._should_retry_on_exception(exc)
+                    
+                    if should_retry and generation_attempt < max_attempts - 1:
+                        # Retryable error and we have attempts left
+                        self._logger.warning(
+                            f"SingleToolBatch attempt {generation_attempt + 1}/{max_attempts} failed (retryable): "
+                            f"{type(exc).__name__}: {str(exc)}"
+                        )
+                    else:
+                        # Non-retryable error or last attempt
+                        self._logger.error(
+                            f"SingleToolBatch attempt {generation_attempt + 1}/{max_attempts} failed "
+                            f"({'non-retryable' if not should_retry else 'final attempt'}): "
+                            f"{traceback.format_exception(exc)}"
+                        )
+                        # Don't retry non-retryable errors
+                        if not should_retry:
+                            break
 
         raise ToolCallBatchError() from last_generation_exception
 
@@ -259,6 +299,15 @@ class SingleToolBatch(ToolCallBatch):
             all_values_valid = True
 
             for evaluation in tc.argument_evaluations or []:
+                # Defensive check: skip empty parameter names (LLM output error)
+                if not evaluation.parameter_name or evaluation.parameter_name not in tool.parameters:
+                    self._logger.warning(
+                        f"Invalid parameter_name in evaluation: '{evaluation.parameter_name}' "
+                        f"(available: {list(tool.parameters.keys())})"
+                    )
+                    all_values_valid = False
+                    continue
+                    
                 descriptor, options = tool.parameters[evaluation.parameter_name]
 
                 if evaluation.value_as_string and not await self._validate_argument_value(

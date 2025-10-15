@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import os
 from typing import Any, Mapping, Sequence
 from typing_extensions import override
 
@@ -59,6 +60,31 @@ class OptimizationPolicy(ABC):
         hints: Mapping[str, Any] = {},
     ) -> Sequence[float]:
         """Gets the retry temperatures (and number of generation attempts) for guideline propositions."""
+        ...
+
+    @abstractmethod
+    def get_max_tool_evaluation_attempts(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Gets the maximum number of evaluation attempts for tool calling.
+        
+        This controls how many times a tool evaluation will be retried on failure.
+        Can be configured via MAX_TOOL_EVALUATION_ATTEMPTS environment variable.
+        """
+        ...
+
+    @abstractmethod
+    def get_max_guideline_proposition_attempts(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Gets the maximum number of attempts for guideline propositions.
+        
+        This controls how many times a guideline proposition (like GuidelineContinuousProposer,
+        AgentIntentionProposer, etc.) will be retried on failure (including timeouts).
+        Can be configured via MAX_GUIDELINE_PROPOSITION_ATTEMPTS environment variable.
+        """
         ...
 
 
@@ -156,3 +182,29 @@ class BasicOptimizationPolicy(OptimizationPolicy):
             0.15,
             0.1,
         ]
+
+    @override
+    def get_max_tool_evaluation_attempts(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Get max tool evaluation attempts from environment variable.
+        
+        Defaults to 2 attempts to balance reliability and token cost.
+        """
+        return int(os.getenv("MAX_TOOL_EVALUATION_ATTEMPTS", "2"))
+
+    @override
+    def get_max_guideline_proposition_attempts(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Get max guideline proposition attempts from environment variable.
+        
+        Defaults to 2 attempts to balance reliability and token cost.
+        Guideline propositions include: GuidelineContinuousProposer, AgentIntentionProposer,
+        CustomerDependentActionDetector, ToolRunningActionDetector, GuidelineActionProposer.
+        
+        Setting to 1 may cause issues with timeouts or LLM output errors.
+        """
+        return int(os.getenv("MAX_GUIDELINE_PROPOSITION_ATTEMPTS", "2"))
