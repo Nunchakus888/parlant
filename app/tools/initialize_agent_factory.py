@@ -80,7 +80,7 @@ class CustomAgentFactory(AgentFactory):
             id=AgentId(f"{config_request.chatbot_id}_{config_request.session_id}") if config_request.chatbot_id else None,
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
-            max_engine_iterations=3,
+            max_engine_iterations=int(os.getenv("MAX_ENGINE_ITERATIONS", "1")),
             metadata=metadata,
         )
         

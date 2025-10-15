@@ -10,7 +10,8 @@ def decode_markdown_links(text, logger):
     def replace_link(match):
         link_url = match.group(2)   # 圆括号内容
         decoded_url = urllib.parse.unquote(link_url)
-        return decoded_url
+        # suffix a space
+        return f"{decoded_url} "
     
     try:
         # 匹配 [text](url) 格式，提取圆括号内容并 decode
