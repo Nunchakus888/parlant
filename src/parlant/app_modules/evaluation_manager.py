@@ -298,7 +298,6 @@ class EvaluationManager:
         agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
         """立即执行guideline评估，不进入队列，直接返回结果."""
-        self._logger.info(f"🚀 evaluate guideline immediately - agent: {agent_id}, guideline: {guideline_id}")
         
         # 直接调用评估实现，不经过队列
         result = await self.evaluate_guideline(
@@ -308,7 +307,6 @@ class EvaluationManager:
             agent_id=agent_id,
         )
         
-        self._logger.info(f"🎯 guideline evaluation completed - agent: {agent_id}, guideline: {guideline_id}")
         return result
     
     async def evaluate_journey_immediately(
