@@ -79,7 +79,7 @@ class ToolManager:
                 if tool:
                     self._tools[config.name] = tool
                     successful_tools += 1
-                    self._log_debug(f"✅ 成功设置工具: {config.name}")
+                    self._log_debug(f"🔧 成功设置工具: {config.name}")
             except Exception as e:
                 self._log_error(f"❌ 设置工具 {config.name} 失败: {str(e)}")
                 raise e

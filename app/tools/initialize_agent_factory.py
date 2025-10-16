@@ -13,7 +13,7 @@ from app.tools.prompts_format import decode_markdown_links
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/configs/actionbooks/yc-case.json"
+        self.config_path = "app/configs/actionbooks/step.json"
         self.container = container
 
     def _load_config(self) -> Dict[str, Any]:
@@ -82,22 +82,18 @@ class CustomAgentFactory(AgentFactory):
         # setup tools
         tools = await self._setup_tools(agent, config.get("tools", []))
         
+        start_time = time.time()
         # create guidelines
         await self._create_guidelines(agent, config.get("action_books", []), tools)
 
+        end_time = time.time()
+        self._logger.info(f"⏱️ create guidelines: {(end_time - start_time):.3f} seconds")
         # default guideline
         # await agent.create_guideline(
         #     condition="The customer's inquiry does not match any specific business guidelines or the customer asks about topics outside our expertise",
         #     action="Politely explain that you specialize in our business area and would be happy to help with related questions. Ask how you can assist them with our services.",
         #     metadata={"type": "default"},
         # )
-
-        self._logger.info("🔍 处理评估...")
-        start_time = time.time()
-        await server._evaluation_manager.process_evaluations()
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        self._logger.info(f"⏱️ 评估处理耗时: {elapsed_time:.3f} 秒")
 
         return agent
     
@@ -156,7 +152,6 @@ class CustomAgentFactory(AgentFactory):
                 
                 # print tool names
                 tool_names = [tool.tool.name for tool in associated_tools] if associated_tools else []
-                self._logger.debug(f"create actionbooks: {condition} -> (associated {tool_names} tools)")
                 
             except Exception as e:
                 self._logger.error(f"create guideline failed: {e}")

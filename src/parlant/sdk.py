@@ -131,7 +131,7 @@ from parlant.core.relationships import (
     RelationshipStore,
 )
 from parlant.core.services.tools.service_registry import ServiceDocumentRegistry, ServiceRegistry
-from parlant.app_modules.evaluation_manager import EvaluationManager
+from parlant.app_modules.evaluation_manager import EvaluationManager, EvaluationResult
 from parlant.core.sessions import (
     EventKind,
     EventSource,
@@ -1044,7 +1044,7 @@ class Journey:
                     tag_id=tag_id,
                 )
 
-        self._server._add_guideline_evaluation(
+        await self._server._evaluate_guideline_immediately(
             guideline.id,
             GuidelineContent(condition=condition, action=action),
             tool_ids,
@@ -1102,7 +1102,7 @@ class Journey:
             action=None,
         )
 
-        self._server._add_guideline_evaluation(
+        await self._server._evaluate_guideline_immediately(
             guideline.id,
             GuidelineContent(condition=condition, action=None),
             [ToolId(service_name=INTEGRATED_TOOL_SERVICE_NAME, tool_name=tool.tool.name)],
@@ -1490,11 +1490,11 @@ class Agent:
                     tag_id=tag_id,
                 )
 
-        self._server._add_guideline_evaluation(
+        await self._server._evaluate_guideline_immediately(
             guideline.id,
             GuidelineContent(condition=condition, action=action),
             tool_ids,
-            agent_id=self.id,  # Pass agent_id
+            agent_id=self.id,
         )
 
         for t in list(tools):
@@ -1536,7 +1536,7 @@ class Agent:
             action=None,
         )
 
-        self._server._add_guideline_evaluation(
+        await self._server._add_guideline_evaluation(
             guideline.id,
             GuidelineContent(condition=condition, action=None),
             [ToolId(service_name=INTEGRATED_TOOL_SERVICE_NAME, tool_name=tool.tool.name)],
@@ -1854,7 +1854,7 @@ class Server:
         await self._exit_stack.aclose()
         return False
 
-    def _add_guideline_evaluation(
+    async def _add_guideline_evaluation(
         self,
         guideline_id: GuidelineId,
         guideline_content: GuidelineContent,
@@ -1862,10 +1862,36 @@ class Server:
         agent_id: Optional[AgentId] = None,
     ) -> None:
         # Register evaluation task with unified manager
-        self._evaluation_manager.register_guideline_evaluation(
+        await self._evaluation_manager.register_guideline_evaluation(
             guideline_id=guideline_id,
             guideline_content=guideline_content,
             tool_ids=tool_ids,
+            agent_id=agent_id,
+        )
+    
+    async def _evaluate_guideline_immediately(
+        self,
+        guideline_id: GuidelineId,
+        guideline_content: GuidelineContent,
+        tool_ids: Sequence[ToolId],
+        agent_id: Optional[AgentId] = None,
+    ) -> EvaluationResult:
+        """立即执行guideline评估，不进入队列."""
+        return await self._evaluation_manager.evaluate_guideline_immediately(
+            guideline_id=guideline_id,
+            guideline_content=guideline_content,
+            tool_ids=tool_ids,
+            agent_id=agent_id,
+        )
+    
+    async def _evaluate_journey_immediately(
+        self,
+        journey: Journey,
+        agent_id: Optional[AgentId] = None,
+    ) -> EvaluationResult:
+        """立即执行journey评估，不进入队列."""
+        return await self._evaluation_manager.evaluate_journey_immediately(
+            journey=journey,
             agent_id=agent_id,
         )
 
@@ -2219,7 +2245,8 @@ class Server:
                 condition=str_condition,
             )
 
-            self._add_guideline_evaluation(
+            # 立即执行guideline评估，不进入队列
+            await self._evaluate_guideline_immediately(
                 guideline.id,
                 GuidelineContent(condition=str_condition, action=None),
                 tool_ids=[],
