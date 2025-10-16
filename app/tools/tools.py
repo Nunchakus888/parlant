@@ -115,14 +115,14 @@ class ToolManager:
                     endpoint = ToolEndpointConfig(
                         url=endpoint_data.get("url", ""),
                         method=endpoint_data.get("method", "GET"),
-                        headers=dict(endpoint_data.get("headers", {})),
+                        headers=dict(endpoint_data.get("headers", {}) or {}),
                         body=endpoint_data.get("body")
                     )
                     
                     config = ToolConfig(
                         name=raw_config["name"],
                         description=raw_config["description"],
-                        parameters=raw_config.get("parameters", {}),
+                        parameters=raw_config.get("parameters", {}) or {},
                         endpoint=endpoint
                     )
                     configs.append(config)
@@ -161,8 +161,8 @@ class ToolManager:
         sig_params = [Parameter('context', Parameter.POSITIONAL_OR_KEYWORD, annotation=p.ToolContext)]
         call_params = []
         
-        properties = config.parameters.get("properties", {})
-        required_params = config.parameters.get("required", [])
+        properties = config.parameters.get("properties", {}) or {}
+        required_params = config.parameters.get("required", []) or []
         
         for param_name, param_config in properties.items():
             param_type = type_mapping.get(param_config.get("type", "string"), str)
@@ -172,7 +172,7 @@ class ToolManager:
             # 创建带注解的类型
             annotated_type = Annotated[param_type, ToolParameterOptions(
                 description=param_config.get("description", f"Parameter {param_name}"),
-                examples=param_config.get("examples", [])
+                examples=param_config.get("examples", []) or []
             )]
             
             # 创建参数
