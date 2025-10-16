@@ -1309,7 +1309,7 @@ async def _ensure_session_and_customer(
             extra={},
             tags=None,
         )
-        logger.info(f"✅ created new customer: {customer.id}")
+        logger.info(f"👤 created new customer: {customer.id}")
     
     try:
         agent = await app.agents.read(agent_id)
@@ -2165,9 +2165,6 @@ def create_router(
         
         try:
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
-            logger.info("✅ Authorization successful")
-
-            logger.info("👤 Step 2: Session and Customer management")
 
             customers = await app.customers.find()
             logger.info(f"👤 Customers list: {len(customers)}")

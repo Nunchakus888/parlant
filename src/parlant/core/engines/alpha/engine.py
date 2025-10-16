@@ -633,7 +633,7 @@ class AlphaEngine(Engine):
             self._logger.info("🚨 No non-default guidelines matched - emitting no_guideline_match status event")
             await self._emit_no_guideline_match_event(context)
         else:
-            self._logger.info("✅ Non-default guidelines found - no event needed")
+            self._logger.info("👀 Non-default guidelines found - no event needed")
 
         # Infer any needed tool calls and execute them,
         # adding the resulting tool events to the session.

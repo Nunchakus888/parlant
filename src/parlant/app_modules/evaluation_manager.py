@@ -290,6 +290,44 @@ class EvaluationManager:
         )
         self._pending_tasks[f"guideline_{guideline_id}"] = task
     
+    async def evaluate_guideline_immediately(
+        self,
+        guideline_id: GuidelineId,
+        guideline_content: GuidelineContent,
+        tool_ids: Sequence[ToolId] = [],
+        agent_id: Optional[AgentId] = None,
+    ) -> EvaluationResult:
+        """立即执行guideline评估，不进入队列，直接返回结果."""
+        self._logger.info(f"🚀 evaluate guideline immediately - agent: {agent_id}, guideline: {guideline_id}")
+        
+        # 直接调用评估实现，不经过队列
+        result = await self.evaluate_guideline(
+            guideline_id=guideline_id,
+            guideline_content=guideline_content,
+            tool_ids=tool_ids,
+            agent_id=agent_id,
+        )
+        
+        self._logger.info(f"🎯 guideline evaluation completed - agent: {agent_id}, guideline: {guideline_id}")
+        return result
+    
+    async def evaluate_journey_immediately(
+        self,
+        journey: Journey,
+        agent_id: Optional[AgentId] = None,
+    ) -> EvaluationResult:
+        """立即执行journey评估，不进入队列，直接返回结果."""
+        self._logger.info(f"🚀 evaluate journey immediately - agent: {agent_id}, journey: {journey.id}")
+        
+        # 直接调用评估实现，不经过队列
+        result = await self.evaluate_journey(
+            journey=journey,
+            agent_id=agent_id,
+        )
+        
+        self._logger.info(f"🎯 journey evaluation completed - agent: {agent_id}, journey: {journey.id}")
+        return result
+    
     def register_state_evaluation(
         self,
         state_id: JourneyStateId,
