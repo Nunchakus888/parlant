@@ -621,13 +621,13 @@ class AlphaEngine(Engine):
         
         
         # 详细日志分析
-        self._logger.info(f"=== Guideline Matching Analysis ===")
-        self._logger.info(f"Total resolved guidelines: {guideline_and_journey_matching_result.resolved_guidelines}")
-        self._logger.info(f"Non-default guidelines: {len(non_default_guidelines)}")
+        # self._logger.info(f"=== Guideline Matching Analysis ===")
+        # self._logger.info(f"Total resolved guidelines: {guideline_and_journey_matching_result.resolved_guidelines}")
+        # self._logger.info(f"Non-default guidelines: {len(non_default_guidelines)}")
         
         # 检查是否需要发送事件
         has_non_default_guidelines = len(non_default_guidelines) > 0
-        self._logger.info(f"Has non-default guidelines: {has_non_default_guidelines}")
+        # self._logger.info(f"Has non-default guidelines: {has_non_default_guidelines}")
         
         if not has_non_default_guidelines:
             self._logger.info("🚨 No non-default guidelines matched - emitting no_guideline_match status event")
