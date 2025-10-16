@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from itertools import chain
 from pydantic import Field
 from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, cast
-
+import json
 
 from parlant.api.authorization import AuthorizationPolicy, Operation
 from parlant.api.common import GuidelineIdField, ExampleJson, JSONSerializableDTO, apigen_config
@@ -1338,7 +1338,7 @@ async def _ensure_session_and_customer(
               customer_id=customer_id,
             )
         )
-        logger.info(f"✅ updated session to the latest status: {session}")
+        logger.info(f"🔄 updated session to the latest status")
 
     except ItemNotFoundError as e:
         session = await app.sessions.create(
@@ -2161,7 +2161,7 @@ def create_router(
         """Simple chat endpoint that handles session management automatically.
         If session_id is provided, it will be used, otherwise a new session will be created.
         """
-        logger.info(f"🚀 Chat request started - {params}")
+        logger.info(f"🚀🚀🚀🚀 Chat request started\n {json.dumps(params.model_dump(), indent=2)}")
         
         try:
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
@@ -2191,13 +2191,10 @@ def create_router(
                 message=str(e),
                 data=None
             )
-        
-        logger.info(f"✅ Session and customer ready - session: {session.id}, customer: {customer.id}, agent: {agent_id}")
 
         await app.resource_manager.track_session(session.id, agent_id)
 
         logger.info("📤 Step 4: Sending customer message")
-        logger.info(f"📝 Message content: '{params.message}'")
         
         # Build proper message event data (same as create_event API)
         message_data: MessageEventData = {
@@ -2217,17 +2214,15 @@ def create_router(
             source=EventSource.CUSTOMER,
             trigger_processing=True,
         )
-        logger.info(f"✅ Customer message posted successfully - event_id: {customer_event.id}, offset: {customer_event.offset}")
+        logger.info(f"📝 Customer message posted successfully - msg:{params.message} - event_id: {customer_event.id}, offset: {customer_event.offset}")
         
         # Infer processing correlation_id from customer event correlation_id
         # The dispatch_processing_task creates a scope "process", resulting in: customer_correlation_id::process
         processing_correlation_id = f"{customer_event.correlation_id}::process"
-        logger.info(f"🔗 Inferred processing correlation_id: {processing_correlation_id}")
         
         # Step 6: Wait for AI response or system status
-        logger.info("⏳ Step 6: Waiting for AI response or system status")
         timeout = params.timeout or 60
-        logger.info(f"⏰ Timeout set to: {timeout} seconds")
+        logger.info(f"⏳ Step 6: Waiting for AI response or system status ⏰ Timeout set to: {timeout} seconds")
         
         # Use a single efficient wait with specific correlation_id for better performance
         wait_result = await session_listener.wait_for_events(
@@ -2250,7 +2245,7 @@ def create_router(
                 data=None
             )
         
-        logger.info("✅ AI response detected, retrieving events")
+        # logger.info("✅ AI response detected, retrieving events")
         # Get the AI response - use specific correlation_id for precise query
         ai_events = await app.sessions.find_events(
             session_id=session.id,
@@ -2297,7 +2292,7 @@ def create_router(
 
         # Get tokens for the current correlation_id
         total_tokens = await _get_total_tokens_for_event(session.id, processing_correlation_id)
-        logger.info(f"✅ Total tokens for correlation_id {processing_correlation_id}: {total_tokens}")
+        logger.info(f"💰 Total tokens: {total_tokens}")
 
         
         response = ChatResponseDTO(
@@ -2315,7 +2310,7 @@ def create_router(
             )
         )
 
-        logger.info(f"✅ Response: {response.model_dump()}")
+        logger.info(f"🎉 Response: {response.model_dump()}")
         return response
 
     return router

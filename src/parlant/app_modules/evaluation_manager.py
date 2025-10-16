@@ -209,7 +209,7 @@ class EvaluationManager:
         _hash = self._hash_journey_evaluation_request(journey, chatbot_id)
         
         if cached_evaluation := await journey_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.info(f"✅ 使用缓存的 Journey 评估结果 (chatbot: {chatbot_id}, journey: {journey.title})")
+            self._logger.info(f"🎯 评估缓存 (chatbot: {chatbot_id}, journey: {journey.title})")
             return EvaluationResult(
                 entity_type="journey",
                 entity_id=str(journey.id),
@@ -217,7 +217,7 @@ class EvaluationManager:
             )
         
         # Perform evaluation
-        self._logger.info(f"🔄 执行 Journey 完整评估 (chatbot: {chatbot_id}, journey: {journey.title})")
+        self._logger.info(f"🔄 开始 Journey 完整评估 (chatbot: {chatbot_id}, journey: {journey.title})")
         
         evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
             payload_descriptors=[
@@ -499,7 +499,7 @@ class EvaluationManager:
         )
         
         if cached_evaluation := await guideline_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.info(f"✅ 使用缓存的 Guideline 评估结果 (chatbot: {chatbot_id}, hash: {_hash[:8]}...)")
+            self._logger.info(f"🎯 评估缓存 (chatbot: {chatbot_id}, hash: {_hash[:8]}...)")
             return EvaluationResult(
                 entity_type="guideline",
                 entity_id=str(entity_id),
@@ -507,7 +507,7 @@ class EvaluationManager:
             )
         
         # Perform evaluation
-        self._logger.info(f"🔄 执行 Guideline 完整评估 (chatbot: {chatbot_id}, condition: {g.condition[:50]}...)")
+        self._logger.info(f"🔄 开始 Guideline 完整评估 (chatbot: {chatbot_id}, condition: {g.condition[:50]}...)")
         
         evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
             payload_descriptors=[
