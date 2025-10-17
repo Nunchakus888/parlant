@@ -1,0 +1,392 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parlant 实时监控仪表板</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .metric-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .status-healthy { color: #28a745; }
+        .status-unhealthy { color: #dc3545; }
+        .status-unknown { color: #ffc107; }
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .details-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .details-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .details-panel h3 {
+            margin: 0 0 15px 0;
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .details-content {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .thread-item, .connection-item {
+            background: #f8f9fa;
+            margin: 5px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .thread-item.active {
+            border-left-color: #28a745;
+        }
+        .thread-item.idle {
+            border-left-color: #6c757d;
+        }
+        .connection-item.listening {
+            border-left-color: #17a2b8;
+        }
+        .connection-item.established {
+            border-left-color: #28a745;
+        }
+        .connection-item.time_wait {
+            border-left-color: #ffc107;
+        }
+        .metric-label-small {
+            font-size: 0.8em;
+            color: #666;
+            margin-right: 10px;
+        }
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            color: white;
+            font-weight: bold;
+        }
+        .connected { background-color: #28a745; }
+        .disconnected { background-color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">连接中...</div>
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <div class="metric-label">系统 CPU 使用率</div>
+            <div class="metric-value" id="systemCpu">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">系统内存使用率</div>
+            <div class="metric-value" id="systemMemory">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">应用内存</div>
+            <div class="metric-value" id="appMemory">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">服务状态</div>
+            <div class="metric-value" id="serviceStatus">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">响应时间</div>
+            <div class="metric-value" id="responseTime">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">活跃连接</div>
+            <div class="metric-value" id="connections">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">线程数</div>
+            <div class="metric-value" id="threads">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">文件描述符</div>
+            <div class="metric-value" id="fileDescriptors">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">TPS</div>
+            <div class="metric-value" id="tps">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">负载因子</div>
+            <div class="metric-value" id="loadFactor">--</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">并发度</div>
+            <div class="metric-value" id="concurrency">--</div>
+        </div>
+    </div>
+    
+    <div class="charts-container">
+        <div class="chart-container">
+            <div id="cpuChart"></div>
+        </div>
+        <div class="chart-container">
+            <div id="memoryChart"></div>
+        </div>
+        <div class="chart-container full-width">
+            <div id="responseTimeChart"></div>
+        </div>
+        <div class="chart-container full-width">
+            <div id="performanceChart"></div>
+        </div>
+    </div>
+    
+    <!-- 详细信息面板 -->
+    <div class="details-container">
+        <div class="details-panel">
+            <h3>📊 线程详细信息</h3>
+            <div id="threadsDetails" class="details-content">
+                <p>正在加载线程信息...</p>
+            </div>
+        </div>
+        
+        <div class="details-panel">
+            <h3>🔗 连接详细信息</h3>
+            <div id="connectionsDetails" class="details-content">
+                <p>正在加载连接信息...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let charts = {};
+        
+        // 连接状态管理
+        socket.on('connect', function() {
+            document.getElementById('connectionStatus').textContent = '已连接';
+            document.getElementById('connectionStatus').className = 'connection-status connected';
+        });
+        
+        socket.on('disconnect', function() {
+            document.getElementById('connectionStatus').textContent = '连接断开';
+            document.getElementById('connectionStatus').className = 'connection-status disconnected';
+        });
+        
+        // 更新指标显示
+        socket.on('metrics_update', function(data) {
+            updateMetrics(data);
+        });
+        
+        function updateMetrics(data) {
+            document.getElementById('systemCpu').textContent = data.system.cpu_percent.toFixed(1) + '%';
+            document.getElementById('systemMemory').textContent = data.system.memory_percent.toFixed(1) + '%';
+            document.getElementById('appMemory').textContent = data.application.memory_mb.toFixed(1) + ' MB';
+            document.getElementById('responseTime').textContent = data.health.response_time_ms.toFixed(0) + ' ms';
+            document.getElementById('connections').textContent = data.application.connections;
+            document.getElementById('threads').textContent = data.application.threads;
+            document.getElementById('fileDescriptors').textContent = data.application.file_descriptors;
+            document.getElementById('tps').textContent = data.performance.tps;
+            document.getElementById('loadFactor').textContent = (data.performance.load_factor * 100).toFixed(1) + '%';
+            document.getElementById('concurrency').textContent = data.performance.concurrency;
+            
+            const statusElement = document.getElementById('serviceStatus');
+            statusElement.textContent = data.health.status;
+            statusElement.className = 'metric-value status-' + data.health.status;
+        }
+        
+        // 初始化图表
+        function initCharts() {
+            // CPU 图表
+            fetch('/api/charts/cpu')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('CPU chart error:', data.error);
+                        return;
+                    }
+                    Plotly.newPlot('cpuChart', data.data, data.layout, {responsive: true});
+                });
+            
+            // 内存图表
+            fetch('/api/charts/memory')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Memory chart error:', data.error);
+                        return;
+                    }
+                    Plotly.newPlot('memoryChart', data.data, data.layout, {responsive: true});
+                });
+            
+            // 响应时间图表
+            fetch('/api/charts/response_time')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Response time chart error:', data.error);
+                        return;
+                    }
+                    Plotly.newPlot('responseTimeChart', data.data, data.layout, {responsive: true});
+                });
+            
+            // 性能指标图表
+            fetch('/api/charts/performance')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Performance chart error:', data.error);
+                        return;
+                    }
+                    Plotly.newPlot('performanceChart', data.data, data.layout, {responsive: true});
+                });
+        }
+        
+        // 加载详细信息
+        function loadDetails() {
+            // 加载线程信息
+            fetch('/api/threads')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('threadsDetails').innerHTML = '<p>❌ 无法加载线程信息: ' + data.error + '</p>';
+                        return;
+                    }
+                    displayThreads(data);
+                })
+                .catch(error => {
+                    document.getElementById('threadsDetails').innerHTML = '<p>❌ 加载线程信息失败</p>';
+                });
+            
+            // 加载连接信息
+            fetch('/api/connections')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('connectionsDetails').innerHTML = '<p>❌ 无法加载连接信息: ' + data.error + '</p>';
+                        return;
+                    }
+                    displayConnections(data);
+                })
+                .catch(error => {
+                    document.getElementById('connectionsDetails').innerHTML = '<p>❌ 加载连接信息失败</p>';
+                });
+        }
+        
+        function displayThreads(data) {
+            console.log('Thread data:', data); // 调试信息
+            
+            let html = '<div class="metric-card"><div class="metric-label">总线程数</div><div class="metric-value">' + (data.total || 0) + '</div></div>';
+            
+            if (data.note) {
+                html += '<p style="color: #666; font-size: 0.9em;">' + data.note + '</p>';
+            }
+            
+            if (data.details && data.details.length > 0) {
+                html += '<h4>线程详情:</h4>';
+                data.details.forEach(thread => {
+                    const statusClass = thread.status === 'active' ? 'active' : 'idle';
+                    html += '<div class="thread-item ' + statusClass + '">';
+                    html += '<span class="metric-label-small">ID:</span>' + thread.id + ' ';
+                    html += '<span class="metric-label-small">状态:</span>' + thread.status + ' ';
+                    html += '<span class="metric-label-small">用户时间:</span>' + thread.user_time.toFixed(2) + 's ';
+                    html += '<span class="metric-label-small">系统时间:</span>' + thread.system_time.toFixed(2) + 's';
+                    html += '</div>';
+                });
+            } else if (data.total > 0) {
+                html += '<p style="color: #666; font-size: 0.9em;">线程详情不可用，但检测到 ' + data.total + ' 个线程</p>';
+            }
+            
+            document.getElementById('threadsDetails').innerHTML = html;
+        }
+        
+        function displayConnections(data) {
+            console.log('Connection data:', data); // 调试信息
+            
+            let html = '<div class="metric-card"><div class="metric-label">总连接数</div><div class="metric-value">' + (data.total || 0) + '</div></div>';
+            
+            // 连接类型统计
+            html += '<div class="metric-card"><div class="metric-label">监听</div><div class="metric-value">' + (data.listening || 0) + '</div></div>';
+            html += '<div class="metric-card"><div class="metric-label">已建立</div><div class="metric-value">' + (data.established || 0) + '</div></div>';
+            html += '<div class="metric-card"><div class="metric-label">等待关闭</div><div class="metric-value">' + (data.time_wait || 0) + '</div></div>';
+            
+            if (data.listening_ports && data.listening_ports.length > 0) {
+                html += '<h4>监听端口:</h4><p>' + data.listening_ports.join(', ') + '</p>';
+            }
+            
+            if (data.details && data.details.length > 0) {
+                html += '<h4>连接详情:</h4>';
+                data.details.forEach(conn => {
+                    const statusClass = conn.status.toLowerCase().replace('_', '');
+                    html += '<div class="connection-item ' + statusClass + '">';
+                    html += '<span class="metric-label-small">状态:</span>' + conn.status + ' ';
+                    html += '<span class="metric-label-small">本地:</span>' + conn.local_addr + ' ';
+                    html += '<span class="metric-label-small">远程:</span>' + conn.remote_addr + ' ';
+                    html += '<span class="metric-label-small">类型:</span>' + conn.type + '/' + conn.family;
+                    html += '</div>';
+                });
+            }
+            
+            document.getElementById('connectionsDetails').innerHTML = html;
+        }
+        
+        // 定期更新图表和详细信息
+        setInterval(initCharts, 30000); // 每30秒更新一次
+        setInterval(loadDetails, 10000); // 每10秒更新详细信息
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            loadDetails();
+        });
+    </script>
+</body>
+</html>
+    
