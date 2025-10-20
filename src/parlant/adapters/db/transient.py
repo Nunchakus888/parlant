@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from __future__ import annotations
+import sys
 from typing import Awaitable, Callable, Optional, Sequence, cast
 from typing_extensions import override
 from typing_extensions import get_type_hints
@@ -99,6 +100,31 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
         self._name = name
         self._schema = schema
         self._documents = list(data) if data else []
+    
+    def get_memory_stats(self) -> dict:
+        """获取内存使用统计"""
+        try:
+            doc_count = len(self._documents)
+            if doc_count == 0:
+                return {"count": 0, "estimated_size_kb": 0, "actual_size_kb": 0}
+            
+            # 估算内存使用
+            estimated_size = doc_count * 2  # 假设每个文档平均2KB
+            
+            # 实际内存使用（更精确）
+            actual_size = sys.getsizeof(self._documents)
+            for doc in self._documents:
+                actual_size += sys.getsizeof(doc)
+                if hasattr(doc, '__dict__'):
+                    actual_size += sys.getsizeof(doc.__dict__)
+            
+            return {
+                "count": doc_count,
+                "estimated_size_kb": estimated_size,
+                "actual_size_kb": actual_size / 1024
+            }
+        except Exception:
+            return {"count": 0, "estimated_size_kb": 0, "actual_size_kb": 0}
 
     @override
     async def find(
@@ -187,3 +213,12 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
             deleted_count=0,
             deleted_document=None,
         )
+
+    @override
+    async def delete_one_from_memory_only(
+        self,
+        filters: Where,
+    ) -> DeleteResult[TDocument]:
+        """删除内存中的文档（对于 Transient 存储，等同于 delete_one）"""
+        # Transient 存储本身就只在内存中，所以直接调用 delete_one
+        return await self.delete_one(filters)

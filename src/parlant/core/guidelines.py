@@ -447,12 +447,8 @@ class GuidelineDocumentStore(GuidelineStore):
         guideline_id: GuidelineId,
     ) -> None:
         async with self._lock.writer_lock:
-            result = await self._collection.delete_one(
-                filters={
-                    "id": {"$eq": guideline_id},
-                }
-            )
-
+            # 🔧 FIX: 先删除tag associations，避免并发场景下guideline变成"全局"
+            # 这样可以确保即使在删除过程中，其他请求也不会将此guideline作为全局guideline加载
             for doc in await self._tag_association_collection.find(
                 filters={
                     "guideline_id": {"$eq": guideline_id},
@@ -461,6 +457,13 @@ class GuidelineDocumentStore(GuidelineStore):
                 await self._tag_association_collection.delete_one(
                     filters={"id": {"$eq": doc["id"]}}
                 )
+            
+            # 然后再删除guideline本体
+            result = await self._collection.delete_one(
+                filters={
+                    "id": {"$eq": guideline_id},
+                }
+            )
 
         if not result.deleted_document:
             raise ItemNotFoundError(item_id=UniqueId(guideline_id))

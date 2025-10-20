@@ -286,7 +286,13 @@ class CustomerDocumentStore(CustomerStore):
             )
 
         if not customer_document:
-            raise ItemNotFoundError(item_id=UniqueId(customer_id))
+            return await self.create_customer(
+                id=customer_id,
+                name=None,
+                creation_utc=datetime.now(timezone.utc),
+                extra={},
+                tags=None,
+            )
 
         return await self._deserialize_customer(customer_document)
 

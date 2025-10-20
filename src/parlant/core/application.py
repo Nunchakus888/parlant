@@ -32,10 +32,13 @@ from parlant.app_modules.glossary import GlossaryModule
 from parlant.app_modules.evaluation_manager import EvaluationManager
 
 from parlant.core.agents import AgentId
+from parlant.core.sessions import SessionId
+
 from parlant.core.tags import Tag, TagId
 from parlant.core.async_utils import safe_gather
 from parlant.core.loggers import Logger
 from parlant.core.resource_manager import ResourceManager
+from parlant.core.background_tasks import BackgroundTaskService
 
 
 class Application:
@@ -55,6 +58,7 @@ class Application:
         capability_module: CapabilityModule,
         canned_response_module: CannedResponseModule,
         evaluation_manager: EvaluationManager,
+        background_task_service: BackgroundTaskService,
         logger: Logger,
     ) -> None:
         self.agents = agent_module
@@ -74,7 +78,7 @@ class Application:
         self._logger = logger
         
         # LRU 资源管理器
-        self.resource_manager = ResourceManager(self, logger)
+        self.resource_manager = ResourceManager(self, logger, background_task_service)
 
     async def delete_agent_cascade(self, agent_id: AgentId) -> None:
         """
@@ -156,10 +160,21 @@ class Application:
         # 10. 最后删除 Agent 本身
         await self.agents.delete(agent_id)
 
-    async def _delete_sessions_for_agent(self, agent_id: AgentId) -> None:
-        sessions = await self.sessions.find(agent_id=agent_id, customer_id=None)
-        delete_tasks = [self.sessions.delete(session.id) for session in sessions]
-        await safe_gather(*delete_tasks)
+    async def _delete_customer_from_memory_for_session(self, session_id: SessionId) -> None:
+        """清理指定 Session 关联的 Session 和 Customer 内存"""
+        self._logger.debug(f"👤 Deleting session and customer from memory for session {session_id}")
+        try:
+            session = await self.sessions.read(session_id)
+            if session:
+                # 清理 customer 内存
+                await self.customers.delete(session.customer_id)
+                self._logger.debug(f"👤 Deleted customer {session.customer_id} from memory")
+
+                # 清理 session 内存
+                await self.sessions.delete_from_memory_only(session_id)
+                self._logger.debug(f"📋 Deleted session {session_id} from memory")
+        except Exception as e:
+            self._logger.error(f"Failed to delete session and customer from memory for session {session_id}: {e}")
 
     async def _delete_guidelines_for_agent(self, agent_tag: TagId) -> None:
         guidelines = await self.guidelines.find(tag_id=agent_tag)

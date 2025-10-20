@@ -441,6 +441,12 @@ class SessionStore(ABC):
     ) -> None: ...
 
     @abstractmethod
+    async def delete_session_from_memory_only(
+        self,
+        session_id: SessionId,
+    ) -> None: ...
+
+    @abstractmethod
     async def update_session(
         self,
         session_id: SessionId,
@@ -1292,6 +1298,15 @@ class SessionDocumentStore(SessionStore):
             )
 
             await self._session_collection.delete_one({"id": {"$eq": session_id}})
+
+    async def delete_session_from_memory_only(
+        self,
+        session_id: SessionId,
+    ) -> None:
+        """从内存中删除 session，但不删除数据库中的数据（用于 LRU 管理）"""
+        async with self._lock.writer_lock:
+            # 只删除 session 文档本身，不删除 events（events 保留在数据库中）
+            await self._session_collection.delete_one_from_memory_only({"id": {"$eq": session_id}})
 
     @override
     async def read_session(
