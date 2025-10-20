@@ -197,3 +197,13 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
             deleted_count=delete_result.deleted_count,
             deleted_document=result_document,
         )
+
+    async def delete_one_from_memory_only(self, filters: Where) -> DeleteResult[TDocument]:
+        """删除内存中的文档（对于 MongoDB，此操作不适用，因为数据在远程数据库）"""
+        # 这个方法主要用于 JSONFile 存储的内存管理
+        # 对于 MongoDB，我们简单返回一个空结果，表示不执行任何操作
+        return DeleteResult(
+            acknowledged=True,
+            deleted_count=0,
+            deleted_document=None,
+        )

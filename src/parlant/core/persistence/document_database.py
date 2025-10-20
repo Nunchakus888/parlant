@@ -161,3 +161,15 @@ class DocumentCollection(ABC, Generic[TDocument]):
     ) -> DeleteResult[TDocument]:
         """Deletes the first document that matches the query criteria."""
         ...
+
+    @abstractmethod
+    async def delete_one_from_memory_only(
+        self,
+        filters: Where,
+    ) -> DeleteResult[TDocument]:
+        """Deletes the first document from memory only, without persisting to database.
+        
+        This is useful for LRU cache management where we want to free memory
+        but preserve data in the persistent storage.
+        """
+        ...

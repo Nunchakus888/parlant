@@ -19,6 +19,7 @@ from itertools import chain
 from pydantic import Field
 from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, cast
 import json
+import time
 
 from parlant.api.authorization import AuthorizationPolicy, Operation
 from parlant.api.common import GuidelineIdField, ExampleJson, JSONSerializableDTO, apigen_config
@@ -1486,7 +1487,6 @@ def create_router(
     async def _get_total_tokens_for_event(session_id: str, correlation_id: str) -> int:
         """获取指定事件的总token消耗"""
         try:
-            logger.info(f"🔍 Attempting to read inspection for session_id={session_id}, correlation_id={correlation_id}")
             inspection = await app.sessions._session_store.read_inspection(
                 session_id=session_id,
                 correlation_id=correlation_id,
@@ -2161,18 +2161,18 @@ def create_router(
         """Simple chat endpoint that handles session management automatically.
         If session_id is provided, it will be used, otherwise a new session will be created.
         """
-        logger.info(f"🚀🚀🚀🚀 Chat request started\n {json.dumps(params.model_dump(), indent=2)}")
+        request_start = time.time()
+        logger.info(f"🚀 Chat request started\n {json.dumps(params.model_dump(), indent=2)}")
         
         try:
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
 
-            customers = await app.customers.find()
-            logger.info(f"👤 Customers list: {len(customers)}")
-            # sessions = await app.sessions.find(None, None)
-            # logger.info(f"🔍 Sessions list: {len(sessions)} \n{sessions}")
-            agents = await app.agents.find()
-            logger.info(f"🤖 Agents list: {len(agents)}")
+            # Phase 2: Session & Customer Setup
+            # ❌ 移除不必要的全量查询，这些查询在高并发场景会严重影响性能
+            # 原代码查询所有customers、agents、sessions只是为了打印日志
+            # 在1000并发时会产生3000次全量扫描，导致数据库压力过大
             
+            setup_start = time.time()
             # Get or create session and customer in one unified flow
             session, customer, agent_id = await _ensure_session_and_customer(
                 params=params,
@@ -2180,6 +2180,7 @@ def create_router(
                 logger=logger,
                 agent_creator=_agent_creator,
             )
+            logger.debug(f"⏱️ Session/Customer setup: {(time.time() - setup_start):.3f}s")
         except Exception as e:
             logger.error(f"❌ Error during session/customer setup: {e}")
             return ChatResponseDTO(
@@ -2189,10 +2190,10 @@ def create_router(
                 data=None
             )
 
-        await app.resource_manager.track_session(session.id, agent_id)
-
+        # Phase 3: Create Event
         logger.info("📤 Step 4: Sending customer message")
         
+        event_start = time.time()
         # Build proper message event data (same as create_event API)
         message_data: MessageEventData = {
             "message": params.message,
@@ -2212,7 +2213,17 @@ def create_router(
             trigger_processing=True,
         )
         logger.info(f"📝 Customer message posted successfully - msg:{params.message} - event_id: {customer_event.id}, offset: {customer_event.offset}")
+        logger.debug(f"⏱️ Create event: {(time.time() - event_start):.3f}s")
+
+        # Phase 4: Track Session (LRU management)
+        track_start = time.time()
+        await app.resource_manager.track_session(session.id, agent_id)
+        logger.debug(f"⏱️ Track session (LRU): {(time.time() - track_start):.3f}s")
         
+        # Total setup time
+        logger.info(f"⏱️ Total request setup: {(time.time() - request_start):.3f}s")
+
+
         # Infer processing correlation_id from customer event correlation_id
         # The dispatch_processing_task creates a scope "process", resulting in: customer_correlation_id::process
         processing_correlation_id = f"{customer_event.correlation_id}::process"
@@ -2233,12 +2244,27 @@ def create_router(
         logger.info(f"⏳ Wait result: {wait_result}")
         
         if not wait_result:
-            # Timeout occurred - no AI response received
-            logger.warning("⏰ Step 7: Handling timeout")
+            to_m = "TIMEOUT_ERROR"
+            # Timeout occurred - cancel the processing task to free resources
+            logger.warning("⏰ Step 7: Handling timeout - cancelling processing task")
+            task_tag = f"process-session({session.id})-{processing_correlation_id}"
+            
+            try:
+                # Cancel the background processing task
+                await app.sessions._background_task_service.cancel(
+                    tag=task_tag,
+                    reason="Request timeout exceeded"
+                )
+                to_m += " - CANCELLED"
+                logger.info(f"✅ Successfully cancelled processing task: {task_tag}")
+            except Exception as e:
+                # Log but don't fail if cancellation fails (task might have completed)
+                logger.warning(f"⚠️ Failed to cancel processing task {task_tag}: {e}")
+            
             return ChatResponseDTO(
                 status=504,
                 code=504,
-                message="TIMEOUT_ERROR",
+                message=to_m,
                 data=None
             )
         
@@ -2307,6 +2333,8 @@ def create_router(
             )
         )
 
+        request_end = time.time()
+        logger.info(f"⏰ Total chat request duration: {(request_end - request_start):.3f}s")
         logger.info(f"🎉 Response: {response.model_dump()}")
         return response
 

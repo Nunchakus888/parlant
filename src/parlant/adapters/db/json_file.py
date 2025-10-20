@@ -334,3 +334,26 @@ class JSONFileDocumentCollection(DocumentCollection[TDocument]):
             deleted_count=0,
             deleted_document=None,
         )
+
+    @override
+    async def delete_one_from_memory_only(
+        self,
+        filters: Where,
+    ) -> DeleteResult[TDocument]:
+        """删除内存中的文档，但不持久化到数据库（用于 LRU 内存管理）"""
+        async with self._lock.writer_lock:
+            for i, d in enumerate(self.documents):
+                if matches_filters(filters, d):
+                    document = self.documents.pop(i)
+                    
+                    # 注意：这里不调用 flush()，只从内存中删除
+                    
+                    return DeleteResult(
+                        deleted_count=1, acknowledged=True, deleted_document=document
+                    )
+
+        return DeleteResult(
+            acknowledged=True,
+            deleted_count=0,
+            deleted_document=None,
+        )

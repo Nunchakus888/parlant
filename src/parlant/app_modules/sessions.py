@@ -153,6 +153,14 @@ class SessionModule:
         await self._session_store.read_session(session_id)
         await self._session_store.delete_session(session_id)
 
+    async def delete_from_memory_only(
+        self,
+        session_id: SessionId,
+    ) -> None:
+        """从内存中删除 session，但不删除数据库中的数据（用于 LRU 管理）"""
+        # 只从内存中删除
+        await self._session_store.delete_session_from_memory_only(session_id)
+
     async def create_event(
         self,
         session_id: SessionId,

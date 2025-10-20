@@ -134,3 +134,13 @@ class BackgroundTaskService:
             self._logger.warning(
                 f"{type(self).__name__}: Awaited task raised an exception: {traceback.format_exception(exc)}"
             )
+    
+    def get_active_tasks(self) -> list[str]:
+        """获取当前活跃的任务标签列表"""
+        # 注意：这是一个同步方法，直接访问tasks字典
+        # 在LRU检查时使用，不需要锁保护因为只是读取
+        # 虽然理论上存在并发风险，但实际影响很小：
+        # 1. 只是读取字典，不会导致崩溃
+        # 2. 即使读取到不一致的数据，最多是误判session状态
+        # 3. 误判的后果是跳过清理，不会误删活跃session
+        return [tag for tag, task in self._tasks.items() if not task.done()]
