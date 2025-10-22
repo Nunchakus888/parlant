@@ -2166,11 +2166,6 @@ def create_router(
         
         try:
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
-
-            # Phase 2: Session & Customer Setup
-            # ❌ 移除不必要的全量查询，这些查询在高并发场景会严重影响性能
-            # 原代码查询所有customers、agents、sessions只是为了打印日志
-            # 在1000并发时会产生3000次全量扫描，导致数据库压力过大
             
             setup_start = time.time()
             # Get or create session and customer in one unified flow

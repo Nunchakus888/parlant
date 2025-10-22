@@ -297,7 +297,7 @@ class EvaluationManager:
         tool_ids: Sequence[ToolId] = [],
         agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
-        """立即执行guideline评估，不进入队列，直接返回结果."""
+        """立即执行guideline评估，不进入队列，直接返回结果并更新metadata."""
         
         # 直接调用评估实现，不经过队列
         result = await self.evaluate_guideline(
@@ -307,6 +307,9 @@ class EvaluationManager:
             agent_id=agent_id,
         )
         
+        # 🔧 修复：立即更新guideline metadata，确保评估结果被同步
+        await self._process_results([result])
+        
         return result
     
     async def evaluate_journey_immediately(
@@ -314,7 +317,7 @@ class EvaluationManager:
         journey: Journey,
         agent_id: Optional[AgentId] = None,
     ) -> EvaluationResult:
-        """立即执行journey评估，不进入队列，直接返回结果."""
+        """立即执行journey评估，不进入队列，直接返回结果并更新metadata."""
         self._logger.info(f"🚀 evaluate journey immediately - agent: {agent_id}, journey: {journey.id}")
         
         # 直接调用评估实现，不经过队列
@@ -322,6 +325,9 @@ class EvaluationManager:
             journey=journey,
             agent_id=agent_id,
         )
+        
+        # 🔧 修复：立即更新journey metadata，确保评估结果被同步
+        await self._process_results([result])
         
         self._logger.info(f"🎯 journey evaluation completed - agent: {agent_id}, journey: {journey.id}")
         return result

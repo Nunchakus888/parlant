@@ -162,14 +162,12 @@ class SingleToolBatch(ToolCallBatch):
         """Determine if an exception should trigger a retry.
         
         Returns False for:
-        - ValidationError: Schema validation errors (retrying won't help)
         - Exceptions containing "not found" or "missing": Missing data/config (retrying won't help)
         
-        Returns True for other exceptions (likely transient errors).
+        Returns True for:
+        - ValidationError: Schema validation errors (retrying may help with field name typos)
+        - Other exceptions (likely transient errors).
         """
-        # Pydantic validation errors - model output doesn't match schema
-        if isinstance(exc, ValidationError):
-            return False
         
         # Check error message for non-retryable patterns
         error_msg = str(exc).lower()
