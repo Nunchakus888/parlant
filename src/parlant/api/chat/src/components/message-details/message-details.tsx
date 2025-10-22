@@ -10,7 +10,7 @@ import LogFilters, {Level, Type} from '../log-filters/log-filters';
 import CannedResponses from '../canned-responses/canned-responses';
 import EmptyState from './empty-state';
 import FilterTabs from './filter-tabs';
-// import MessageDetailsHeader from './message-details-header';
+import MessageDetailsHeader from './message-details-header';
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '../ui/resizable';
 import {ImperativePanelHandle} from 'react-resizable-panels';
 import Tooltip from '../ui/custom/tooltip';
@@ -54,11 +54,11 @@ const getDefaultSelectedActiveTab = (filterTabs: Filter[]) => {
 
 const MessageDetails = ({
 	event,
-	// closeLogs,
-	// regenerateMessageFn,
-	// resendMessageFn,
-	// flaggedChanged,
-	// sameCorrelationMessages,
+	closeLogs,
+	regenerateMessageFn,
+	resendMessageFn,
+	flaggedChanged,
+	sameCorrelationMessages,
 }: {
 	event?: EventInterface | null;
 	sameCorrelationMessages?: EventInterface[];
@@ -166,7 +166,7 @@ const MessageDetails = ({
 
 	return (
 		<div className={twJoin('w-full h-full animate-fade-in duration-200 overflow-auto flex flex-col justify-start pt-0 pe-0 bg-[#FBFBFB]')}>
-			{/* <MessageDetailsHeader
+			<MessageDetailsHeader
 				event={event || null}
 				closeLogs={closeLogs}
 				sameCorrelationMessages={sameCorrelationMessages}
@@ -174,7 +174,7 @@ const MessageDetails = ({
 				regenerateMessageFn={regenerateMessageFn}
 				className={twJoin('shadow-main h-[60px] min-h-[60px]', Object.keys(filters || {}).length ? 'border-[#F3F5F9]' : '')}
 				flaggedChanged={flaggedChanged}
-			/> */}
+			/>
 			<div className='ps-[20px] pt-[10px] pb-[10px] flex flex-col gap-[8px] bg-white border-b border-[#F3F5F9]'>
 				<div className='flex items-center gap-[3px] text-[14px] font-normal'>
 					<CopyText textToCopy={event?.correlation_id?.split('::')?.[0]} preText='Correlation ID: ' text={`${event?.correlation_id?.split('::')?.[0]}`} className='whitespace-nowrap [&_span]:text-ellipsis [&_span]:overflow-hidden [&_span]:block' />
