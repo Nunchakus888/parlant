@@ -25,3 +25,4 @@ test_timing.csv
 test_results/
 scripts/benchmark/*.json
 scripts/benchmark/*.txt
+.git_backup_*/

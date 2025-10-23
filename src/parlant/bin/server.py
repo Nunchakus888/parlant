@@ -465,7 +465,7 @@ async def setup_container() -> AsyncIterator[Container]:
     # todo WebSocket日志记录器移除，改用标准输出日志
     web_socket_logger = WebSocketLogger(CORRELATOR, LogLevel.INFO)
     c[WebSocketLogger] = web_socket_logger
-    c[Logger] = CompositeLogger([LOGGER])
+    c[Logger] = CompositeLogger([LOGGER, web_socket_logger])
 
     _define_singleton(c, IdGenerator, IdGenerator)
 
