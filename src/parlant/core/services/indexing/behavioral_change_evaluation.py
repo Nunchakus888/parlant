@@ -67,6 +67,12 @@ from parlant.core.services.indexing.tool_running_action_detector import (
     ToolRunningActionDetector,
     ToolRunningActionProposition,
 )
+from parlant.core.services.indexing.journey_structure_proposer import (
+    JourneyStructureProposer,
+)
+from parlant.core.services.indexing.journey_structure_analysis import (
+    JourneyStructureProposition,
+)
 
 
 class EvaluationValidationError(Exception):
@@ -219,6 +225,7 @@ class GuidelineEvaluator:
         customer_dependent_action_detector: CustomerDependentActionDetector,
         agent_intention_proposer: AgentIntentionProposer,
         tool_running_action_detector: ToolRunningActionDetector,
+        journey_structure_proposer: JourneyStructureProposer,
     ) -> None:
         self._logger = logger
         self._entity_queries = entity_queries
@@ -227,6 +234,7 @@ class GuidelineEvaluator:
         self._customer_dependent_action_detector = customer_dependent_action_detector
         self._agent_intention_proposer = agent_intention_proposer
         self._tool_running_action_detector = tool_running_action_detector
+        self._journey_structure_proposer = journey_structure_proposer
 
     def _build_invoice_data(
         self,
@@ -237,6 +245,7 @@ class GuidelineEvaluator:
         ],
         agent_intention_propositions: Sequence[Optional[AgentIntentionProposition]],
         tool_running_action_propositions: Sequence[Optional[ToolRunningActionProposition]],
+        journey_structure_propositions: Sequence[Optional[JourneyStructureProposition]],
     ) -> Sequence[InvoiceGuidelineData]:
         results = []
         for (
@@ -245,12 +254,14 @@ class GuidelineEvaluator:
             payload_customer_dependent,
             agent_intention,
             tool_running_action,
+            journey_structure,
         ) in zip(
             action_propositions,
             continuous_propositions,
             customer_dependant_action_detections,
             agent_intention_propositions,
             tool_running_action_propositions,
+            journey_structure_propositions,
         ):
             properties_prop: dict[str, JSONSerializable] = {
                 **{
@@ -268,6 +279,18 @@ class GuidelineEvaluator:
                 **(
                     {"tool_running_only": tool_running_action.is_tool_running_only}
                     if tool_running_action
+                    else {}
+                ),
+                **(
+                    {
+                        "is_journey_candidate": journey_structure.is_journey_candidate,
+                        "journey_confidence": journey_structure.confidence,
+                        "journey_reasoning": journey_structure.reasoning,
+                        "journey_graph": journey_structure.journey_graph.to_dict()
+                        if journey_structure.journey_graph
+                        else None,
+                    }
+                    if journey_structure
                     else {}
                 ),
             }
@@ -308,12 +331,17 @@ class GuidelineEvaluator:
             payloads, progress_report
         )
 
+        journey_structure_propositions = await self._propose_journey_structures(
+            payloads, progress_report
+        )
+
         return self._build_invoice_data(
             action_propositions,
             continuous_propositions,
             customer_dependant_action_detections,
             agent_intention_propositions,
             tool_running_action_propositions,
+            journey_structure_propositions,
         )
 
     async def _propose_actions(
@@ -478,6 +506,36 @@ class GuidelineEvaluator:
 
         return results
 
+    async def _propose_journey_structures(
+        self,
+        payloads: Sequence[GuidelinePayload],
+        progress_report: Optional[ProgressReport] = None,
+    ) -> Sequence[Optional[JourneyStructureProposition]]:
+        """分析guideline的Journey结构"""
+        tasks: list[asyncio.Task[JourneyStructureProposition]] = []
+        indices: list[int] = []
+
+        for i, p in enumerate(payloads):
+            # 只对需要properties_proposition的payload处理
+            if p.properties_proposition:
+                indices.append(i)
+                tasks.append(
+                    asyncio.create_task(
+                        self._journey_structure_proposer.propose_journey_structure(
+                            guideline=p.content,
+                            tool_ids=p.tool_ids or [],
+                            progress_report=progress_report,
+                        )
+                    )
+                )
+
+        sparse_results = await async_utils.safe_gather(*tasks)
+        results: list[Optional[JourneyStructureProposition]] = [None] * len(payloads)
+        for i, res in zip(indices, sparse_results):
+            results[i] = res
+
+        return results
+
 
 class BehavioralChangeEvaluator:
     def __init__(
@@ -496,6 +554,7 @@ class BehavioralChangeEvaluator:
         agent_intention_proposer: AgentIntentionProposer,
         tool_running_action_detector: ToolRunningActionDetector,
         relative_action_proposer: RelativeActionProposer,
+        journey_structure_proposer: JourneyStructureProposer,
     ) -> None:
         self._logger = logger
         self._background_task_service = background_task_service
@@ -513,6 +572,7 @@ class BehavioralChangeEvaluator:
             customer_dependent_action_detector=customer_dependent_action_detector,
             agent_intention_proposer=agent_intention_proposer,
             tool_running_action_detector=tool_running_action_detector,
+            journey_structure_proposer=journey_structure_proposer,
         )
 
         self._journey_evaluator = JourneyEvaluator(

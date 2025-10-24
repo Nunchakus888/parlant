@@ -9,11 +9,13 @@ from parlant.core.agents import AgentStore, AgentId
 from app.tools import ToolManager
 from app.tools.http_config import AgentConfigRequest, HttpConfigLoader
 from app.tools.prompts_format import decode_markdown_links
+from parlant.core.services.journey_builder import JourneyBuilder
+from parlant.core.services.indexing.journey_structure_analysis import JourneyGraph
 
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/configs/actionbooks/step.json"
+        self.config_path = "app/case/step/weather.json"
         self.container = container
 
     def _load_config(self) -> Dict[str, Any]:
@@ -65,7 +67,7 @@ class CustomAgentFactory(AgentFactory):
         metadata = {
             "k_language": basic_settings.get("language", "English"),
             "tone": basic_settings.get("tone", "Friendly and professional"),
-            "chatbot_id": basic_settings.get("chatbot_id"),
+            "chatbot_id": config_request.chatbot_id,
             "tenant_id": config_request.tenant_id,
             "md5_checksum": config_request.md5_checksum,
             "session_id": config_request.session_id
@@ -118,13 +120,15 @@ class CustomAgentFactory(AgentFactory):
             self._logger.warning("no guidelines config, skip creating")
             return
         
+        # 初始化JourneyBuilder
+        journey_builder = JourneyBuilder(self._logger)
+        
+        # 环境变量配置
+        enable_journey_conversion = os.getenv("ENABLE_JOURNEY_AUTO_CONVERSION", "true").lower() == "true"
+        journey_confidence_threshold = float(os.getenv("JOURNEY_CONFIDENCE_THRESHOLD", "0.5"))
+        
         for action_book in action_books:
             try:
-                # 检查是否为journey类型
-                if action_book.get("type") == "journey":
-                    # await self._process_journey(action_book, agent)
-                    continue
-                
                 condition = action_book.get("condition", "")
                 action = action_book.get("action", "")
                 tool_names = action_book.get("tools", [])
@@ -143,20 +147,57 @@ class CustomAgentFactory(AgentFactory):
                     else:
                         self._logger.warning(f"tool {tool_name} not found, skip associating")
                 
-                # create guideline
-                await agent.create_guideline(
+                # create guideline (evaluation会在这里自动完成)
+                guideline = await agent.create_guideline(
                     condition=condition,
                     action=action,
                     tools=associated_tools
                 )
                 
-                # print tool names
-                tool_names = [tool.tool.name for tool in associated_tools] if associated_tools else []
+                # ★ 检查evaluation结果，判断是否需要转换为Journey ★
+                if enable_journey_conversion and guideline.metadata.get("is_journey_candidate"):
+                    confidence = guideline.metadata.get("journey_confidence", 0.0)
+                    
+                    if confidence >= journey_confidence_threshold:
+                        journey_graph_data = guideline.metadata.get("journey_graph")
+                        
+                        if journey_graph_data:
+                            self._logger.info(
+                                f"🔄 检测到Journey候选 (confidence: {confidence:.2f}): {condition[:50]}..."
+                            )
+                            
+                            try:
+                                # 解析Journey Graph
+                                journey_graph = JourneyGraph.from_dict(journey_graph_data)
+                                
+                                # 创建Journey
+                                journey = await agent.create_journey(
+                                    title=journey_graph.title,
+                                    description=journey_graph.description,
+                                    conditions=[condition],
+                                )
+                                
+                                # 构建Journey的状态和转换
+                                await journey_builder.build_journey_from_graph(
+                                    journey=journey,
+                                    journey_graph=journey_graph,
+                                    available_tools=available_tools,
+                                )
+                                
+                                self._logger.info(
+                                    f"✅ Journey创建成功: {journey_graph.title}"
+                                )
+                            except Exception as e:
+                                self._logger.error(f"Journey创建失败: {e}")
+                                # Journey创建失败，但guideline已经创建，可以继续使用
+                    else:
+                        self._logger.debug(
+                            f"Journey候选但置信度不足 (confidence: {confidence:.2f} < {journey_confidence_threshold}): {condition[:50]}..."
+                        )
                 
             except Exception as e:
                 self._logger.error(f"create guideline failed: {e}")
                 continue
-        
         
         self._logger.info(f"✅successfully created {len(action_books)} actionbooks")
 

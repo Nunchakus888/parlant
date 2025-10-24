@@ -989,7 +989,7 @@ class Journey:
                 for t in target.tools
             }
 
-            self._server._add_state_evaluation(
+            await self._server._add_state_evaluation(
                 target.id,
                 GuidelineContent(condition=condition or "", action=target._internal_action),
                 list(target_tool_ids.values()),
@@ -1044,7 +1044,7 @@ class Journey:
                     tag_id=tag_id,
                 )
 
-        await self._server._evaluate_guideline_immediately(
+        await self._server._add_guideline_evaluation(
             guideline.id,
             GuidelineContent(condition=condition, action=action),
             tool_ids,
@@ -1102,7 +1102,7 @@ class Journey:
             action=None,
         )
 
-        await self._server._evaluate_guideline_immediately(
+        await self._server._add_guideline_evaluation(
             guideline.id,
             GuidelineContent(condition=condition, action=None),
             [ToolId(service_name=INTEGRATED_TOOL_SERVICE_NAME, tool_name=tool.tool.name)],
@@ -1490,7 +1490,7 @@ class Agent:
                     tag_id=tag_id,
                 )
 
-        await self._server._evaluate_guideline_immediately(
+        await self._server._add_guideline_evaluation(
             guideline.id,
             GuidelineContent(condition=condition, action=action),
             tool_ids,
@@ -1860,60 +1860,40 @@ class Server:
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId],
         agent_id: Optional[AgentId] = None,
-    ) -> None:
-        # Register evaluation task with unified manager
-        await self._evaluation_manager.register_guideline_evaluation(
+    ) -> Optional[EvaluationResult]:
+        """评估guideline，根据EvaluationManager配置决定执行方式。"""
+        return await self._evaluation_manager.evaluate_guideline(
             guideline_id=guideline_id,
             guideline_content=guideline_content,
             tool_ids=tool_ids,
             agent_id=agent_id,
         )
     
-    async def _evaluate_guideline_immediately(
-        self,
-        guideline_id: GuidelineId,
-        guideline_content: GuidelineContent,
-        tool_ids: Sequence[ToolId],
-        agent_id: Optional[AgentId] = None,
-    ) -> EvaluationResult:
-        """立即执行guideline评估，不进入队列."""
-        return await self._evaluation_manager.evaluate_guideline_immediately(
-            guideline_id=guideline_id,
-            guideline_content=guideline_content,
-            tool_ids=tool_ids,
-            agent_id=agent_id,
-        )
-    
-    async def _evaluate_journey_immediately(
+    async def _add_journey_evaluation(
         self,
         journey: Journey,
         agent_id: Optional[AgentId] = None,
-    ) -> EvaluationResult:
-        """立即执行journey评估，不进入队列."""
-        return await self._evaluation_manager.evaluate_journey_immediately(
+    ) -> Optional[EvaluationResult]:
+        """评估journey，根据EvaluationManager配置决定执行方式。"""
+        return await self._evaluation_manager.evaluate_journey(
             journey=journey,
             agent_id=agent_id,
         )
 
-    def _add_state_evaluation(
+    async def _add_state_evaluation(
         self,
         state_id: JourneyStateId,
         guideline_content: GuidelineContent,
         tools: Sequence[ToolId],
-    ) -> None:
-        # Register evaluation task with unified manager
-        self._evaluation_manager.register_state_evaluation(
+        agent_id: Optional[AgentId] = None,
+    ) -> Optional[EvaluationResult]:
+        """评估state，根据EvaluationManager配置决定执行方式。"""
+        return await self._evaluation_manager.evaluate_state(
             state_id=state_id,
             guideline_content=guideline_content,
             tool_ids=tools,
+            agent_id=agent_id,
         )
-
-    def _add_journey_evaluation(
-        self,
-        journey: Journey,
-    ) -> None:
-        # Register evaluation task with unified manager
-        self._evaluation_manager.register_journey_evaluation(journey=journey)
 
     async def _setup_retrievers(self) -> None:
         async def setup_retriever(
@@ -2245,8 +2225,7 @@ class Server:
                 condition=str_condition,
             )
 
-            # 立即执行guideline评估，不进入队列
-            await self._evaluate_guideline_immediately(
+            await self._add_guideline_evaluation(
                 guideline.id,
                 GuidelineContent(condition=str_condition, action=None),
                 tool_ids=[],
@@ -2303,7 +2282,7 @@ class Server:
                 tag_id=_Tag.for_journey_id(journey_id=journey.id),
             )
 
-        self._add_journey_evaluation(journey)
+        await self._add_journey_evaluation(journey)
 
         return journey
 
@@ -2532,6 +2511,7 @@ class Server:
                 journey_store=c[JourneyStore],
                 container=c,
                 logger=c[Logger],
+                immediate=True,  # 默认立即执行评估
             )
             await self._exit_stack.enter_async_context(self._evaluation_manager)
 

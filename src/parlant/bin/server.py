@@ -146,6 +146,10 @@ from parlant.core.services.indexing.tool_running_action_detector import (
     ToolRunningActionDetector,
     ToolRunningActionSchema,
 )
+from parlant.core.services.indexing.journey_structure_proposer import (
+    JourneyStructureProposer,
+    JourneyStructurePropositionSchema,
+)
 from parlant.core.canned_responses import CannedResponseStore, CannedResponseVectorStore
 from parlant.core.nlp.service import NLPService
 from parlant.core.persistence.common import MigrationRequired, ServerOutdated
@@ -518,6 +522,7 @@ async def setup_container() -> AsyncIterator[Container]:
     _define_singleton(c, GuidelineContinuousProposer, GuidelineContinuousProposer)
     _define_singleton(c, CustomerDependentActionDetector, CustomerDependentActionDetector)
     _define_singleton(c, ToolRunningActionDetector, ToolRunningActionDetector)
+    _define_singleton(c, JourneyStructureProposer, JourneyStructureProposer)
 
     _define_singleton(c, JourneyGuidelineProjection, JourneyGuidelineProjection)
 
@@ -797,6 +802,7 @@ async def initialize_container(
         DisambiguationGuidelineMatchesSchema,
         JourneyNodeSelectionSchema,
         RelativeActionSchema,
+        JourneyStructurePropositionSchema,
     ):
         generator = await nlp_service_instance.get_schematic_generator(schema)
 

@@ -251,7 +251,6 @@ Expected output (JSON):
     ) -> ToolRunningActionSchema:
         prompt = await self._build_prompt(guideline, tools, _baseline_shots)
 
-        self._logger.debug(f"\nToolRunningActionDetector._generate_tool_running ======")
         response = await self._schematic_generator.generate(
             prompt=prompt,
             hints={"temperature": temperature},

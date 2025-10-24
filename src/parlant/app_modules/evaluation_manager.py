@@ -133,12 +133,14 @@ class EvaluationManager:
         journey_store: JourneyStore,
         container: LagomContainer,
         logger: Logger,
+        immediate: bool = True,
     ) -> None:
         self._db = db
         self._guideline_store = guideline_store
         self._journey_store = journey_store
         self._container = container
         self._logger = logger
+        self._immediate = immediate
         self._exit_stack = AsyncExitStack()
         
         # Chatbot-specific collections (initialized on demand)
@@ -171,14 +173,36 @@ class EvaluationManager:
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId] = [],
         agent_id: Optional[AgentId] = None,
-    ) -> EvaluationResult:
-        """Evaluate a guideline with agent-specific caching."""
-        return await self._evaluate_guideline_impl(
-            entity_id=guideline_id,
-            g=guideline_content,
-            tool_ids=tool_ids,
-            agent_id=agent_id,
-        )
+    ) -> Optional[EvaluationResult]:
+        """
+        评估guideline，根据初始化配置决定立即执行或添加到队列。
+        
+        Returns:
+            立即执行时返回结果，添加到队列时返回None
+        """
+        if self._immediate:
+            result = await self._evaluate_guideline(
+                entity_id=guideline_id,
+                g=guideline_content,
+                tool_ids=tool_ids,
+                agent_id=agent_id,
+            )
+            await self._process_results([result])
+            return result
+        else:
+            task = EvaluationTask(
+                entity_type="guideline",
+                entity_id=str(guideline_id),
+                agent_id=agent_id,
+                description=f"Guideline: {guideline_content.condition}",
+                evaluation_params={
+                    "guideline_id": guideline_id,
+                    "guideline_content": guideline_content,
+                    "tool_ids": tool_ids,
+                },
+            )
+            self._pending_tasks[f"guideline_{guideline_id}"] = task
+            return None
     
     async def evaluate_state(
         self,
@@ -186,19 +210,66 @@ class EvaluationManager:
         guideline_content: GuidelineContent,
         tool_ids: Sequence[ToolId] = [],
         agent_id: Optional[AgentId] = None,
-    ) -> EvaluationResult:
-        """Evaluate a journey state with agent-specific caching."""
-        return await self._evaluate_guideline_impl(
-            entity_id=state_id,
-            g=guideline_content,
-            tool_ids=tool_ids,
-            journey_state_proposition=True,
-            properties_proposition=False,
-            agent_id=agent_id,
-        )
+    ) -> Optional[EvaluationResult]:
+        """
+        评估state，根据初始化配置决定立即执行或添加到队列。
+        
+        Returns:
+            立即执行时返回结果，添加到队列时返回None
+        """
+        if self._immediate:
+            result = await self._evaluate_guideline(
+                entity_id=state_id,
+                g=guideline_content,
+                tool_ids=tool_ids,
+                journey_state_proposition=True,
+                properties_proposition=False,
+                agent_id=agent_id,
+            )
+            await self._process_results([result])
+            return result
+        else:
+            task = EvaluationTask(
+                entity_type="node",
+                entity_id=str(state_id),
+                agent_id=agent_id,
+                description=f"State: {guideline_content.condition}",
+                evaluation_params={
+                    "state_id": state_id,
+                    "guideline_content": guideline_content,
+                    "tool_ids": tool_ids,
+                },
+            )
+            self._pending_tasks[f"node_{state_id}"] = task
+            return None
     
-    async def evaluate_journey(self, journey: Journey, agent_id: Optional[AgentId] = None) -> EvaluationResult:
-        """Evaluate a journey with chatbot-specific caching."""
+    async def evaluate_journey(
+        self, 
+        journey: Journey, 
+        agent_id: Optional[AgentId] = None,
+    ) -> Optional[EvaluationResult]:
+        """
+        评估journey，根据初始化配置决定立即执行或添加到队列。
+        
+        Returns:
+            立即执行时返回结果，添加到队列时返回None
+        """
+        if not self._immediate:
+            task = EvaluationTask(
+                entity_type="journey",
+                entity_id=str(journey.id),
+                agent_id=agent_id,
+                description=f"Journey: {journey.title}",
+                evaluation_params={
+                    "journey": journey,
+                },
+            )
+            self._pending_tasks[f"journey_{journey.id}"] = task
+            return None
+        
+        # 立即执行评估
+        self._logger.info(f"🚀 evaluate journey immediately - agent: {agent_id}, journey: {journey.id}")
+        
         # Get chatbot_id from agent metadata
         chatbot_id = await self._get_chatbot_id(agent_id)
         
@@ -210,11 +281,13 @@ class EvaluationManager:
         
         if cached_evaluation := await journey_collection.find_one({"id": {"$eq": _hash}}):
             self._logger.info(f"🎯 评估缓存 (chatbot: {chatbot_id}, journey: {journey.title})")
-            return EvaluationResult(
+            result = EvaluationResult(
                 entity_type="journey",
                 entity_id=str(journey.id),
                 properties=cached_evaluation["node_properties"]
             )
+            await self._process_results([result])
+            return result
         
         # Perform evaluation
         self._logger.info(f"🔄 开始 Journey 完整评估 (chatbot: {chatbot_id}, journey: {journey.title})")
@@ -261,114 +334,18 @@ class EvaluationManager:
                     upsert=True
                 )
                 
-                return EvaluationResult(
+                result = EvaluationResult(
                     entity_type="journey",
                     entity_id=str(journey.id),
                     properties=cast(InvoiceJourneyData, invoice.data).node_properties_proposition or {}
                 )
+                
+                await self._process_results([result])
+                self._logger.info(f"🎯 journey evaluation completed - agent: {agent_id}, journey: {journey.id}")
+                
+                return result
     
     # ==================== Task Management ====================
-    
-    def register_guideline_evaluation(
-        self,
-        guideline_id: GuidelineId,
-        guideline_content: GuidelineContent,
-        tool_ids: Sequence[ToolId] = [],
-        agent_id: Optional[AgentId] = None,
-    ) -> None:
-        """Register a guideline evaluation task."""
-        task = EvaluationTask(
-            entity_type="guideline",
-            entity_id=str(guideline_id),
-            agent_id=agent_id,
-            description=f"Guideline: {guideline_content.condition}",
-            evaluation_params={
-                "guideline_id": guideline_id,
-                "guideline_content": guideline_content,
-                "tool_ids": tool_ids,
-            },
-        )
-        self._pending_tasks[f"guideline_{guideline_id}"] = task
-    
-    async def evaluate_guideline_immediately(
-        self,
-        guideline_id: GuidelineId,
-        guideline_content: GuidelineContent,
-        tool_ids: Sequence[ToolId] = [],
-        agent_id: Optional[AgentId] = None,
-    ) -> EvaluationResult:
-        """立即执行guideline评估，不进入队列，直接返回结果并更新metadata."""
-        
-        # 直接调用评估实现，不经过队列
-        result = await self.evaluate_guideline(
-            guideline_id=guideline_id,
-            guideline_content=guideline_content,
-            tool_ids=tool_ids,
-            agent_id=agent_id,
-        )
-        
-        # 🔧 修复：立即更新guideline metadata，确保评估结果被同步
-        await self._process_results([result])
-        
-        return result
-    
-    async def evaluate_journey_immediately(
-        self,
-        journey: Journey,
-        agent_id: Optional[AgentId] = None,
-    ) -> EvaluationResult:
-        """立即执行journey评估，不进入队列，直接返回结果并更新metadata."""
-        self._logger.info(f"🚀 evaluate journey immediately - agent: {agent_id}, journey: {journey.id}")
-        
-        # 直接调用评估实现，不经过队列
-        result = await self.evaluate_journey(
-            journey=journey,
-            agent_id=agent_id,
-        )
-        
-        # 🔧 修复：立即更新journey metadata，确保评估结果被同步
-        await self._process_results([result])
-        
-        self._logger.info(f"🎯 journey evaluation completed - agent: {agent_id}, journey: {journey.id}")
-        return result
-    
-    def register_state_evaluation(
-        self,
-        state_id: JourneyStateId,
-        guideline_content: GuidelineContent,
-        tool_ids: Sequence[ToolId] = [],
-        agent_id: Optional[AgentId] = None,
-    ) -> None:
-        """Register a state evaluation task."""
-        task = EvaluationTask(
-            entity_type="node",
-            entity_id=str(state_id),
-            agent_id=agent_id,
-            description=f"State: {guideline_content.condition}",
-            evaluation_params={
-                "state_id": state_id,
-                "guideline_content": guideline_content,
-                "tool_ids": tool_ids,
-            },
-        )
-        self._pending_tasks[f"node_{state_id}"] = task
-    
-    def register_journey_evaluation(
-        self,
-        journey: Journey,
-        agent_id: Optional[AgentId] = None,
-    ) -> None:
-        """Register a journey evaluation task."""
-        task = EvaluationTask(
-            entity_type="journey",
-            entity_id=str(journey.id),
-            agent_id=agent_id,
-            description=f"Journey: {journey.title}",
-            evaluation_params={
-                "journey": journey,
-            },
-        )
-        self._pending_tasks[f"journey_{journey.id}"] = task
     
     async def process_evaluations(
         self,
@@ -515,7 +492,7 @@ class EvaluationManager:
     
     # ==================== Private Implementation ====================
     
-    async def _evaluate_guideline_impl(
+    async def _evaluate_guideline(
         self,
         entity_id: GuidelineId | JourneyStateId,
         g: GuidelineContent,
