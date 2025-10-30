@@ -1299,6 +1299,7 @@ async def _ensure_session_and_customer(
     session_id = params.session_id
     md5_checksum = params.md5_checksum
     agent_id = AgentId(params.session_id)
+    session_title = params.session_title
 
     try:
         customer = await app.customers.read(customer_id)
@@ -1346,6 +1347,7 @@ async def _ensure_session_and_customer(
             session_id=session_id,
             customer_id=customer_id,
             agent_id=agent.id,
+            title=session_title,
             allow_greeting=False,
             tenant_id=params.tenant_id,
             chatbot_id=params.chatbot_id,
