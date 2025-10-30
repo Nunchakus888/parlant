@@ -207,7 +207,7 @@ class CorrelationalLogger(Logger):
             return
 
         self._logger.debug(
-            f"TRACE {self._add_correlation_id_and_scopes(message)}",
+            f"{self._add_correlation_id_and_scopes(message)}",
         )
 
     @override

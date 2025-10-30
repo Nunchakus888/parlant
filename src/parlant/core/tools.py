@@ -330,6 +330,7 @@ class ToolService(ABC):
     async def read_tool(
         self,
         name: str,
+        id: str | None = None,
     ) -> Tool: ...
 
     @abstractmethod
@@ -422,6 +423,7 @@ class LocalToolService(ToolService):
     async def read_tool(
         self,
         name: str,
+        id: str | None = None,
     ) -> Tool:
         try:
             return self._local_tool_to_tool(self._local_tools_by_name[name])

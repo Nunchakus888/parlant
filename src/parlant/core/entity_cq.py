@@ -123,25 +123,42 @@ class EntityQueries:
         agent_id: AgentId,
         journeys: Sequence[Journey],
     ) -> Sequence[Guideline]:
+        import structlog
+        logger = structlog.get_logger("parlant")
+        
         agent_guidelines = await self._guideline_store.list_guidelines(
             tags=[Tag.for_agent_id(agent_id)],
         )
+        logger.debug(f"📋 Agent级别guidelines: {len(agent_guidelines)} 个")
+        for g in agent_guidelines:
+            logger.debug(f"  → {g.id}: tags={g.tags}")
+        
         global_guidelines = await self._guideline_store.list_guidelines(tags=[])
+        logger.debug(f"🌍 Global guidelines: {len(global_guidelines)} 个")
 
         agent = await self._agent_store.read_agent(agent_id)
         guidelines_for_agent_tags = await self._guideline_store.list_guidelines(
             tags=[tag for tag in agent.tags]
         )
+        logger.debug(f"🏷️ Agent tags guidelines: {len(guidelines_for_agent_tags)} 个")
 
         guidelines_for_journeys = await self._guideline_store.list_guidelines(
             tags=[Tag.for_journey_id(journey.id) for journey in journeys]
         )
+        logger.debug(f"🚀 Journey级别guidelines: {len(guidelines_for_journeys)} 个")
+        for g in guidelines_for_journeys:
+            logger.debug(f"  → {g.id}: tags={g.tags}")
 
         tasks = [
             self._journey_guideline_projection.project_journey_to_guidelines(journey.id)
             for journey in journeys
         ]
         projected_journey_guidelines = await async_utils.safe_gather(*tasks)
+        
+        logger.debug(f"📊 Journey列表: {len(journeys)} 个")
+        for journey in journeys:
+            # journey.conditions 是 Sequence[GuidelineId]，即字符串列表
+            logger.debug(f"  Journey {journey.id}: conditions={journey.conditions}")
 
         all_guidelines = set(
             chain(
@@ -152,7 +169,11 @@ class EntityQueries:
                 *projected_journey_guidelines,
             )
         )
-
+        
+        logger.debug(f"✅ 总guidelines数: {len(all_guidelines)} 个")
+        
+        # 注意：Journey condition guidelines 需要保留以便激活 journey
+        # 它们会参与匹配来触发 journey 的启动，然后由 journey node guidelines 接管后续流程
         return list(all_guidelines)
 
     async def find_journey_related_guidelines(

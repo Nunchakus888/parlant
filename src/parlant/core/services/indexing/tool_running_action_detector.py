@@ -49,6 +49,7 @@ class ToolRunningActionDetector:
         guideline: GuidelineContent,
         tool_ids: Sequence[ToolId],
         progress_report: Optional[ProgressReport] = None,
+        id: str | None = None,
     ) -> ToolRunningActionProposition:
         if not tool_ids:
             return ToolRunningActionProposition(
@@ -62,7 +63,7 @@ class ToolRunningActionDetector:
         for tid in tool_ids:
             service = await self._service_registry.read_tool_service(tid.service_name)
             _tools = await service.list_tools()
-            tool = await service.read_tool(tid.tool_name)
+            tool = await service.read_tool(tid.tool_name, id=id)
             tools[tid] = tool
 
         with self._logger.scope("ToolRunningActionDetector"):

@@ -532,10 +532,21 @@ class AlphaEngine(Engine):
                     return True
             return False
 
+        def check_if_journey_is_active() -> bool:
+            # 检查是否有活跃的 Journey（路径不为空且不是已退出状态）
+            for journey_id, path in context.state.journey_paths.items():
+                if path and path[-1] is not None:  # 有路径且最后一步不是 None（退出）
+                    self._logger.debug(
+                        f"Journey {journey_id} is still active (path: {path}), continuing iterations"
+                    )
+                    return True
+            return False
+
         if (
             result.inspection
             and len(result.inspection.tool_calls) > 0
             or check_if_journey_node_with_tool_is_matched()
+            # or check_if_journey_is_active()  # 新增：检查 Journey 是否还在进行中
         ):
             return False
 
@@ -580,7 +591,7 @@ class AlphaEngine(Engine):
                 await self._load_matched_guidelines_and_journeys(context)
             )
 
-            # self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
+            self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
 
             matching_finished = True
 
@@ -1436,6 +1447,39 @@ class AlphaEngine(Engine):
             if tools
         }
 
+        # Debug logging
+        # if node_guidelines:
+        #     self._logger.debug(f"🔍 [engine] Found {len(node_guidelines)} journey node guidelines")
+        #     for ng in node_guidelines:
+        #         node_id = extract_node_id_from_journey_node_guideline_id(ng.id)
+        #         self._logger.debug(f"  → Guideline: {ng.id} → Node: {node_id}")
+
+        # node_tool_results = await async_utils.safe_gather(
+        #     *[
+        #         self._entity_queries.find_journey_node_tool_associations(
+        #             extract_node_id_from_journey_node_guideline_id(g.id),
+        #         )
+        #         for g in node_guidelines
+        #     ]
+        # )
+
+        # # Debug: show tools for each node
+        # for g, tools in zip(node_guidelines, node_tool_results):
+        #     node_id = extract_node_id_from_journey_node_guideline_id(g.id)
+        #     if tools:
+        #         tool_names = [f"{t.service_name}:{t.tool_name}" for t in tools]
+        #         self._logger.debug(f"  ✓ Node {node_id} → {len(tools)} tools: {tool_names}")
+        #     else:
+        #         self._logger.debug(f"  ✗ Node {node_id} → NO TOOLS!")
+
+        # node_tools_associations = {
+        #     guideline_matches_by_id[g.id]: list(tools)
+        #     for g, tools in zip(node_guidelines, node_tool_results)
+        #     if tools
+        # }
+
+        self._logger.debug(f"🔧 [engine] Tool-enabled nodes: {len(node_tools_associations)}/{len(node_guidelines) if node_guidelines else 0}")
+
         tools_for_guidelines.update(node_tools_associations)
 
         return dict(tools_for_guidelines)
@@ -1880,6 +1924,7 @@ class AlphaEngine(Engine):
                 output.append(f"     Condition: {match.guideline.content.condition}")
                 if match.guideline.content.action:
                     output.append(f"     Action: {match.guideline.content.action}")
+                output.append(f"     Tags: {match.guideline.tags}")
                 output.append(f"     Rationale: {match.rationale}")
                 if match.metadata:
                     output.append(f"     Metadata: {match.metadata}")
@@ -1893,6 +1938,7 @@ class AlphaEngine(Engine):
                 output.append(f"     Condition: {match.guideline.content.condition}")
                 if match.guideline.content.action:
                     output.append(f"     Action: {match.guideline.content.action}")
+                output.append(f"     Tags: {match.guideline.tags}")
                 output.append(f"     Rationale: {match.rationale}")
                 if match.metadata:
                     output.append(f"     Metadata: {match.metadata}")
@@ -1907,6 +1953,7 @@ class AlphaEngine(Engine):
                 output.append(f"     Description: {journey.description}")
                 output.append(f"     Conditions: {len(journey.conditions)} conditions")
                 output.append(f"     Tags: {len(journey.tags)} tags")
+                output.append(f"     Tags: {journey.tags}")
                 output.append(f"     Created: {journey.creation_utc}")
                 output.append("")
         

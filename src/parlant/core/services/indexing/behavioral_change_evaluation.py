@@ -493,6 +493,7 @@ class GuidelineEvaluator:
                         guideline=p.content,
                         tool_ids=p.tool_ids,
                         progress_report=progress_report,
+                        id=p.id,
                     )
                 )
             )
@@ -670,7 +671,6 @@ class BehavioralChangeEvaluator:
                 params={"invoices": invoices},
             )
 
-            self._logger.trace(f"evaluation task '{evaluation.id}' completed")
 
             await self._evaluation_store.update_evaluation(
                 evaluation_id=evaluation.id,

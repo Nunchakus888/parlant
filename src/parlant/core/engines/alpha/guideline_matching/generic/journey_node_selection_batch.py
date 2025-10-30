@@ -326,10 +326,15 @@ def get_journey_transition_map_text(
                 if not previous_path or set(previous_path) == set([None]):
                     flags_str += BEGIN_JOURNEY_AT_ACTIONLESS_ROOT_FLAG_TEXT + "\n"
                 displayed_node_action = FORK_NODE_ACTION_STR
-            else:  # Root has no action and a single follow up, so that follow up is first to be executed
+            elif len(node.outgoing_edges) == 1:  # Root has no action and a single follow up, so that follow up is first to be executed
                 print_node = False
                 if not previous_path or set(previous_path) == set([None]):
                     first_node_to_execute = node.outgoing_edges[0].target_node_index
+            else:  # Root has no outgoing edges - this shouldn't happen in a valid journey
+                print_node = False
+                if not previous_path or set(previous_path) == set([None]):
+                    # No outgoing edges from root - journey is malformed, but don't crash
+                    first_node_to_execute = None
         # Customer / Agent dependent flags
         if node.customer_dependent_action:
             if print_customer_action_description and node.customer_action_description:

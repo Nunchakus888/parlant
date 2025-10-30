@@ -430,7 +430,7 @@ class EvaluationManager:
     async def _get_guideline_collection(self, chatbot_id: str) -> JSONFileDocumentCollection[_CachedGuidelineEvaluation]:
         """Get chatbot-specific guideline collection."""
         if chatbot_id not in self._guideline_collections:
-            collection_name = f"guideline_evaluations_chatbot_{chatbot_id}"
+            collection_name = f"guideline_evaluations_{chatbot_id}"
             async def guideline_loader(doc):
                 return doc
             
@@ -444,7 +444,7 @@ class EvaluationManager:
     async def _get_journey_collection(self, chatbot_id: str) -> JSONFileDocumentCollection[_CachedJourneyEvaluation]:
         """Get chatbot-specific journey collection."""
         if chatbot_id not in self._journey_collections:
-            collection_name = f"journey_evaluations_chatbot_{chatbot_id}"
+            collection_name = f"journey_evaluations_{chatbot_id}"
             async def journey_loader(doc):
                 return doc
             
@@ -539,6 +539,7 @@ class EvaluationManager:
                         action_proposition=True,
                         properties_proposition=properties_proposition,
                         journey_node_proposition=journey_state_proposition,
+                        id=agent_id,
                     ),
                 )
             ],
@@ -609,7 +610,7 @@ class EvaluationManager:
                         result.properties
                     )
             except Exception as e:
-                self._logger.error(f"Failed to process result for {result.entity_id}: {e}")
+                self._logger.error(f"❌ Failed to process result for {result.entity_type} id:{result.entity_id} entity:{result.properties} error:{e}")
     
     async def _update_guideline_metadata(
         self,
@@ -653,9 +654,20 @@ class EvaluationManager:
         properties: dict[str, JSONSerializable],
     ) -> None:
         """Update journey metadata with evaluation results."""
-        # For journey evaluations, properties are node-specific
-        # This would need to be implemented based on the actual journey structure
-        pass
+        node = await self._journey_store.read_node(journey_id)
+        properties_to_add = {
+            k: v
+            for k, v in properties.items()
+            if k not in node.metadata or node.metadata[k] is None
+        }
+
+        for key, value in properties_to_add.items():
+            await self._journey_store.set_node_metadata(
+                node_id=journey_id,
+                key=key,
+                value=value,
+            )
+
     
     async def _render_entity_description(self, entity_id: str) -> str:
         """Render entity description for UI."""
@@ -683,7 +695,9 @@ class EvaluationManager:
         # 使用 chatbot_id 而不是 agent_id，实现跨 agent 共享缓存
         chatbot_suffix = f"_{chatbot_id}" if chatbot_id else ""
         
-        hash_input = f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}:{journey_state_propositions}:{properties_proposition}{chatbot_suffix}"
+        # ⚠️ 重要：hash 只基于 guideline 内容和 tool_ids，不包含评估参数
+        # 这样可以避免同一个 guideline 因不同评估参数而产生多个缓存条目
+        hash_input = f"{g.condition or ''}:{g.action or ''}:{tool_ids_str}{chatbot_suffix}"
         return hashlib.md5(hash_input.encode()).hexdigest()
     
     def _hash_journey_evaluation_request(self, journey: Journey, chatbot_id: Optional[str] = None) -> str:

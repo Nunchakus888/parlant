@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from parlant.core.guidelines import Guideline, GuidelineId, GuidelineStore
+from parlant.core.services.tools.service_registry import ServiceRegistry
 from parlant.core.loggers import Logger
 from parlant.core.journeys import (
     JourneyEdge,
@@ -39,10 +40,12 @@ class JourneyModule:
         logger: Logger,
         journey_store: JourneyStore,
         guideline_store: GuidelineStore,
+        service_registry: ServiceRegistry | None = None,
     ):
         self._logger = logger
         self._journey_store = journey_store
         self._guideline_store = guideline_store
+        self._service_registry = service_registry
 
     async def create(
         self,
@@ -161,7 +164,31 @@ class JourneyModule:
 
     async def delete(self, journey_id: JourneyId) -> None:
         journey = await self._journey_store.read_journey(journey_id=journey_id)
-
+        
+        """TODO 删除journey，级联清理关联的guideline和tools"""
+        # 从journey的tags中提取agent_id用于工具清理
+        # agent_tag = None
+        # for tag in journey.tags:
+        #     if str(tag).startswith("agent:"):
+        #         agent_tag = tag
+        #         break
+        
+        # # 清理journey相关的工具（如果有关联的agent）
+        # if agent_tag and self._service_registry:
+        #     # 提取agent_id
+        #     agent_id_str = str(agent_tag).replace("agent:", "")
+        #     try:
+        #         # 获取plugin_server并清理该journey的工具
+        #         plugin_service = self._service_registry.get_service("plugin")
+        #         if plugin_service and hasattr(plugin_service, "plugin_server"):
+        #             plugin_server = plugin_service.plugin_server
+        #             # 清理以journey_id注册的工具（如果存在）
+        #             await plugin_server.disable_agent_tools(str(journey_id))
+        #             self._logger.debug(f"🧹 Cleaned tools for journey {journey_id}")
+        #     except Exception as e:
+        #         self._logger.warning(f"Failed to cleanup journey tools: {e}")
+        
+        # 删除journey本身
         await self._journey_store.delete_journey(journey_id=journey_id)
 
         for condition in journey.conditions:

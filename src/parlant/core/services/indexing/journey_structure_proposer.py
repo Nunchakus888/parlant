@@ -20,6 +20,7 @@ Journey结构分析Proposer
 
 import traceback
 from typing import Optional, Sequence
+from pydantic import Field
 
 from parlant.core.common import DefaultBaseModel
 from parlant.core.services.indexing.common import EvaluationError, ProgressReport
@@ -49,9 +50,11 @@ class JourneyNodeSchema(DefaultBaseModel):
 
 class JourneyEdgeSchema(DefaultBaseModel):
     """Journey边的Schema定义"""
-    from_node: str  # 使用from_node而不是from，避免Python关键字
-    to_node: str
+    from_node: str = Field(alias="from")  # LLM生成"from"，内部使用from_node
+    to_node: str = Field(alias="to")      # LLM生成"to"，内部使用to_node
     condition: Optional[str] = None
+    
+    model_config = {"populate_by_name": True}  # 允许使用字段名或alias
 
 
 class JourneyGraphSchema(DefaultBaseModel):
@@ -202,7 +205,7 @@ class JourneyStructureProposer:
     ) -> PromptBuilder:
         """构建分析prompt"""
         builder = PromptBuilder(
-            on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+            on_build=lambda prompt: self._logger.trace(f"Prompt:\n\n{prompt}")
         )
         
         # 获取工具信息
@@ -267,6 +270,15 @@ Keep as simple guideline if:
 - Simple condition-action pair
 - No state tracking needed
 - Tools can run independently
+- **Multiple steps BUT no step dependencies** - If steps don't need data passed between them, use simple matching
+- **Can work with both approaches** - When either journey or simple matching would work, PREFER simple matching
+- Steps are mostly parallel or independent operations
+
+**General Principle: Minimize Journey Usage**
+- Journeys add complexity - use ONLY when truly necessary
+- Use Journey ONLY for clear step dependencies (one step's output → next step's input)
+- Use Journey ONLY when strict sequential ordering is mandatory
+- **When in doubt, use simple guideline matching instead of journey**
 """,
         )
         
@@ -298,12 +310,27 @@ A Journey Graph is a DAG (Directed Acyclic Graph) with:
 - **condition: null** - Unconditional transition (automatic progression)
 - **condition: "description"** - Conditional transition (e.g., "用户提供了城市名称")
 
-### Guidelines
+### CRITICAL Guidelines
 
-- Use descriptive, unique node IDs (e.g., "ask_city", "get_coordinates")
+**Node Structure:**
+- DO NOT create virtual start/root/init/begin nodes
+- The system provides an automatic initial_state - you only define business nodes
+- **IMPORTANT**: If the task involves collecting user input, consider that users may provide information proactively
+  - Add a node to PARSE/EXTRACT information from user messages BEFORE asking for it
+  - Example: For weather query, first try to extract city from user's message, THEN ask if missing
+- Use descriptive, unique node IDs that reflect the actual business action
 - Be specific and clear in action descriptions
-- Use exact tool names from the available tools list
+- Use exact tool names from the available tools list - verify each tool name exists before using it
 - Do NOT specify tool parameters - they are inferred automatically
+- The first node in your graph should be the first real step in the process
+
+**Prevent Infinite Loops:**
+- MUST ensure the journey graph has at least one terminal node (exit point)
+- DO NOT create circular paths where nodes loop back indefinitely
+- Every branch must eventually lead to a terminal state
+- If using conditional branches (fork nodes), ensure all paths can reach an end
+- Terminal nodes should be chat or tool nodes with no outgoing edges
+- Example: In a 4-step process, the last step (e.g., "respond_result") should have no outgoing edges
 """,
         )
         
@@ -312,14 +339,14 @@ A Journey Graph is a DAG (Directed Acyclic Graph) with:
             template="""
 ## Examples
 
-### Example 1: Multi-step Process (Journey Candidate)
+### Example 1: Multi-step Process with Proactive User Input (Journey Candidate)
 
 Input:
 - Condition: "用户询问天气情况"
 - Action: "先让用户提供城市名称，然后使用city_geo_info工具将城市转为坐标，获取经纬度后，立即使用get_weather_by_geo工具查询天气，最后用用户的语言回答天气情况"
 - Tools: ["city_geo_info", "get_weather_by_geo"]
 
-Analysis: Clear sequential steps with tool chain dependencies. The second tool depends on the first tool's results.
+Analysis: Clear sequential steps with tool chain dependencies. Users may provide city name proactively (e.g., "上海天气").
 
 ### Example 2: Simple Response (NOT Journey)
 
@@ -346,12 +373,21 @@ Analysis: Single tool call with no dependencies or sequential steps.
             template="""
 ## Guideline to Analyze
 
-Condition: {{condition}}
+Base your evaluation exclusively on the condition, action, and tools provided here.
 
-Action: {{action}}
+Condition: {condition}
+
+Action: {action}
 
 Available Tools: 
-{{tools}}
+{tools}
+
+⚠️ **CRITICAL REMINDER**: 
+- The above list is the COMPLETE and ONLY list of available tools
+- If a tool is NOT in this list, it does NOT exist and CANNOT be used
+- Do NOT create tool nodes for tools not in this exact list
+- Use chat/fork nodes for logic that doesn't require a tool
+- Every tool name in your journey_graph MUST exactly match a name from the list above
 """,
             props={
                 "condition": guideline.condition,
@@ -385,8 +421,8 @@ Expected output (JSON):
     ],
     "edges": [
       {{
-        "from_node": "<SOURCE_NODE_ID>",
-        "to_node": "<TARGET_NODE_ID>",
+        "from": "<SOURCE_NODE_ID>",
+        "to": "<TARGET_NODE_ID>",
         "condition": "<CONDITION or null>"
       }}
     ]

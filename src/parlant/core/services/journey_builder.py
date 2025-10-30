@@ -73,9 +73,25 @@ class JourneyBuilder:
                 journey, node, available_tools
             )
             state_map[node.id] = state
-            self._logger.debug(f"  ✓ 创建状态: {node.id} ({node.type})")
+            self._logger.trace(f"create state: {node.id} ({node.type})")
         
-        # 2. 创建所有转换(transitions)
+        # 2. 连接root到第一个节点
+        # 找到第一个节点（没有incoming edge的节点）
+        nodes_with_incoming = {edge.to_node for edge in journey_graph.edges}
+        first_nodes = [node for node in journey_graph.nodes if node.id not in nodes_with_incoming]
+        
+        if first_nodes:
+            first_node_state = state_map[first_nodes[0].id]
+            await journey.create_transition(
+                condition=None,
+                source=journey.initial_state,
+                target=first_node_state,
+            )
+            self._logger.trace(
+                f"  ✓ 创建转换: root -> {first_nodes[0].id} (从root连接到第一个节点)"
+            )
+        
+        # 3. 创建所有图中定义的转换(transitions)
         for edge in journey_graph.edges:
             source_state = state_map.get(edge.from_node)
             target_state = state_map.get(edge.to_node)
@@ -92,13 +108,9 @@ class JourneyBuilder:
             )
             
             condition_text = edge.condition or "unconditional"
-            self._logger.debug(
-                f"  ✓ 创建转换: {edge.from_node} -> {edge.to_node} ({condition_text})"
+            self._logger.trace(
+                f"create transition: {edge.from_node} -> {edge.to_node} ({condition_text})"
             )
-        
-        self._logger.info(
-            f"✅ Journey构建完成: {journey_graph.title}"
-        )
         
         return state_map
     
@@ -149,6 +161,9 @@ class JourneyBuilder:
             
             # 导入SDK类型（运行时）
             from parlant.sdk import ToolJourneyState
+            
+            # Debug: 记录工具传递
+            self._logger.trace(f"🛠️ [journey_builder] Node '{node.id}' will use tool: {node.tool}")
             
             # 工具参数将由Journey引擎在运行时自动推断
             # 直接传递Tool对象（ToolEntry）

@@ -77,7 +77,7 @@ class CustomAgentFactory(AgentFactory):
             id=AgentId(config_request.session_id) if config_request.session_id else None,
             name=basic_settings.get("name"),
             description=f"{basic_settings.get('description', '')} {basic_settings.get('background', '')}",
-            max_engine_iterations=int(os.getenv("MAX_ENGINE_ITERATIONS", "1")),
+            max_engine_iterations=int(os.getenv("MAX_ENGINE_ITERATIONS", "3")),  # 默认3次迭代，支持多步骤工具调用
             metadata=metadata,
         )
         
@@ -86,7 +86,16 @@ class CustomAgentFactory(AgentFactory):
         
         start_time = time.time()
         # create guidelines
-        await self._create_guidelines(agent, config.get("action_books", []), tools)
+        guidelines = await self._create_guidelines(agent, config.get("action_books", []), tools)
+        
+        # 处理该 agent 的评估队列（按 agent_id 隔离）
+        await server._process_evaluations(agent_id=agent.id)
+        
+        # 评估完成后，处理 journey 转换
+        await self._process_journey_conversions(agent, guidelines, tools)
+
+        await server._process_evaluations(agent_id=agent.id)
+
 
         end_time = time.time()
         self._logger.info(f"⏱️ create guidelines: {(end_time - start_time):.3f} seconds")
@@ -115,17 +124,13 @@ class CustomAgentFactory(AgentFactory):
         
         return tool_manager._tools
     
-    async def _create_guidelines(self, agent: p.Agent, action_books: List[Dict[str, Any]], available_tools: Dict[str, Any]) -> None:
+    async def _create_guidelines(self, agent: p.Agent, action_books: List[Dict[str, Any]], available_tools: Dict[str, Any]) -> List[p.Guideline]:
+        """创建 guidelines，返回创建的 guideline 列表"""
         if not action_books:
             self._logger.warning("no guidelines config, skip creating")
-            return
+            return []
         
-        # 初始化JourneyBuilder
-        journey_builder = JourneyBuilder(self._logger)
-        
-        # 环境变量配置
-        enable_journey_conversion = os.getenv("ENABLE_JOURNEY_AUTO_CONVERSION", "true").lower() == "true"
-        journey_confidence_threshold = float(os.getenv("JOURNEY_CONFIDENCE_THRESHOLD", "0.5"))
+        created_guidelines = []
         
         for action_book in action_books:
             try:
@@ -147,37 +152,85 @@ class CustomAgentFactory(AgentFactory):
                     else:
                         self._logger.warning(f"tool {tool_name} not found, skip associating")
                 
-                # create guideline (evaluation会在这里自动完成)
+                # if type == "journey":
+                #     self._logger.info(f"skip journey: {action_book}")
+                #     await self._process_journey_4_test(agent, action_book)
+                #     continue
+                
+                # create guideline（评估任务会异步添加到队列）
                 guideline = await agent.create_guideline(
                     condition=condition,
                     action=action,
                     tools=associated_tools
                 )
                 
-                # ★ 检查evaluation结果，判断是否需要转换为Journey ★
-                if enable_journey_conversion and guideline.metadata.get("is_journey_candidate"):
-                    confidence = guideline.metadata.get("journey_confidence", 0.0)
+                created_guidelines.append(guideline)
+                
+            except Exception as e:
+                self._logger.error(f"create guideline failed: {e}")
+                continue
+        
+        self._logger.info(f"📖 successfully created {len(action_books)} actionbooks")
+        return created_guidelines
+
+        
+    async def _process_journey_conversions(
+        self, 
+        agent: p.Agent, 
+        guidelines: List[p.Guideline],
+        available_tools: Dict[str, Any]
+    ) -> None:
+        """在评估完成后，处理 journey 转换逻辑"""
+        from parlant.core.guidelines import GuidelineStore
+        from parlant.core.tags import Tag
+        
+        guideline_store = self.container[GuidelineStore]
+        journey_builder = JourneyBuilder(self._logger)
+        
+        # 环境变量配置
+        enable_journey_conversion = os.getenv("ENABLE_JOURNEY_AUTO_CONVERSION", "true").lower() == "true"
+        journey_confidence_threshold = float(os.getenv("JOURNEY_CONFIDENCE_THRESHOLD", "0.5"))
+        
+        if not enable_journey_conversion:
+            self._logger.debug("Journey自动转换已禁用")
+            return
+        
+        for guideline in guidelines:
+            try:
+                # 从数据库读取guideline，获取evaluation更新后的metadata
+                guideline_with_metadata = await guideline_store.read_guideline(guideline.id)
+                
+                # 检查evaluation结果，判断是否需要转换为Journey
+                if guideline_with_metadata.metadata.get("is_journey_candidate"):
+                    confidence = guideline_with_metadata.metadata.get("journey_confidence", 0.0)
                     
                     if confidence >= journey_confidence_threshold:
-                        journey_graph_data = guideline.metadata.get("journey_graph")
+                        journey_graph_data = guideline_with_metadata.metadata.get("journey_graph")
                         
                         if journey_graph_data:
-                            self._logger.info(
-                                f"🔄 检测到Journey候选 (confidence: {confidence:.2f}): {condition[:50]}..."
+                            self._logger.trace(
+                                f"detect journey candidate (confidence: {confidence:.2f}): {guideline_with_metadata.content.condition[:50]}..."
                             )
                             
                             try:
-                                # 解析Journey Graph
+                                condition = guideline.condition
+
+                                self._logger.trace(f"guideline deleting: {guideline.id}")
+                                await guideline_store.delete_guideline(
+                                    guideline_id=guideline.id,
+                                )
+
+                                # 1. 解析Journey Graph
                                 journey_graph = JourneyGraph.from_dict(journey_graph_data)
                                 
-                                # 创建Journey
                                 journey = await agent.create_journey(
                                     title=journey_graph.title,
                                     description=journey_graph.description,
                                     conditions=[condition],
+                                    agent_id=agent.id,
                                 )
                                 
-                                # 构建Journey的状态和转换
+                                # 3. 构建Journey的状态和转换
                                 await journey_builder.build_journey_from_graph(
                                     journey=journey,
                                     journey_graph=journey_graph,
@@ -185,450 +238,26 @@ class CustomAgentFactory(AgentFactory):
                                 )
                                 
                                 self._logger.info(
-                                    f"✅ Journey创建成功: {journey_graph.title}"
+                                    f"🚕 create journey successfully: {journey_graph.title}"
                                 )
+                                
                             except Exception as e:
-                                self._logger.error(f"Journey创建失败: {e}")
-                                # Journey创建失败，但guideline已经创建，可以继续使用
+                                self._logger.error(f"create journey failed: {e}")
+                                raise
+
                     else:
-                        self._logger.debug(
-                            f"Journey候选但置信度不足 (confidence: {confidence:.2f} < {journey_confidence_threshold}): {condition[:50]}..."
+                        self._logger.trace(
+                            f"Journey候选但置信度不足 (confidence: {confidence:.2f} < {journey_confidence_threshold}): {guideline_with_metadata.content.condition[:50]}..."
                         )
-                
+                        
             except Exception as e:
-                self._logger.error(f"create guideline failed: {e}")
+                self._logger.error(f"process journey conversion failed: {e}")
                 continue
-        
-        self._logger.info(f"✅successfully created {len(action_books)} actionbooks")
-
-    async def _process_journey(self, journey_config: Dict[str, Any], agent: p.Agent) -> None:
-        """
-        处理journey类型的数据
-        解析action中的缩进层级结构，创建journey和状态转换
-        """
-        try:
-            title = journey_config.get("title", "Untitled Journey")
-            description = journey_config.get("description", "")
-            conditions = journey_config.get("conditions", [])
-            action = journey_config.get("action", "")
-            
-            self._logger.info(f"Processing journey: {title}")
-            
-            # 创建journey
-            journey = await agent.create_journey(
-                title=title,
-                description=description,
-                conditions=conditions
-            )
-            
-            # 解析action中的状态结构
-            states = self._parse_journey_states(action)
-            
-            # 创建状态和转换
-            await self._create_journey_states_and_transitions(journey, states)
-            
-            self._logger.info(f"Successfully created journey: {title} with {len(states)} states")
-            
-            # 记录解析的状态结构
-            self._log_journey_structure(states)
-            
-        except Exception as e:
-            self._logger.error(f"Error processing journey {journey_config.get('title', 'Unknown')}: {e}")
-            raise
-
-    def _log_journey_structure(self, states: List[Dict[str, Any]], indent: int = 0) -> None:
-        """
-        记录journey的结构层次
-        """
-        for state in states:
-            indent_str = "  " * indent
-            self._logger.debug(f"{indent_str}State {state['id']}: {state['name']} (level: {state['indent_level']})")
-            if state.get('children'):
-                self._log_journey_structure(state['children'], indent + 1)
-
-    def _parse_journey_states(self, action: str) -> List[Dict[str, Any]]:
-        """
-        解析journey action中的状态结构
-        根据缩进层级解析状态层级关系
-        """
-        states = []
-        lines = action.split('\n')
-        current_state = None
-        state_stack = []  # 用于跟踪状态层级
-        state_counter = 0
-        
-        for line_num, line in enumerate(lines, 1):
-            original_line = line
-            line = line.rstrip()  # 保留左侧空格用于缩进检测
-            
-            # 跳过空行和注释行
-            if not line.strip() or line.strip().startswith('#'):
-                continue
-            
-            # 计算缩进级别
-            indent_level = self._calculate_indent_level(line)
-            content = line.strip()
-            
-            # 检测状态行（包含数字编号或状态标识）
-            if self._is_state_line(content):
-                state_info = self._parse_state_line(content, indent_level, state_counter)
-                if state_info:
-                    state_counter += 1
-                    current_state = state_info
-                    
-                    # 根据缩进级别确定父子关系
-                    self._update_state_hierarchy(state_info, state_stack, indent_level, states)
-                    
-            elif content.startswith('- **') and current_state:
-                # 解析状态属性
-                self._parse_state_attribute(content, current_state)
-                
-        return states
-
-    def _calculate_indent_level(self, line: str) -> int:
-        """
-        计算行的缩进级别
-        使用空格或制表符作为缩进单位
-        """
-        if not line:
-            return 0
-            
-        # 计算前导空格数
-        leading_spaces = len(line) - len(line.lstrip())
-        
-        # 将空格数转换为缩进级别（每4个空格为一级）
-        return leading_spaces // 4
-
-    def _is_state_line(self, content: str) -> bool:
-        """
-        判断是否为状态行
-        状态行通常包含：
-        1. 数字编号（如 "1. Initial State", "3.1 Happy Path"）
-        2. 状态标识词（如 "State", "Step", "Phase"）
-        3. 特定格式（如 "### 3.1 Happy Path"）
-        4. 动作描述（如 "Check Availability", "Present Options"）
-        """
-        # 检查是否包含数字编号
-        if re.match(r'^\d+(\.\d+)*\.?\s+', content):
-            return True
-            
-        # 检查是否包含状态标识词
-        state_keywords = ['state', 'step', 'phase', 'stage', 'node', 'action', 'check', 'present', 'confirm', 'schedule']
-        content_lower = content.lower()
-        for keyword in state_keywords:
-            if keyword in content_lower:
-                return True
-                
-        # 检查是否以特定格式开头（Markdown标题）
-        if re.match(r'^#{1,6}\s+\d+', content):
-            return True
-            
-        # 检查是否以大写字母开头的动作描述
-        if re.match(r'^[A-Z][a-zA-Z\s]+$', content.strip()):
-            return True
-            
-        return False
-
-    def _update_state_hierarchy(self, state_info: Dict[str, Any], state_stack: List[Dict[str, Any]], 
-                               indent_level: int, states: List[Dict[str, Any]]) -> None:
-        """
-        根据缩进级别更新状态层级关系
-        """
-        # 调整状态栈以匹配当前缩进级别
-        while len(state_stack) > indent_level:
-            state_stack.pop()
-            
-        # 设置父状态
-        if indent_level == 0:
-            # 根级别状态
-            state_info['parent'] = None
-            state_info['children'] = []
-            states.append(state_info)
-            state_stack = [state_info]
-        else:
-            # 子状态
-            if state_stack:
-                parent = state_stack[-1]
-                state_info['parent'] = parent
-                state_info['children'] = []
-                parent['children'].append(state_info)
-                
-                # 更新状态栈
-                if len(state_stack) > indent_level:
-                    state_stack = state_stack[:indent_level]
-                state_stack.append(state_info)
-            else:
-                # 如果没有父状态，作为根状态处理
-                state_info['parent'] = None
-                state_info['children'] = []
-                states.append(state_info)
-                state_stack = [state_info]
-
-    def _parse_state_line(self, content: str, indent_level: int, state_counter: int) -> Optional[Dict[str, Any]]:
-        """
-        解析状态行，提取状态信息
-        """
-        try:
-            # 移除标题标记（如果存在）
-            clean_content = re.sub(r'^#{1,6}\s+', '', content)
-            
-            # 解析状态编号和名称
-            state_id = None
-            state_name = clean_content
-            
-            # 尝试提取数字编号
-            number_match = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(.*)', clean_content)
-            if number_match:
-                state_id = number_match.group(1)
-                state_name = number_match.group(2).strip() or clean_content
-            else:
-                # 如果没有数字编号，使用计数器
-                state_id = str(state_counter + 1)
-                
-            # 清理状态名称
-            if not state_name:
-                state_name = f"State {state_id}"
-                
-            return {
-                'id': state_id,
-                'name': state_name,
-                'indent_level': indent_level,
-                'action': None,
-                'type': None,
-                'tool': None,
-                'condition': None,
-                'description': None,
-                'end': False,
-                'transition': None,
-                'parent': None,
-                'children': []
-            }
-        except Exception as e:
-            self._logger.warning(f"Error parsing state line '{content}': {e}")
-            return None
-
-    def _parse_state_attribute(self, line: str, state: Dict[str, Any]) -> None:
-        """
-        解析状态属性行
-        """
-        try:
-            # 移除开头的 - **
-            content = line.replace('- **', '').replace('**', '')
-            
-            if ': ' in content:
-                key, value = content.split(': ', 1)
-                key = key.strip().lower()
-                value = value.strip()
-                
-                if key == 'action':
-                    state['action'] = value
-                elif key == 'type':
-                    state['type'] = value
-                elif key == 'tool':
-                    state['tool'] = value
-                elif key == 'condition':
-                    state['condition'] = value
-                elif key == 'description':
-                    state['description'] = value
-                elif key == 'end':
-                    state['end'] = value.lower() == 'journey complete'
-                elif key == 'transition':
-                    state['transition'] = value
-                    
-        except Exception as e:
-            self._logger.warning(f"Error parsing state attribute '{line}': {e}")
-
-    async def _create_journey_states_and_transitions(self, journey: p.Journey, states: List[Dict[str, Any]]) -> None:
-        """
-        创建journey的状态和转换
-        """
-        try:
-            # 创建初始状态
-            initial_state = await journey._create_state(
-                p.ChatJourneyState,
-                action="Welcome! How can I help you today?"
-            )
-            
-            # 创建所有状态
-            state_map = {}
-            for state_info in states:
-                state = await self._create_single_state(journey, state_info)
-                state_map[state_info['id']] = state
-                
-            # 创建转换
-            await self._create_transitions(journey, states, state_map, initial_state)
-            
-        except Exception as e:
-            self._logger.error(f"Error creating journey states and transitions: {e}")
-            raise
-
-    async def _create_single_state(self, journey: p.Journey, state_info: Dict[str, Any]) -> p.JourneyState:
-        """
-        创建单个状态
-        """
-        try:
-            action = state_info.get('action', state_info.get('name', ''))
-            state_type = state_info.get('type', 'Chat State')
-            tool_name = state_info.get('tool')
-            
-            if state_type == 'Tool State' and tool_name:
-                # 创建工具状态
-                tool_entry = p.ToolEntry(
-                    tool=p.Tool(name=tool_name, description=f"Tool for {state_info['name']}"),
-                    arguments={}
-                )
-                return await journey._create_state(
-                    p.ToolJourneyState,
-                    action=action,
-                    tools=[tool_entry]
-                )
-            else:
-                # 创建聊天状态
-                return await journey._create_state(
-                    p.ChatJourneyState,
-                    action=action
-                )
-                
-        except Exception as e:
-            self._logger.error(f"Error creating state {state_info.get('name', 'Unknown')}: {e}")
-            raise
-
-    async def _create_transitions(self, journey: p.Journey, states: List[Dict[str, Any]], state_map: Dict[str, p.JourneyState], initial_state: p.JourneyState) -> None:
-        """
-        创建状态转换
-        """
-        try:
-            # 从初始状态到第一个主状态
-            if states:
-                first_state = state_map[states[0]['id']]
-                await journey.create_transition(
-                    condition=None,
-                    source=initial_state,
-                    target=first_state
-                )
-                
-            # 创建其他转换
-            for state_info in states:
-                await self._create_state_transitions(journey, state_info, state_map)
-                
-        except Exception as e:
-            self._logger.error(f"Error creating transitions: {e}")
-            raise
-
-    async def _create_state_transitions(self, journey: p.Journey, state_info: Dict[str, Any], state_map: Dict[str, p.JourneyState]) -> None:
-        """
-        为单个状态创建转换
-        """
-        try:
-            current_state = state_map[state_info['id']]
-            
-            # 处理子状态转换
-            for child in state_info.get('children', []):
-                child_state = state_map[child['id']]
-                condition = child.get('condition')
-                
-                await journey.create_transition(
-                    condition=condition,
-                    source=current_state,
-                    target=child_state
-                )
-                
-                # 递归处理子状态
-                await self._create_state_transitions(journey, child, state_map)
-                
-            # 处理转换到其他状态
-            if state_info.get('transition'):
-                transition_info = state_info['transition']
-                # 解析转换目标（如 "Back to 3.1.1 (Final Confirmation)"）
-                target_id = self._extract_transition_target(transition_info)
-                if target_id and target_id in state_map:
-                    target_state = state_map[target_id]
-                    await journey.create_transition(
-                        condition=state_info.get('condition'),
-                        source=current_state,
-                        target=target_state
-                    )
-                    
-        except Exception as e:
-            self._logger.error(f"Error creating transitions for state {state_info.get('name', 'Unknown')}: {e}")
-            raise
-
-    def _extract_transition_target(self, transition_text: str) -> Optional[str]:
-        """
-        从转换文本中提取目标状态ID
-        """
-        try:
-            # 匹配 "Back to 3.1.1 (Final Confirmation)" 格式
-            match = re.search(r'(\d+(?:\.\d+)*)', transition_text)
-            if match:
-                return match.group(1)
-            return None
-        except Exception as e:
-            self._logger.warning(f"Error extracting transition target from '{transition_text}': {e}")
-            return None
-
-    def _create_sample_journey_config(self) -> Dict[str, Any]:
-        """
-        创建示例journey配置，展示基于缩进的语法
-        """
-        return {
-            "type": "journey",
-            "title": "Customer Onboarding",
-            "description": "Guide new customers through the onboarding process",
-            "conditions": ["Customer is new to the platform"],
-            "action": """
-1. Welcome Customer
-    - **Action**: Greet the customer and explain the onboarding process
-    - **Type**: Chat State
-    - **Description**: Initial welcome message
-
-2. Collect Basic Information
-    - **Action**: Ask for customer's basic details
-    - **Type**: Chat State
-    - **Description**: Gather name, email, and preferences
-    
-    2.1 Validate Information
-        - **Action**: Verify the provided information
-        - **Type**: Tool State
-        - **Tool**: validate_customer_info
-        - **Condition**: Customer provides information
-        
-        2.1.1 Information Valid
-            - **Action**: Confirm information and proceed
-            - **Type**: Chat State
-            - **Transition**: Continue to step 3
-            
-        2.1.2 Information Invalid
-            - **Action**: Ask customer to correct the information
-            - **Type**: Chat State
-            - **Transition**: Back to step 2
-
-3. Setup Account
-    - **Action**: Create customer account
-    - **Type**: Tool State
-    - **Tool**: create_customer_account
-    - **Description**: Set up the customer's account
-
-4. Send Welcome Email
-    - **Action**: Send welcome email with next steps
-    - **Type**: Tool State
-    - **Tool**: send_welcome_email
-    - **Description**: Notify customer of successful onboarding
-
-5. Complete Onboarding
-    - **Action**: Thank customer and provide next steps
-    - **Type**: Chat State
-    - **End**: Journey Complete
-"""
-        }
-    
-
-
 
 
 async def initialize_agent_factory(container: p.Container) -> None:
     logger = container[p.Logger]
-    logger.info("🚀 开始初始化 CustomAgentFactory...")
+    logger.info("start initializing CustomAgentFactory...")
     
     container[p.AgentFactory] = CustomAgentFactory(
         agent_store=container[AgentStore],
@@ -636,4 +265,4 @@ async def initialize_agent_factory(container: p.Container) -> None:
         logger=logger
     )
     
-    logger.info("✅ CustomAgentFactory 初始化完成！")
+    logger.info("✅ CustomAgentFactory initialized successfully!")

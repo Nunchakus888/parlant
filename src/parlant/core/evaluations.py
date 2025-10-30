@@ -82,6 +82,7 @@ class GuidelinePayload:
     properties_proposition: bool
     journey_node_proposition: bool
     updated_id: Optional[GuidelineId] = None
+    id: Optional[str] = None  # 用于tool查找的id（通常是agent_id）
 
     def __repr__(self) -> str:
         return f"condition: {self.content.condition}, action: {self.content.action}"

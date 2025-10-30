@@ -291,7 +291,7 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         openrouter_api_arguments = {k: v for k, v in hints.items() if k in self.supported_openrouter_params}
 
-        self._logger.debug(f"arguments ====== {openrouter_api_arguments}")
+        self._logger.trace(f"api_arguments: {openrouter_api_arguments}")
         t_start = time.time()
         try:
             response = await self._client.chat.completions.create(
@@ -306,7 +306,7 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         t_end = time.time()
 
-        self._logger.debug(f"generate durations ====== {t_end - t_start}")
+        self._logger.debug(f"generate duration: {t_end - t_start}")
         self._logger.trace(json.dumps(response.model_dump(), indent=2))
 
         raw_content = response.choices[0].message.content or "{}"

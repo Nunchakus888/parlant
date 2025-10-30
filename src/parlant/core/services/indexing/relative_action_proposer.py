@@ -32,7 +32,7 @@ class RelativeActionProposition(DefaultBaseModel):
 
 class RelativeActionBatch(DefaultBaseModel):
     index: str
-    conditions: str
+    conditions: str | Sequence[str]
     action: str
     needs_rewrite_rational: str
     needs_rewrite: bool

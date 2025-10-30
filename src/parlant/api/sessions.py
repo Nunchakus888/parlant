@@ -1321,13 +1321,13 @@ async def _ensure_session_and_customer(
             await app.delete_agent_cascade(agent_id)
             logger.info(f"✅ deleted agent: {agent_id}")
             agent = await agent_creator(params)
-            logger.info(f"✅ created new agent: {agent.id}")
+            logger.info(f"🤖 created new agent: {agent.id}")
         else:
           logger.info(f"🤖 🎯🎯 Agent found: {agent.id}")
 
     except ItemNotFoundError as e:
         agent = await agent_creator(params)
-        logger.info(f"✅ created new agent: {agent.id}")
+        logger.info(f"🤖 created new agent: {agent.id}")
 
     try:
         session = await app.sessions.read(session_id)
@@ -1350,7 +1350,7 @@ async def _ensure_session_and_customer(
             tenant_id=params.tenant_id,
             chatbot_id=params.chatbot_id,
         )
-        logger.info(f"✅ created new session: {session.id}")
+        logger.info(f"💬 created new session: {session.id}")
 
     return session, customer, agent.id
 
@@ -2175,18 +2175,15 @@ def create_router(
                 logger=logger,
                 agent_creator=_agent_creator,
             )
-            logger.debug(f"⏱️ Session/Customer setup: {(time.time() - setup_start):.3f}s")
+            logger.debug(f"⏱️ setup agent: {(time.time() - setup_start):.3f}s")
         except Exception as e:
-            logger.error(f"❌ Error during session/customer setup: {e}")
+            logger.error(f"❌ error during setup agent: {e}")
             return ChatResponseDTO(
                 status=500,
                 code=-1,
                 message=str(e),
                 data=None
             )
-
-        # Phase 3: Create Event
-        logger.info("📤 Step 4: Sending customer message")
         
         event_start = time.time()
         # Build proper message event data (same as create_event API)

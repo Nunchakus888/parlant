@@ -50,6 +50,8 @@ from urllib.parse import urljoin
 import uvicorn
 
 from parlant.core.agents import AgentId
+from parlant.core.guidelines import GuidelineId
+from parlant.core.journeys import JourneyId
 from parlant.core.loggers import Logger
 from parlant.core.tools import (
     Tool,
@@ -537,13 +539,16 @@ class PluginServer:
 
         return False
 
-    async def enable_tool(self, entry: ToolEntry, agent_id: str = None) -> None:
-        """启用工具，支持按agent_id隔离"""
-        # 🔧 FIX: 按agent_id维度维护tools，确保agent间工具隔离
-        if agent_id:
-            if agent_id not in self.tools_by_agent:
-                self.tools_by_agent[agent_id] = {}
-            self.tools_by_agent[agent_id][entry.tool.name] = entry
+    async def enable_tool(self, entry: ToolEntry, id: AgentId | GuidelineId | JourneyId = None) -> None:
+        """启用工具，支持按 id 隔离"""
+        # 按 id 维度维护tools，确保不同 agent 间工具隔离
+        # TODO: 不同agent，guideline/journey id 可能会重复
+        if id:
+            if id not in self.tools_by_agent:
+                self.tools_by_agent[id] = {}
+            self.tools_by_agent[id][entry.tool.name] = entry
+        else:
+          self.tools[entry.tool.name] = entry
     
     async def disable_agent_tools(self, agent_id: str) -> None:
         """删除指定agent的所有工具"""
@@ -607,13 +612,13 @@ class PluginServer:
             return {"status": "success", "message": f"Deleted all tools for agent {agent_id}"}
 
         @app.get("/tools/{name}")
-        async def read_tool(name: str, agent_id: str = None) -> ReadToolResponse:
-            # 🔧 FIX: 支持按agent_id获取工具
-            spec = self.get_tool_for_agent(name, agent_id)
+        async def read_tool(name: str, id: str | None = None) -> ReadToolResponse:
+            # 支持按id获取工具（id通常是agent_id）
+            spec = self.get_tool_for_agent(name, id)
             if not spec:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Tool: '{name}' does not exist for agent '{agent_id}'",
+                    detail=f"Tool: '{name}' does not exist" + (f" for id '{id}'" if id else ""),
                 )
 
             return ReadToolResponse(tool=spec.tool)
@@ -823,8 +828,9 @@ class PluginClient(ToolService):
         ]
 
     @override
-    async def read_tool(self, name: str) -> Tool:
-        response = await self._http_client.get(self._get_url(f"/tools/{name}"))
+    async def read_tool(self, name: str, id: str | None = None) -> Tool:
+        params = {"id": id} if id else {}
+        response = await self._http_client.get(self._get_url(f"/tools/{name}"), params=params)
 
         if response.status_code == status.HTTP_404_NOT_FOUND:
             raise ItemNotFoundError(UniqueId(name))
