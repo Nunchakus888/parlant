@@ -29,7 +29,7 @@ from parlant.app_modules.tags import TagModule
 from parlant.app_modules.customers import CustomerModule
 from parlant.app_modules.guidelines import GuidelineModule
 from parlant.app_modules.glossary import GlossaryModule
-from parlant.app_modules.evaluation_manager import EvaluationManager
+
 
 from parlant.core.agents import AgentId
 from parlant.core.sessions import SessionId
@@ -57,7 +57,6 @@ class Application:
         evaluation_module: EvaluationModule,
         capability_module: CapabilityModule,
         canned_response_module: CannedResponseModule,
-        evaluation_manager: EvaluationManager,
         background_task_service: BackgroundTaskService,
         logger: Logger,
     ) -> None:
@@ -74,7 +73,6 @@ class Application:
         self.glossary = glossary_module
         self.evaluations = evaluation_module
         self.canned_responses = canned_response_module
-        self.evaluation_manager = evaluation_manager
         self._logger = logger
         
         # LRU 资源管理器

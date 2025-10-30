@@ -92,7 +92,7 @@ from parlant.core.context_variables import (
     ContextVariableStore,
 )
 from parlant.core.contextual_correlator import ContextualCorrelator
-from parlant.core.tracer import Tracer
+
 from parlant.core.customers import (
     Customer as _Customer,
     CustomerDocumentStore,
@@ -132,7 +132,6 @@ from parlant.core.relationships import (
     RelationshipStore,
 )
 from parlant.core.services.tools.service_registry import ServiceDocumentRegistry, ServiceRegistry
-from parlant.app_modules.evaluation_manager import EvaluationManager, EvaluationResult
 from parlant.core.sessions import (
     EventKind,
     EventSource,
@@ -2116,7 +2115,6 @@ class Server:
         self._migrate = migrate
         self._nlp_service_func = nlp_service
         self._evaluator: _CachedEvaluator
-        self._evaluation_manager: EvaluationManager
         self._session_store = session_store
         self._customer_store = customer_store
         self._configure_hooks = configure_hooks

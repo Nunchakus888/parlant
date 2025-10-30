@@ -382,7 +382,7 @@ Action: {action}
 Available Tools: 
 {tools}
 
-⚠️ **CRITICAL REMINDER**: 
+**CRITICAL REMINDER**: 
 - The above list is the COMPLETE and ONLY list of available tools
 - If a tool is NOT in this list, it does NOT exist and CANNOT be used
 - Do NOT create tool nodes for tools not in this exact list
