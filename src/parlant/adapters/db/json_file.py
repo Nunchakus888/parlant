@@ -238,6 +238,7 @@ class JSONFileDocumentCollection(DocumentCollection[TDocument]):
     async def find(
         self,
         filters: Where,
+        sort: Optional[list[tuple[str, int]]] = None,
     ) -> Sequence[TDocument]:
         result = []
         async with self._lock.reader_lock:
@@ -246,6 +247,14 @@ class JSONFileDocumentCollection(DocumentCollection[TDocument]):
                 self.documents,
             ):
                 result.append(doc)
+
+        # Apply sorting in memory if specified
+        if sort:
+            for field, direction in reversed(sort):
+                result.sort(
+                    key=lambda d: d.get(field, 0),
+                    reverse=(direction == -1)
+                )
 
         return result
 

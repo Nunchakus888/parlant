@@ -63,6 +63,7 @@ from parlant.core.services.tools.service_registry import ServiceRegistry
 from parlant.core.tags import Tag
 from parlant.core.tools import ToolId, ToolService
 from parlant.core.canned_responses import CannedResponse, CannedResponseStore
+from parlant.core.loggers import Logger
 
 
 class EntityQueries:
@@ -81,12 +82,14 @@ class EntityQueries:
         canned_response_store: CannedResponseStore,
         capability_store: CapabilityStore,
         journey_guideline_projection: JourneyGuidelineProjection,
+        logger: Logger,
     ) -> None:
         self._agent_store = agent_store
         self._session_store = session_store
         self._guideline_store = guideline_store
         self._customer_store = customer_store
         self._context_variable_store = context_variable_store
+        self._logger = logger
         self._relationship_store = relationship_store
         self._guideline_tool_association_store = guideline_tool_association_store
         self._glossary_store = glossary_store
@@ -123,31 +126,31 @@ class EntityQueries:
         agent_id: AgentId,
         journeys: Sequence[Journey],
     ) -> Sequence[Guideline]:
-        import structlog
-        logger = structlog.get_logger("parlant")
         
         agent_guidelines = await self._guideline_store.list_guidelines(
             tags=[Tag.for_agent_id(agent_id)],
         )
-        logger.debug(f"📋 Agent级别guidelines: {len(agent_guidelines)} 个")
+        self._logger.debug(f"📋 Agent guidelines: {len(agent_guidelines)}")
         for g in agent_guidelines:
-            logger.debug(f"  → {g.id}: tags={g.tags}")
+            condition_preview = (g.content.condition[:50] + "...") if g.content.condition and len(g.content.condition) > 50 else (g.content.condition or "")
+            self._logger.debug(f"  → [{g.id}] condition: {condition_preview}")
         
         global_guidelines = await self._guideline_store.list_guidelines(tags=[])
-        logger.debug(f"🌍 Global guidelines: {len(global_guidelines)} 个")
+        self._logger.debug(f"🌍 Global guidelines: {len(global_guidelines)}")
 
         agent = await self._agent_store.read_agent(agent_id)
         guidelines_for_agent_tags = await self._guideline_store.list_guidelines(
             tags=[tag for tag in agent.tags]
         )
-        logger.debug(f"🏷️ Agent tags guidelines: {len(guidelines_for_agent_tags)} 个")
+        self._logger.debug(f"🏷️ Agent tags guidelines: {len(guidelines_for_agent_tags)}")
 
         guidelines_for_journeys = await self._guideline_store.list_guidelines(
             tags=[Tag.for_journey_id(journey.id) for journey in journeys]
         )
-        logger.debug(f"🚀 Journey级别guidelines: {len(guidelines_for_journeys)} 个")
+        self._logger.debug(f"🚀 Journey guidelines: {len(guidelines_for_journeys)}")
         for g in guidelines_for_journeys:
-            logger.debug(f"  → {g.id}: tags={g.tags}")
+            condition_preview = (g.content.condition[:50] + "...") if g.content.condition and len(g.content.condition) > 50 else (g.content.condition or "")
+            self._logger.debug(f"  → [{g.id}] condition: {condition_preview}")
 
         tasks = [
             self._journey_guideline_projection.project_journey_to_guidelines(journey.id)
@@ -155,10 +158,11 @@ class EntityQueries:
         ]
         projected_journey_guidelines = await async_utils.safe_gather(*tasks)
         
-        logger.debug(f"📊 Journey列表: {len(journeys)} 个")
+        self._logger.debug(f"📊 Journey list: {len(journeys)}")
         for journey in journeys:
             # journey.conditions 是 Sequence[GuidelineId]，即字符串列表
-            logger.debug(f"  Journey {journey.id}: conditions={journey.conditions}")
+            title_preview = (journey.title[:40] + "...") if len(journey.title) > 40 else journey.title
+            self._logger.debug(f"  → [{journey.id}] '{title_preview}': {len(journey.conditions)} condition(s)")
 
         all_guidelines = set(
             chain(
@@ -170,7 +174,7 @@ class EntityQueries:
             )
         )
         
-        logger.debug(f"✅ 总guidelines数: {len(all_guidelines)} 个")
+        self._logger.debug(f"✅ total guidelines: {len(all_guidelines)}")
         
         # 注意：Journey condition guidelines 需要保留以便激活 journey
         # 它们会参与匹配来触发 journey 的启动，然后由 journey node guidelines 接管后续流程

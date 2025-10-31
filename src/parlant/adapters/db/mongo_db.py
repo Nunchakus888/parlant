@@ -397,8 +397,17 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
         self._database = mongo_document_database
         self._collection = mongo_collection
 
-    async def find(self, filters: Where) -> Sequence[TDocument]:
+    async def find(
+        self, 
+        filters: Where,
+        sort: Optional[list[tuple[str, int]]] = None,
+    ) -> Sequence[TDocument]:
         mongo_cursor = self._collection.find(filters)
+        
+        # Apply sorting at database level if specified
+        if sort:
+            mongo_cursor = mongo_cursor.sort(sort)
+        
         result = await mongo_cursor.to_list()
         await mongo_cursor.close()
         return result

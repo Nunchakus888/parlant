@@ -42,7 +42,7 @@ from typing import (
 )
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
-from fastapi import FastAPI, HTTPException, status, Query
+from fastapi import FastAPI, HTTPException, status, Query, Header
 from fastapi.responses import StreamingResponse
 import httpx
 from urllib.parse import urljoin
@@ -645,6 +645,7 @@ class PluginServer:
         async def call_tool(
             name: str,
             request: CallToolRequest,
+            x_correlation_id: str = Header(None, alias="X-Correlation-Id"),
         ) -> StreamingResponse:
             # 🔧 FIX: 检查工具是否存在，支持agent维度隔离
             tool_entry = self.get_tool_for_agent(name, request.agent_id)
@@ -738,12 +739,47 @@ class PluginServer:
             # 🔧 FIX: 使用之前已经获取的tool_entry
             func = tool_entry.function
 
-            try:
+            # 从 plugin_data 获取 correlator 和 logger，用于设置正确的 correlation scope
+            correlator = None
+            logger = None
+            if self.plugin_data and "container" in self.plugin_data:
+                try:
+                    from parlant.core.contextual_correlator import ContextualCorrelator
+                    from parlant.core.loggers import Logger
+                    correlator = self.plugin_data["container"][ContextualCorrelator]
+                    logger = self.plugin_data["container"][Logger]
+                except Exception:
+                    pass  # 如果获取失败，继续执行但没有 correlation scope
+            
+            # 定义一个包装函数，在 correlation scope 内执行 tool
+            async def execute_with_correlation_scope():
+                # 调试日志：在设置 scope 后验证 correlation_id 是否正确
+                if logger and correlator:
+                    logger.debug(f"[PluginServer] Tool executing with correlation_id: {correlator.correlation_id}")
+                
                 tool_params = inspect.signature(func).parameters
                 normalized_args = normalize_tool_arguments(tool_params, request.arguments)
                 adapted_args = await adapt_tool_arguments(tool_params, normalized_args)
 
                 result = tool_entry.function(context, **adapted_args)  # type: ignore
+                
+                # 如果是 awaitable，需要在 scope 内 await
+                if inspect.isawaitable(result):
+                    return await result
+                else:
+                    return result
+
+            try:
+                # 如果有 correlation_id 从 header 传入，使用它设置 scope
+                if correlator and x_correlation_id:
+                    # 手动设置 contextvars 以确保在整个异步执行期间保持
+                    token = correlator._scopes.set(x_correlation_id)
+                    try:
+                        result = await execute_with_correlation_scope()
+                    finally:
+                        correlator._scopes.reset(token)
+                else:
+                    result = await execute_with_correlation_scope()
             except BaseException as exc:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -751,12 +787,8 @@ class PluginServer:
                 )
 
             result_future: asyncio.Future[ToolResult]
-
-            if inspect.isawaitable(result):
-                result_future = asyncio.ensure_future(result)
-            else:
-                result_future = asyncio.Future[ToolResult]()
-                result_future.set_result(result)
+            result_future = asyncio.Future[ToolResult]()
+            result_future.set_result(result)
 
             result_future.add_done_callback(lambda _: end.set())
 
@@ -896,6 +928,11 @@ class PluginClient(ToolService):
             MAX_TOOL_RESULT_PAYLOAD_KB = int(os.environ.get("MAX_TOOL_RESULT_PAYLOAD_KB", 16))
 
 
+            # 传递 correlation_id 以确保 Plugin Server 端的日志有正确的 trace_id
+            headers = {
+                "X-Correlation-Id": self._correlator.correlation_id,
+            }
+            
             async with self._http_client.stream(
                 method="post",
                 url=self._get_url(f"/tools/{name}/calls"),
@@ -905,6 +942,7 @@ class PluginClient(ToolService):
                     "customer_id": context.customer_id,
                     "arguments": arguments,
                 },
+                headers=headers,
             ) as response:
                 if response.status_code == status.HTTP_404_NOT_FOUND:
                     raise ItemNotFoundError(UniqueId(name))

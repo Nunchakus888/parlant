@@ -130,6 +130,7 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
     async def find(
         self,
         filters: Where,
+        sort: Optional[list[tuple[str, int]]] = None,
     ) -> Sequence[TDocument]:
         result = []
         for doc in filter(
@@ -137,6 +138,14 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
             self._documents,
         ):
             result.append(doc)
+
+        # Apply sorting in memory if specified
+        if sort:
+            for field, direction in reversed(sort):
+                result.sort(
+                    key=lambda d: d.get(field, 0),
+                    reverse=(direction == -1)
+                )
 
         return result
 

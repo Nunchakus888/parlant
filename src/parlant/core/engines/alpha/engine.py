@@ -765,6 +765,18 @@ class AlphaEngine(Engine):
                 set(context.state.tool_enabled_guideline_matches.keys())
             ),
         )
+        
+        # 🔍 调试日志：检查 guideline 分类
+        self._logger.debug(f"📊 [engine] Guideline Classification:")
+        self._logger.debug(f"  → Total resolved: {len(guideline_and_journey_matching_result.resolved_guidelines)}")
+        self._logger.debug(f"  → Tool-enabled: {len(context.state.tool_enabled_guideline_matches)}")
+        self._logger.debug(f"  → Ordinary: {len(context.state.ordinary_guideline_matches)}")
+        
+        for match in context.state.ordinary_guideline_matches:
+            self._logger.debug(f"  → Ordinary: [{match.guideline.id}] action={match.guideline.content.action[:50] if match.guideline.content.action else 'None'}...")
+        
+        for match, tools in context.state.tool_enabled_guideline_matches.items():
+            self._logger.debug(f"  → Tool-enabled: [{match.guideline.id}] action={match.guideline.content.action[:50] if match.guideline.content.action else 'None'}... tools={len(tools)}")
 
         # Infer any needed tool calls and execute them,
         # adding the resulting tool events to the session.

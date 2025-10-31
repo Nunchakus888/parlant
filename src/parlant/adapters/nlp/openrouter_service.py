@@ -292,6 +292,8 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
         openrouter_api_arguments = {k: v for k, v in hints.items() if k in self.supported_openrouter_params}
 
         self._logger.trace(f"api_arguments: {openrouter_api_arguments}")
+        self._logger.debug(f"🚀 LLM API request starting: model={self._model_name}, schema={self.schema.__name__}")
+        
         t_start = time.time()
         try:
             response = await self._client.chat.completions.create(
@@ -300,13 +302,33 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
                 response_format={"type": "json_object"},
                 **openrouter_api_arguments,
             )
-        except openai.RateLimitError:
+        except openai.RateLimitError as e:
+            self._logger.error(
+                f"❌ LLM API RateLimitError: model={self._model_name}, schema={self.schema.__name__}, error={str(e)}"
+            )
             self._logger.error(RATE_LIMIT_ERROR_MESSAGE)
+            raise
+        except openai.APITimeoutError as e:
+            self._logger.error(
+                f"❌ LLM API TimeoutError: model={self._model_name}, schema={self.schema.__name__}, error={str(e)}"
+            )
+            raise
+        except openai.APIError as e:
+            self._logger.error(
+                f"❌ LLM API Error: model={self._model_name}, schema={self.schema.__name__}, type={type(e).__name__}, error={str(e)}"
+            )
+            raise
+        except Exception as e:
+            self._logger.error(
+                f"❌ LLM API Unexpected Error: model={self._model_name}, schema={self.schema.__name__}, type={type(e).__name__}, error={str(e)}"
+            )
             raise
 
         t_end = time.time()
 
-        self._logger.debug(f"generate duration: {t_end - t_start}")
+        self._logger.debug(
+            f"✅ LLM API request completed: model={self._model_name}, schema={self.schema.__name__}, duration={t_end - t_start:.2f}s"
+        )
         self._logger.trace(json.dumps(response.model_dump(), indent=2))
 
         raw_content = response.choices[0].message.content or "{}"

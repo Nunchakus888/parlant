@@ -1455,17 +1455,19 @@ class SessionDocumentStore(SessionStore):
 
             if kinds:
                 event_documents = await self._event_collection.find(
-                    cast(
+                    filters=cast(
                         Where,
                         {"$or": [{**base_filters, "kind": {"$eq": k.value}} for k in kinds]},
-                    )
+                    ),
+                    sort=[("offset", 1)],  # Sort by offset ascending at database level
                 )
             else:
                 event_documents = await self._event_collection.find(
-                    cast(
+                    filters=cast(
                         Where,
                         base_filters,
-                    )
+                    ),
+                    sort=[("offset", 1)],  # Sort by offset ascending at database level
                 )
 
         return [self._deserialize_event(d) for d in event_documents]

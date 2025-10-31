@@ -123,8 +123,16 @@ class DocumentCollection(ABC, Generic[TDocument]):
     async def find(
         self,
         filters: Where,
+        sort: Optional[list[tuple[str, int]]] = None,
     ) -> Sequence[TDocument]:
-        """Finds all documents that match the given filters."""
+        """Finds all documents that match the given filters.
+        
+        Args:
+            filters: Query filters to match documents
+            sort: Optional list of (field, direction) tuples for sorting.
+                  Direction: 1 for ascending, -1 for descending.
+                  Example: [("offset", 1)] sorts by offset ascending.
+        """
         ...
 
     @abstractmethod
