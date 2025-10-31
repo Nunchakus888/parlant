@@ -292,7 +292,6 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
         openrouter_api_arguments = {k: v for k, v in hints.items() if k in self.supported_openrouter_params}
 
         self._logger.trace(f"api_arguments: {openrouter_api_arguments}")
-        self._logger.debug(f"🚀 LLM API request starting: model={self._model_name}, schema={self.schema.__name__}")
         
         t_start = time.time()
         try:
@@ -326,9 +325,6 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         t_end = time.time()
 
-        self._logger.debug(
-            f"✅ LLM API request completed: model={self._model_name}, schema={self.schema.__name__}, duration={t_end - t_start:.2f}s"
-        )
         self._logger.trace(json.dumps(response.model_dump(), indent=2))
 
         raw_content = response.choices[0].message.content or "{}"
