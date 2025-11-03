@@ -310,7 +310,9 @@ class MessageGenerator(MessageEventComposer):
             for m in chain(ordinary_guideline_matches, tool_enabled_guideline_matches)
         }
 
-        builder = PromptBuilder(on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}"))
+        builder = PromptBuilder(
+            on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+        )
 
         builder.add_section(
             name="message-generator-general-instructions",
@@ -328,6 +330,7 @@ Later in this prompt, you'll be provided with behavioral guidelines and other co
 
         builder.add_agent_identity(agent)
         builder.add_customer_identity(customer)
+        builder.add_language_constraints(agent)
         builder.add_section(
             name="message-generator-task-description",
             template="""
@@ -487,6 +490,7 @@ INTERACTION CONTEXT
             ordinary_guideline_matches,
             tool_enabled_guideline_matches,
             guideline_representations,
+            logger=self._logger,
         )
         builder.add_interaction_history_for_message_generation(
             interaction_history, staged_message_events

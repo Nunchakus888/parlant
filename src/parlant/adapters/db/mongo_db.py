@@ -29,6 +29,7 @@ from parlant.core.persistence.document_database import (
 from pymongo import AsyncMongoClient, ASCENDING, DESCENDING
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.asynchronous.collection import AsyncCollection
+import asyncio
 
 
 class MongoDocumentDatabase(DocumentDatabase):
@@ -389,6 +390,9 @@ class MongoDocumentDatabase(DocumentDatabase):
 
 
 class MongoDocumentCollection(DocumentCollection[TDocument]):
+    # 默认超时时间：30秒
+    DEFAULT_TIMEOUT = 30.0
+    
     def __init__(
         self,
         mongo_document_database: MongoDocumentDatabase,
@@ -402,23 +406,48 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
         filters: Where,
         sort: Optional[list[tuple[str, int]]] = None,
     ) -> Sequence[TDocument]:
-        mongo_cursor = self._collection.find(filters)
-        
-        # Apply sorting at database level if specified
-        if sort:
-            mongo_cursor = mongo_cursor.sort(sort)
-        
-        result = await mongo_cursor.to_list()
-        await mongo_cursor.close()
-        return result
+        try:
+            async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                mongo_cursor = self._collection.find(filters)
+                
+                # Apply sorting at database level if specified
+                if sort:
+                    mongo_cursor = mongo_cursor.sort(sort)
+                
+                result = await mongo_cursor.to_list()
+                await mongo_cursor.close()
+                return result
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB find() timeout after {self.DEFAULT_TIMEOUT}s, filters: {filters}"
+            )
+            raise TimeoutError(f"Database query timeout after {self.DEFAULT_TIMEOUT}s")
 
     async def find_one(self, filters: Where) -> TDocument | None:
-        result = await self._collection.find_one(filters)
-        return result
+        try:
+            result = await asyncio.wait_for(
+                self._collection.find_one(filters),
+                timeout=self.DEFAULT_TIMEOUT
+            )
+            return result
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB find_one() timeout after {self.DEFAULT_TIMEOUT}s, filters: {filters}"
+            )
+            raise TimeoutError(f"Database query timeout after {self.DEFAULT_TIMEOUT}s")
 
     async def insert_one(self, document: TDocument) -> InsertResult:
-        insert_result = await self._collection.insert_one(document)
-        return InsertResult(acknowledged=insert_result.acknowledged)
+        try:
+            insert_result = await asyncio.wait_for(
+                self._collection.insert_one(document),
+                timeout=self.DEFAULT_TIMEOUT
+            )
+            return InsertResult(acknowledged=insert_result.acknowledged)
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB insert_one() timeout after {self.DEFAULT_TIMEOUT}s"
+            )
+            raise TimeoutError(f"Database insert timeout after {self.DEFAULT_TIMEOUT}s")
 
     async def update_one(
         self,
@@ -426,26 +455,40 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
         params: TDocument,
         upsert: bool = False,
     ) -> UpdateResult[TDocument]:
-        update_result = await self._collection.update_one(filters, {"$set": params}, upsert)
-        result_document = await self._collection.find_one(filters)
-        return UpdateResult[TDocument](
-            update_result.acknowledged,
-            update_result.matched_count,
-            update_result.modified_count,
-            result_document,
-        )
+        try:
+            async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                update_result = await self._collection.update_one(filters, {"$set": params}, upsert)
+                result_document = await self._collection.find_one(filters)
+                return UpdateResult[TDocument](
+                    update_result.acknowledged,
+                    update_result.matched_count,
+                    update_result.modified_count,
+                    result_document,
+                )
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB update_one() timeout after {self.DEFAULT_TIMEOUT}s, filters: {filters}"
+            )
+            raise TimeoutError(f"Database update timeout after {self.DEFAULT_TIMEOUT}s")
 
     async def delete_one(self, filters: Where) -> DeleteResult[TDocument]:
-        result_document = await self._collection.find_one(filters)
-        if result_document is None:
-            return DeleteResult(True, 0, None)
+        try:
+            async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                result_document = await self._collection.find_one(filters)
+                if result_document is None:
+                    return DeleteResult(True, 0, None)
 
-        delete_result = await self._collection.delete_one(filters)
-        return DeleteResult(
-            delete_result.acknowledged,
-            deleted_count=delete_result.deleted_count,
-            deleted_document=result_document,
-        )
+                delete_result = await self._collection.delete_one(filters)
+                return DeleteResult(
+                    delete_result.acknowledged,
+                    deleted_count=delete_result.deleted_count,
+                    deleted_document=result_document,
+                )
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB delete_one() timeout after {self.DEFAULT_TIMEOUT}s, filters: {filters}"
+            )
+            raise TimeoutError(f"Database delete timeout after {self.DEFAULT_TIMEOUT}s")
 
     async def delete_one_from_memory_only(self, filters: Where) -> DeleteResult[TDocument]:
         """删除内存中的文档（对于 MongoDB，此操作不适用，因为数据在远程数据库）"""

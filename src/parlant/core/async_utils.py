@@ -213,17 +213,22 @@ def default_done_callback(
 
 
 class ReaderWriterLock:
-    def __init__(self) -> None:
+    def __init__(self, timeout: float = 30.0) -> None:
         _lock = aiorwlock.RWLock()
         self._reader_lock = _lock.reader
         self._writer_lock = _lock.writer
+        self._timeout = timeout
 
     @property
     def reader_lock(self) -> AsyncContextManager[None]:
         @asynccontextmanager
         async def _reader_cm() -> AsyncIterator[None]:
-            async with self._reader_lock:
-                yield
+            try:
+                async with asyncio.timeout(self._timeout):
+                    async with self._reader_lock:
+                        yield
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"Reader lock acquisition timeout after {self._timeout}s")
 
         return _reader_cm()
 
@@ -231,7 +236,11 @@ class ReaderWriterLock:
     def writer_lock(self) -> AsyncContextManager[None]:
         @asynccontextmanager
         async def _writer_cm() -> AsyncIterator[None]:
-            async with self._writer_lock:
-                yield
+            try:
+                async with asyncio.timeout(self._timeout):
+                    async with self._writer_lock:
+                        yield
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"Writer lock acquisition timeout after {self._timeout}s")
 
         return _writer_cm()

@@ -113,15 +113,21 @@ class Application:
         agent_tag = Tag.for_agent_id(agent_id)
         
         # 定义删除任务，按依赖关系排序
+        # ⚠️  重要：删除顺序很关键！
+        # Journey依赖Guidelines（作为conditions），所以必须先删除Journey
         deletion_tasks = [
             # 1. Sessions (直接引用 agent_id)
             # self._delete_sessions_for_agent(agent_id),
             
-            # 2. Guidelines (通过 agent tag 关联)
-            self._delete_guidelines_for_agent(agent_tag),
-            
-            # 3. Journeys (通过 agent tag 关联)
+            # 2. 🔧 FIX: 先删除Journeys（会级联删除关联的guidelines和tools）
+            # Journey.delete() 会处理：
+            # - Journey的nodes和edges
+            # - Journey关联的tools
+            # - Journey的condition guidelines（如果不被其他journey使用）
             self._delete_journeys_for_agent(agent_tag),
+            
+            # 3. 再删除剩余的Guidelines（那些不属于任何journey的独立guidelines）
+            self._delete_guidelines_for_agent(agent_tag),
             
             # 4. Context Variables (通过 agent tag 关联)
             self._delete_variables_for_agent(agent_tag),
@@ -135,8 +141,7 @@ class Application:
             # 7. Glossary Terms (通过 agent tag 关联)
             self._delete_terms_for_agent(agent_tag),
             
-            # 8. 🔧 FIX: 清理Agent的工具，确保工具隔离
-            # 参见: docs/ROOT_CAUSE_FOUND.md
+            # 8. 清理Agent的工具
             self._cleanup_agent_tools(agent_id),
         ]
         
@@ -175,14 +180,42 @@ class Application:
             self._logger.error(f"Failed to delete session and customer from memory for session {session_id}: {e}")
 
     async def _delete_guidelines_for_agent(self, agent_tag: TagId) -> None:
-        guidelines = await self.guidelines.find(tag_id=agent_tag)
-        delete_tasks = [self.guidelines.delete(guideline.id) for guideline in guidelines]
-        await safe_gather(*delete_tasks)
+        """删除指定Agent的所有Guidelines"""
+        try:
+            guidelines = await self.guidelines.find(tag_id=agent_tag)
+            self._logger.info(f"🧹 Deleting {len(guidelines)} guidelines for agent tag: {agent_tag}")
+            
+            if not guidelines:
+                self._logger.warning(f"⚠️  No guidelines found for agent tag: {agent_tag}")
+                return
+            
+            delete_tasks = [self.guidelines.delete(guideline.id) for guideline in guidelines]
+            await safe_gather(*delete_tasks)
+            self._logger.info(f"✅ Successfully deleted {len(guidelines)} guidelines")
+        except Exception as e:
+            self._logger.error(f"❌ Failed to delete guidelines for {agent_tag}: {e}")
+            raise
 
     async def _delete_journeys_for_agent(self, agent_tag: TagId) -> None:
-        journeys = await self.journeys.find(tag_id=agent_tag)
-        delete_tasks = [self.journeys.delete(journey.id) for journey in journeys]
-        await safe_gather(*delete_tasks)
+        """删除指定Agent的所有Journeys"""
+        try:
+            journeys = await self.journeys.find(tag_id=agent_tag)
+            self._logger.info(f"🧹 Deleting {len(journeys)} journeys for agent tag: {agent_tag}")
+            
+            if not journeys:
+                self._logger.warning(f"⚠️  No journeys found for agent tag: {agent_tag}")
+                return
+            
+            # 详细记录每个Journey
+            for journey in journeys:
+                self._logger.debug(f"  🗑️  Journey: {journey.id} - {journey.title}")
+            
+            delete_tasks = [self.journeys.delete(journey.id) for journey in journeys]
+            await safe_gather(*delete_tasks)
+            self._logger.info(f"✅ Successfully deleted {len(journeys)} journeys")
+        except Exception as e:
+            self._logger.error(f"❌ Failed to delete journeys for {agent_tag}: {e}")
+            raise
 
     async def _delete_variables_for_agent(self, agent_tag: TagId) -> None:
         variables = await self.variables.find(tag_id=agent_tag)

@@ -196,6 +196,10 @@ class JourneyStructureProposer:
             hints={"temperature": temperature},
         )
         
+        # 收集 GenerationInfo
+        from parlant.core.services.indexing.behavioral_change_evaluation import add_generation_info
+        add_generation_info(result.info)
+        
         return result.content
     
     async def _build_prompt(
@@ -205,7 +209,7 @@ class JourneyStructureProposer:
     ) -> PromptBuilder:
         """构建分析prompt"""
         builder = PromptBuilder(
-            on_build=lambda prompt: self._logger.trace(f"Prompt:\n\n{prompt}")
+            # on_build=lambda prompt: self._logger.trace(f"Prompt:\n\n{prompt}")
         )
         
         # 获取工具信息

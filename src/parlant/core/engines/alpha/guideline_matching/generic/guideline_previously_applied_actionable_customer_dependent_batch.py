@@ -220,7 +220,9 @@ class GenericPreviouslyAppliedActionableCustomerDependentGuidelineMatchingBatch(
             for i, g in self._guidelines.items()
         )
 
-        builder = PromptBuilder(on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}"))
+        builder = PromptBuilder(
+          # on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+          )
 
         builder.add_section(
             name="guideline-previously-applied-general-instructions",

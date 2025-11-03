@@ -291,7 +291,7 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         openrouter_api_arguments = {k: v for k, v in hints.items() if k in self.supported_openrouter_params}
 
-        self._logger.trace(f"api_arguments: {openrouter_api_arguments}")
+        # self._logger.trace(f"api_arguments: {openrouter_api_arguments}")
         
         t_start = time.time()
         try:
@@ -325,7 +325,7 @@ class OpenRouterSchematicGenerator(SchematicGenerator[T]):
 
         t_end = time.time()
 
-        self._logger.trace(json.dumps(response.model_dump(), indent=2))
+        # self._logger.trace(json.dumps(response.model_dump(), indent=2))
 
         raw_content = response.choices[0].message.content or "{}"
 

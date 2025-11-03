@@ -101,7 +101,7 @@ class SessionModule:
         tenant_id: str | None = None,
         chatbot_id: str | None = None,
     ) -> Session:
-        _ = await self._agent_store.read_agent(agent_id=agent_id)
+        # _ = await self._agent_store.read_agent(agent_id=agent_id)
 
         session = await self._session_store.create_session(
             session_id=session_id,

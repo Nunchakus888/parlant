@@ -288,7 +288,9 @@ Guidelines:
     ) -> PromptBuilder:
         guideline_representations = {g.id: internal_representation(g) for g in guidelines.values()}
 
-        builder = PromptBuilder(on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}"))
+        builder = PromptBuilder(
+          on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+        )
 
         builder.add_section(
             name="guideline-previously-applied-general-instructions",

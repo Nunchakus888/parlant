@@ -68,7 +68,7 @@ class ToolManager:
         # 加载配置
         configs = await self._load_configs()
         if not configs:
-            self._log_warning("没有找到工具配置，跳过工具设置")
+            self.logger.warning("No tool config found, skipping tool setup")
             return
         
         # 创建工具
@@ -79,12 +79,12 @@ class ToolManager:
                 if tool:
                     self._tools[config.name] = tool
                     successful_tools += 1
-                    self._log_debug(f"🔧 成功设置工具: {config.name}")
+                    self.logger.debug(f"Successfully setup tool: {config.name}")
             except Exception as e:
-                self._log_error(f"❌ 设置工具 {config.name} 失败: {str(e)}")
+                self.logger.error(f"❌ Failed to setup tool {config.name}: {str(e)}")
                 raise e
         
-        self._log_info(f"✅successfully setup {successful_tools}/{len(configs)} tools")
+        self.logger.info(f"✅ Successfully setup {successful_tools}/{len(configs)} tools")
     
     def get_tool(self, name: str) -> Optional[Any]:
         """获取指定工具"""
@@ -101,11 +101,11 @@ class ToolManager:
             if self.raw_configs is not None:
                 raw_configs = self.raw_configs
             elif self.config_path is not None:
-                self._log_info(f"从配置文件加载工具配置: {self.config_path}")
+                self.logger.info(f"Loading tool config from file: {self.config_path}")
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     raw_configs = json.load(f)
             else:
-                self._log_warning("没有提供工具配置（config_path 或 raw_configs）")
+                self.logger.warning("No tool config provided (config_path or raw_configs)")
                 return []
             
             configs = []
@@ -127,16 +127,16 @@ class ToolManager:
                     )
                     configs.append(config)
                 except Exception as e:
-                    self._log_error(f"解析工具配置失败: {str(e)}")
+                    self.logger.error(f"Failed to parse tool config: {str(e)}")
                     continue
 
             return configs
             
         except FileNotFoundError:
-            self._log_warning(f"配置文件 {self.config_path} 不存在")
+            self.logger.warning(f"Config file not found: {self.config_path}")
             return []
         except Exception as e:
-            self._log_error(f"加载配置文件失败: {str(e)}")
+            self.logger.error(f"Failed to load config file: {str(e)}")
             return []
     
     def _create_tool(self, config: ToolConfig):
@@ -204,18 +204,18 @@ class ToolManager:
                     if param_name in bound_args.arguments:
                         params[param_name] = bound_args.arguments[param_name]
                 
-                self._log_info(f"调用动态工具: {config.name}")
-                self._log_debug(f"工具参数: {params}")
+                self.logger.info(f"[DynamicTool] Calling dynamic tool: {config.name}")
+                self.logger.debug(f"[DynamicTool] Tool parameters: {params}")
                 
                 # 调用API
                 result = await self._call_api(tool_config.endpoint, params)
                 
                 if result.success:
-                    duration_info = f" - duration: {result.duration:.3f}s" if result.duration else ""
-                    self._log_info(f"工具 {tool_config.name} 执行成功{duration_info}")
+                    duration_info = f", duration={result.duration:.3f}s" if result.duration else ""
+                    self.logger.info(f"[DynamicTool] Tool execution succeeded: {tool_config.name}{duration_info}")
                 else:
-                    duration_info = f" - duration: {result.duration:.3f}s" if result.duration else ""
-                    self._log_error(f"工具 {tool_config.name} 执行失败: {result.message or result.error or '未知错误'}{duration_info}")
+                    duration_info = f", duration={result.duration:.3f}s" if result.duration else ""
+                    self.logger.error(f"[DynamicTool] Tool execution failed: {tool_config.name}, error={result.message or result.error or 'unknown'}{duration_info}")
                 
                 return p.ToolResult(data=result.dict())
                 
@@ -225,7 +225,7 @@ class ToolManager:
                 # 构建详细的错误消息
                 detailed_message = f"Tool execution failed: {tool_config.name} - {type(e).__name__}: {str(e)}"
                 
-                self._log_error(f"工具 {tool_config.name} 执行失败: {str(e)}")
+                self.logger.error(f"[DynamicTool] Tool execution failed: {tool_config.name}, exception={str(e)}")
                 
                 error_response = ApiResponse(
                     success=False,
@@ -252,7 +252,7 @@ class ToolManager:
         
         # 检查是否为静态响应
         if endpoint.url.startswith("static://"):
-            self._log_info(f"🔧 static tool call")
+            self.logger.info("[API] Static tool call")
             # 静态响应暂不实现，可以扩展
             return ApiResponse(success=True, data={}, duration=get_duration())
         
@@ -267,7 +267,7 @@ class ToolManager:
             try:
                 body = json.loads(body)
             except json.JSONDecodeError as e:
-                self._log_warning(f"Body字符串不是有效的JSON格式，将作为原始字符串发送: {str(e)}")
+                self.logger.warning(f"[API] Body string is not valid JSON, sending as raw string: {str(e)}")
                 # 如果解析失败，保持原样，但需要特殊处理
         
         # 处理查询参数
@@ -287,70 +287,58 @@ class ToolManager:
             query_params = {k: v for k, v in params.items() if k not in used_params}
         
         # 记录请求信息
-        self._log_info(f"🚀 API call: {method} {url}")
+        self.logger.info(f"[API] Calling: {method} {url}")
         if headers:
-            self._log_debug(f"📋 request headers: {headers}")
+            self.logger.debug(f"[API] Request headers: {headers}")
         if query_params:
-            self._log_debug(f"❓ Query parameters: {query_params}")
+            self.logger.debug(f"[API] Query parameters: {query_params}")
         if body:
-            self._log_debug(f"📦 request body: {json.dumps(body, ensure_ascii=False, indent=2)}")
+            self.logger.debug(f"[API] Request body: {json.dumps(body, ensure_ascii=False, indent=2)}")
         
         # 发送请求
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         
         try:
-            self._log_debug(f"🔧 创建aiohttp会话，超时设置: {self.timeout}s")
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                self._log_debug(f"🚀 开始发送{method}请求到: {url}")
-                
                 try:
                     if method == "GET":
-                        self._log_debug("📤 执行GET请求")
                         async with session.get(url, params=query_params, headers=headers) as response:
-                            self._log_debug(f"📥 收到响应，状态码: {response.status}")
                             result = await self._parse_response(response)
                             return self._format_response(response.status, result, get_duration())
                     else:
-                        self._log_debug(f"📤 执行{method}请求")
                         # 根据body类型选择正确的发送方式
                         if body is None:
                             # 没有body
                             async with session.request(method, url, params=query_params, headers=headers) as response:
-                                self._log_debug(f"📥 收到响应，状态码: {response.status}")
                                 result = await self._parse_response(response)
                                 return self._format_response(response.status, result, get_duration())
                         elif isinstance(body, (dict, list)):
                             # body是对象或数组，使用json参数
                             async with session.request(method, url, json=body, params=query_params, headers=headers) as response:
-                                self._log_debug(f"📥 收到响应，状态码: {response.status}")
                                 result = await self._parse_response(response)
                                 return self._format_response(response.status, result, get_duration())
                         else:
                             # body是字符串或其他类型，使用data参数
                             async with session.request(method, url, data=body, params=query_params, headers=headers) as response:
-                                self._log_debug(f"📥 收到响应，状态码: {response.status}")
                                 result = await self._parse_response(response)
                                 return self._format_response(response.status, result, get_duration())
                 except Exception as inner_e:
-                    self._log_error(f"🔥 请求执行过程中发生错误: {str(inner_e)}")
-                    self._log_error(f"🔥 错误类型: {type(inner_e).__name__}")
+                    self.logger.error(f"[API] Request execution error: {type(inner_e).__name__}: {str(inner_e)}")
                     raise
         except Exception as session_e:
             duration = get_duration()
-            self._log_error(f"🔥 会话创建或管理过程中发生错误: {str(session_e)}")
-            self._log_error(f"🔥 错误类型: {type(session_e).__name__}")
+            self.logger.error(f"[API] Session error: {type(session_e).__name__}: {str(session_e)}")
             
             # 检查是否是BaseException相关错误
             if "catching classes that do not inherit from BaseException" in str(session_e):
-                self._log_error("🚨 检测到BaseException相关错误！")
-                self._log_error("这可能是aiohttp库内部的问题或Python环境问题")
+                self.logger.error("[API] BaseException-related error detected - possible aiohttp or Python environment issue")
                 
             # 如果到这里，说明是aiohttp相关的异常，重新抛出让外层处理
             raise
         except aiohttp.ClientTimeout as e:
             duration = get_duration()
             timeout_message = f"Request timeout after {self.timeout} seconds - {method} {url}"
-            self._log_error(f"❌ API call timeout ({self.timeout} seconds) - duration: {duration:.3f}s")
+            self.logger.error(f"[API] Request timeout ({self.timeout}s), duration={duration:.3f}s")
             return ApiResponse(
                 success=False, 
                 error=str(e), 
@@ -360,7 +348,7 @@ class ToolManager:
         except aiohttp.ClientError as e:
             duration = get_duration()
             network_message = f"Network connection error - {method} {url}: {str(e)}"
-            self._log_error(f"❌ API call network error: {str(e)} - duration: {duration:.3f}s")
+            self.logger.error(f"[API] Network error: {str(e)}, duration={duration:.3f}s")
             return ApiResponse(
                 success=False, 
                 error=str(e), 
@@ -393,10 +381,10 @@ class ToolManager:
                 try:
                     return await response.json()
                 except Exception:
-                    self._log_debug("❓ JSON解析失败，回退到文本解析")
+                    self.logger.debug("[API] JSON parse failed, falling back to text")
                     return await response.text()
         except Exception as e:
-            self._log_error(f"Failed to parse response: {str(e)}")
+            self.logger.error(f"[API] Failed to parse response: {str(e)}")
             return await response.text()
     
     def _format_response(self, status_code: int, result: Any, duration: float) -> ApiResponse:
@@ -412,7 +400,7 @@ class ToolManager:
             
             # 构建更详细的错误消息，包含请求信息
             detailed_error_msg = f"HTTP {status_code}: {api_error_msg}"
-            self._log_error(f"❌ API call failed: HTTP {status_code} - {api_error_msg} - duration: {duration:.3f}s")
+            self.logger.error(f"[API] Call failed: HTTP {status_code}, error={api_error_msg}, duration={duration:.3f}s")
             return ApiResponse(
                 success=False,
                 error=result,  # 保存完整的API响应作为原始错误信息
@@ -422,8 +410,8 @@ class ToolManager:
                 duration=duration
             )
         else:
-            self._log_info(f"✅ API call success: HTTP {status_code} - duration: {duration:.3f}s")
-            self._log_debug(f"📨 response data: {result}")
+            self.logger.info(f"[API] Call succeeded: HTTP {status_code}, duration={duration:.3f}s")
+            self.logger.debug(f"[API] Response data: {result}")
             return ApiResponse(
                 success=True,
                 data=result,
@@ -449,22 +437,3 @@ class ToolManager:
         else:
             return template
     
-    def _log_info(self, message: str):
-        """记录信息日志"""
-        if self.logger:
-            self.logger.info(message)
-    
-    def _log_debug(self, message: str):
-        """记录调试日志"""
-        if self.logger:
-            self.logger.debug(message)
-    
-    def _log_warning(self, message: str):
-        """记录警告日志"""
-        if self.logger:
-            self.logger.warning(message)
-    
-    def _log_error(self, message: str):
-        """记录错误日志"""
-        if self.logger:
-            self.logger.error(message)

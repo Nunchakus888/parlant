@@ -477,7 +477,9 @@ Example #{i}: ###
     ) -> PromptBuilder:
         staged_calls = self._get_staged_calls(staged_events)
 
-        builder = PromptBuilder(on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}"))
+        builder = PromptBuilder(
+          # on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+        )
 
         builder.add_section(
             name="tool-caller-general-instructions",
@@ -498,6 +500,7 @@ These calls do not require to be re-run at this time, unless you identify a vali
             props={},
         )
         builder.add_agent_identity(agent)
+        # builder.add_language_constraints(agent)
         builder.add_section(
             name="tool-caller-task-description",
             template="""
@@ -848,7 +851,7 @@ Guidelines:
             prompt=prompt,
             hints={"temperature": temperature},
         )
-        self._logger.trace(f"Inference::Completion:\n{inference.content.model_dump_json(indent=2)}")
+        # self._logger.trace(f"Inference::Completion:\n{inference.content.model_dump_json(indent=2)}")
 
         return inference.info, inference.content.tool_calls_for_candidate_tool
 

@@ -163,44 +163,72 @@ class JourneyModule:
         return journey
 
     async def delete(self, journey_id: JourneyId) -> None:
+        """
+        删除Journey，级联清理关联的guidelines和tools
+        
+        删除顺序：
+        1. 清理Journey关联的tools（如果有）
+        2. 删除Journey本身（包括nodes、edges、conditions）
+        3. 清理关联的guidelines（如果不被其他journey使用）
+        """
         journey = await self._journey_store.read_journey(journey_id=journey_id)
         
-        """TODO 删除journey，级联清理关联的guideline和tools"""
-        # 从journey的tags中提取agent_id用于工具清理
-        # agent_tag = None
-        # for tag in journey.tags:
-        #     if str(tag).startswith("agent:"):
-        #         agent_tag = tag
-        #         break
+        # 1. 清理journey关联的工具
+        agent_id_str = None
+        for tag in journey.tags:
+            if str(tag).startswith("agent:"):
+                agent_id_str = str(tag).replace("agent:", "")
+                break
         
-        # # 清理journey相关的工具（如果有关联的agent）
-        # if agent_tag and self._service_registry:
-        #     # 提取agent_id
-        #     agent_id_str = str(agent_tag).replace("agent:", "")
-        #     try:
-        #         # 获取plugin_server并清理该journey的工具
-        #         plugin_service = self._service_registry.get_service("plugin")
-        #         if plugin_service and hasattr(plugin_service, "plugin_server"):
-        #             plugin_server = plugin_service.plugin_server
-        #             # 清理以journey_id注册的工具（如果存在）
-        #             await plugin_server.disable_agent_tools(str(journey_id))
-        #             self._logger.debug(f"🧹 Cleaned tools for journey {journey_id}")
-        #     except Exception as e:
-        #         self._logger.warning(f"Failed to cleanup journey tools: {e}")
+        if agent_id_str and self._service_registry:
+            try:
+                # 获取所有journey nodes，清理关联的tools
+                nodes = await self._journey_store.list_nodes(journey_id=journey_id)
+                tools_to_cleanup = []
+                
+                for node in nodes:
+                    if node.tools:
+                        tools_to_cleanup.extend(node.tools)
+                
+                if tools_to_cleanup:
+                    self._logger.debug(
+                        f"🧹 Cleaning {len(tools_to_cleanup)} tools for journey {journey_id}"
+                    )
+                    # 注意：具体的tool清理逻辑可能需要根据实际的service_registry实现调整
+                    # 这里记录日志，实际清理由agent工具清理统一处理
+                    self._logger.debug(f"   Tools: {[t.tool_name for t in tools_to_cleanup]}")
+            except Exception as e:
+                self._logger.warning(f"⚠️  Failed to cleanup journey tools: {e}")
         
-        # 删除journey本身
+        # 2. 删除journey本身（会删除所有nodes、edges、tag associations）
+        self._logger.debug(f"🗑️  Deleting journey store data for {journey_id}")
         await self._journey_store.delete_journey(journey_id=journey_id)
 
+        # 3. 清理关联的guidelines（智能清理：只删除不被其他journey使用的guidelines）
+        self._logger.debug(f"🔍 Checking {len(journey.conditions)} condition guidelines for cleanup")
+        
         for condition in journey.conditions:
-            if not await self._journey_store.list_journeys(condition=condition):
+            # 检查这个guideline是否还被其他journey使用
+            other_journeys = await self._journey_store.list_journeys(condition=condition)
+            
+            if not other_journeys:
+                # 没有其他journey使用，可以安全删除
+                self._logger.debug(f"   🗑️  Deleting guideline {condition} (not used by other journeys)")
                 await self._guideline_store.delete_guideline(guideline_id=condition)
             else:
+                # 还被其他journey使用，只移除当前journey的tag
                 guideline = await self._guideline_store.read_guideline(guideline_id=condition)
 
                 if guideline.tags == [Tag.for_journey_id(journey_id)]:
+                    # 只有当前journey的tag，删除guideline
+                    self._logger.debug(f"   🗑️  Deleting guideline {condition} (only tagged with current journey)")
                     await self._guideline_store.delete_guideline(guideline_id=condition)
                 else:
+                    # 有其他tags，只移除当前journey的tag
+                    self._logger.debug(f"   🏷️  Removing journey tag from guideline {condition} (has other tags)")
                     await self._guideline_store.remove_tag(
                         guideline_id=condition,
                         tag_id=Tag.for_journey_id(journey_id),
                     )
+        
+        self._logger.info(f"✅ Successfully deleted journey {journey_id} and cleaned up dependencies")

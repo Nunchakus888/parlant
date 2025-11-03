@@ -185,4 +185,8 @@ Expected output (JSON):
             hints={"temperature": temperature},
         )
 
+        # 收集 GenerationInfo
+        from parlant.core.services.indexing.behavioral_change_evaluation import add_generation_info
+        add_generation_info(response.info)
+
         return response.content

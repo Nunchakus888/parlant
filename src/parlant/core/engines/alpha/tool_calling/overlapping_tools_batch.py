@@ -440,7 +440,9 @@ Example #{i}: ###
     ) -> PromptBuilder:
         staged_calls = self._get_staged_calls(staged_events)
 
-        builder = PromptBuilder(on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}"))
+        builder = PromptBuilder(
+          # on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+        )
 
         builder.add_section(
             name="tool-caller-general-instructions",

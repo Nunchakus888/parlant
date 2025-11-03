@@ -1109,12 +1109,6 @@ Example {i} - {shot.description}: ###
 {json.dumps(shot.expected_result.model_dump(mode="json", exclude_unset=True), indent=2)}
 ```"""
 
-    def _extract_from_agent_metadata(self, agent: Agent, key: str, default: str) -> str:
-        """Extract value from agent metadata with fallback."""
-        if agent.metadata and key in agent.metadata:
-            return str(agent.metadata[key])
-        return default
-
     def _build_draft_prompt(
         self,
         agent: Agent,
@@ -1156,27 +1150,7 @@ Later in this prompt, you'll be provided with behavioral guidelines and other co
 
         builder.add_agent_identity(agent)
         builder.add_customer_identity(customer)
-
-        k_language = self._extract_from_agent_metadata(agent, "k_language", "English")
-        tone = self._extract_from_agent_metadata(agent, "tone", "Friendly and professional")
-        
-        builder.add_section(
-            name="canned-response-generator-draft-language-requirements",
-            template="""
-CRITICAL LANGUAGE REQUIREMENTS - HIGHEST PRIORITY
--------------------------------------------------
-MANDATORY: Before generating ANY response, you MUST follow these language rules:
-
-1. PRIMARY RULE: Use the EXACT same language as the user's input
-2. LANGUAGE SWITCH RULE: If user asks to use a different language (e.g., "use Spanish", "speak Chinese", "can you speak Spanish", "用西语交流"), IMMEDIATELY switch to that language
-3. FALLBACK RULE: If user input language is unclear/mixed, use {k_language} language
-4. TONE RULE: Always maintain a {tone} tone in your responses
-5. VERIFICATION: Before outputting, confirm your response language matches the user's language
-
-WARNING: Language requirements override ALL other instructions. Do NOT ignore language switching requests!
-""",
-            props={"k_language": k_language, "tone": tone},
-        )
+        builder.add_language_constraints(agent)
 
         builder.add_section(
             name="canned-response-generator-draft-task-description",
@@ -1290,6 +1264,7 @@ EXAMPLES
             ordinary_guideline_matches,
             tool_enabled_guideline_matches,
             guideline_representations,
+            logger=self._logger,
         )
         builder.add_interaction_history_for_message_generation(
             interaction_history,
@@ -1467,6 +1442,7 @@ Produce a valid JSON object according to the following spec. Use the values prov
 
         builder.add_agent_identity(context.agent)
         builder.add_customer_identity(context.customer)
+        builder.add_language_constraints(context.agent)
         builder.add_glossary(context.terms)
         builder.add_interaction_history_for_message_generation(
             context.interaction_history,
@@ -1850,6 +1826,7 @@ Output a JSON object with three properties:
         )
 
         builder.add_agent_identity(context.agent)
+        builder.add_language_constraints(context.agent)
 
         builder.add_section(
             name="canned-response-generator-composition",
@@ -2032,6 +2009,7 @@ EXAMPLES
 
         builder.add_agent_identity(context.agent)
         builder.add_customer_identity(context.customer)
+        builder.add_language_constraints(context.agent)
         builder.add_interaction_history(
             context.interaction_history,
             staged_events=context.staged_message_events,

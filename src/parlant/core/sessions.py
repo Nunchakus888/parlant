@@ -398,7 +398,7 @@ class Session:
     title: Optional[str]
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
-    updated_utc: Optional[datetime] = datetime.now(timezone.utc)
+    updated_utc: Optional[datetime] = None
     tenant_id: Optional[str] = None
     chatbot_id: Optional[str] = None
 
@@ -408,7 +408,7 @@ class SessionUpdateParams(TypedDict, total=False):
     agent_id: AgentId
     mode: SessionMode
     title: Optional[str]
-    updated_utc: Optional[datetime] = datetime.now(timezone.utc)
+    updated_utc: Optional[datetime]
     consumption_offsets: Mapping[ConsumerId, int]
     agent_states: Sequence[AgentState]
     tenant_id: Optional[str]
@@ -670,6 +670,7 @@ class _InspectionDocument(TypedDict, total=False):
     correlation_id: str
     message_generations: Sequence[_MessageGenerationInspectionDocument]
     preparation_iterations: Sequence[_PreparationIterationDocument]
+    evaluation_generations: Sequence[_GenerationInfoDocument]
     usage_info: UsageInfo
     creation_utc: str
 
@@ -1021,7 +1022,7 @@ class SessionDocumentStore(SessionStore):
             doc_params["title"] = params["title"]
         if "updated_utc" in params:
             doc_params["updated_utc"] = params["updated_utc"].isoformat()
-        elif "updated_utc" not in params:
+        else:
             # 如果没有提供updated_utc，使用当前时间
             doc_params["updated_utc"] = datetime.now(timezone.utc).isoformat()
         if "consumption_offsets" in params:
@@ -1185,6 +1186,9 @@ class SessionDocumentStore(SessionStore):
                 }
                 for i in inspection.preparation_iterations
             ],
+            evaluation_generations=[
+                serialize_generation_info(g) for g in inspection.evaluation_generations
+            ] if inspection.evaluation_generations else [],
             usage_info=serialize_usage_info(inspection.usage_info) if inspection.usage_info else None,
             creation_utc=(inspection.creation_utc or datetime.now(timezone.utc)).isoformat(),
         )
@@ -1245,6 +1249,9 @@ class SessionDocumentStore(SessionStore):
                 )
                 for i in inspection_document["preparation_iterations"]
             ],
+            evaluation_generations=[
+                deserialize_generation_info(g) for g in inspection_document.get("evaluation_generations", [])
+            ] if inspection_document.get("evaluation_generations") else None,
             usage_info=deserialize_usage_info(usage_doc) if (usage_doc := inspection_document.get("usage_info")) else None,
             creation_utc=datetime.fromisoformat(inspection_document["creation_utc"]) if inspection_document.get("creation_utc") else datetime.now(timezone.utc),
         )
@@ -1263,6 +1270,7 @@ class SessionDocumentStore(SessionStore):
     ) -> Session:
         async with self._lock.writer_lock:
             creation_utc = creation_utc or datetime.now(timezone.utc)
+            updated_utc = datetime.now(timezone.utc)
 
             consumption_offsets: dict[ConsumerId, int] = {"client": 0}
 
@@ -1275,6 +1283,7 @@ class SessionDocumentStore(SessionStore):
                 consumption_offsets=consumption_offsets,
                 title=title,
                 agent_states=[],
+                updated_utc=updated_utc,
                 tenant_id=tenant_id,
                 chatbot_id=chatbot_id,
             )

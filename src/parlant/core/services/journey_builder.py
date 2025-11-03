@@ -58,7 +58,7 @@ class JourneyBuilder:
             ValueError: 当工具不存在或Graph无效时
         """
         self._logger.info(
-            f"🔨 开始构建Journey: {journey_graph.title}, "
+            f"🔨 building journey: {journey_graph.title}, "
             f"{len(journey_graph.nodes)} nodes, {len(journey_graph.edges)} edges"
         )
         
@@ -73,7 +73,7 @@ class JourneyBuilder:
                 journey, node, available_tools
             )
             state_map[node.id] = state
-            self._logger.trace(f"create state: {node.id} ({node.type})")
+            self._logger.trace(f"creating state: {node.id} ({node.type})")
         
         # 2. 连接root到第一个节点
         # 找到第一个节点（没有incoming edge的节点）
@@ -88,7 +88,7 @@ class JourneyBuilder:
                 target=first_node_state,
             )
             self._logger.trace(
-                f"  ✓ 创建转换: root -> {first_nodes[0].id} (从root连接到第一个节点)"
+                f"  ✓ creating transition: root -> {first_nodes[0].id} (from root to first node)"
             )
         
         # 3. 创建所有图中定义的转换(transitions)
@@ -109,7 +109,7 @@ class JourneyBuilder:
             
             condition_text = edge.condition or "unconditional"
             self._logger.trace(
-                f"create transition: {edge.from_node} -> {edge.to_node} ({condition_text})"
+                f"creating transition: {edge.from_node} -> {edge.to_node} ({condition_text})"
             )
         
         return state_map
@@ -119,7 +119,7 @@ class JourneyBuilder:
         journey_graph: JourneyGraph,
         available_tools: dict[str, "Tool"],
     ) -> None:
-        """验证Journey Graph的有效性"""
+        """validate the validity of the Journey Graph"""
         # 验证节点ID唯一性
         node_ids = [node.id for node in journey_graph.nodes]
         if len(node_ids) != len(set(node_ids)):

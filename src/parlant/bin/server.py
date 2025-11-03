@@ -943,7 +943,7 @@ async def serve_app(
         LOGGER.info(".-----------------------------------------.")
         LOGGER.info("| Server is ready for some serious action |")
         LOGGER.info("'-----------------------------------------'")
-        LOGGER.info(f"Server authorization policy: {container[AuthorizationPolicy].name}")
+        # LOGGER.info(f"Server authorization policy: {container[AuthorizationPolicy].name}")
 
         if isinstance(container[AuthorizationPolicy], DevelopmentAuthorizationPolicy):
             LOGGER.info(f"Try the Sandbox UI at http://localhost:{port}")

@@ -152,6 +152,7 @@ from parlant.core.canned_responses import (
 )
 from parlant.core.evaluations import (
     EvaluationDocumentStore,
+    EvaluationId,
     EvaluationStatus,
     EvaluationStore,
     GuidelinePayload,
@@ -162,6 +163,7 @@ from parlant.core.evaluations import (
     PayloadDescriptor,
     PayloadKind,
 )
+from parlant.core.nlp.generation_info import GenerationInfo
 from parlant.core.guidelines import (
     GuidelineContent,
     GuidelineDocumentStore,
@@ -380,10 +382,12 @@ class _CachedEvaluator:
     class JourneyEvaluation:
         node_properties: dict[JourneyStateId, dict[str, JSONSerializable]]
         edge_properties: dict[JourneyTransitionId, dict[str, JSONSerializable]]
+        evaluation_id: EvaluationId | None = None
 
     @dataclass(frozen=True)
     class GuidelineEvaluation:
         properties: dict[str, JSONSerializable]
+        evaluation_id: EvaluationId | None = None
 
     def __init__(
         self,
@@ -536,6 +540,7 @@ class _CachedEvaluator:
 
             return self.GuidelineEvaluation(
                 properties=cached_evaluation["properties"],
+                evaluation_id=None,  # 缓存的评估没有evaluation_id
             )
 
         self._logger.trace(
@@ -602,6 +607,7 @@ class _CachedEvaluator:
             # Return the evaluation result
             return self.GuidelineEvaluation(
                 properties=cast(InvoiceGuidelineData, invoice.data).properties_proposition or {},
+                evaluation_id=evaluation_id,
             )
 
     async def evaluate_journey(
@@ -626,6 +632,7 @@ class _CachedEvaluator:
             return self.JourneyEvaluation(
                 node_properties=cached_evaluation["node_properties"],
                 edge_properties=cached_evaluation["edge_properties"],
+                evaluation_id=None,  # 缓存的评估没有evaluation_id
             )
 
         self._logger.trace(f"Evaluating journey: Title: {journey.title or 'None'}")
@@ -688,6 +695,7 @@ class _CachedEvaluator:
                 or {},
                 edge_properties=cast(InvoiceJourneyData, invoice.data).edge_properties_proposition
                 or {},
+                evaluation_id=evaluation_id,
             )
 
 
@@ -2263,12 +2271,17 @@ class Server:
 
         return f"Journey: {journey.title}"
 
-    async def _process_evaluations(self, agent_id: AgentId | None = None) -> None:
+    async def _process_evaluations(
+        self, 
+        agent_id: AgentId | None = None,
+        session_id: SessionId | None = None,
+    ) -> None:
         """
         处理评估队列，支持按 agent_id 隔离处理
         
         Args:
             agent_id: 如果指定，只处理该 agent 的评估；否则处理所有评估
+            session_id: 如果指定，evaluation tokens 将写入该 session 的 inspection
         """
         _render_functions: dict[
             Literal["guideline", "node", "journey"],
@@ -2340,7 +2353,24 @@ class Server:
 
         evaluation_results = await async_utils.safe_gather(*tasks)
 
+        # 收集所有评估的 GenerationInfo（本次agent的所有评估）
+        # 注意：all_evaluation_generations 是本地变量，每次调用独立，无并发污染风险
+        all_evaluation_generations: list[GenerationInfo] = []
+        
+        # 单次遍历完成数据收集和处理
         for entity_type, entity_id, result in evaluation_results:
+            # 1. 收集 GenerationInfo（如果有）
+            if hasattr(result, 'evaluation_id') and result.evaluation_id:
+                generations = self._container[BehavioralChangeEvaluator].get_evaluation_generations(
+                    result.evaluation_id
+                )
+                all_evaluation_generations.extend(generations)
+                # 清除已使用的 GenerationInfo，防止内存泄漏
+                self._container[BehavioralChangeEvaluator].clear_evaluation_generations(
+                    result.evaluation_id
+                )
+            
+            # 2. 处理评估结果并更新元数据
             if entity_type == "guideline":
                 guideline = await self._container[GuidelineStore].read_guideline(
                     guideline_id=cast(GuidelineId, entity_id)
@@ -2391,6 +2421,67 @@ class Server:
                             key=key,
                             value=value,
                         )
+
+        # 记录评估 tokens 统计
+        if all_evaluation_generations:
+            total_input_tokens = sum(g.usage.input_tokens for g in all_evaluation_generations)
+            total_output_tokens = sum(g.usage.output_tokens for g in all_evaluation_generations)
+            total_tokens = sum(g.usage.total_tokens or 0 for g in all_evaluation_generations)
+            
+            self._container[Logger].info(
+                f"Processed {len(evaluation_results)} evaluations for agent(s): {agent_keys}. "
+                f"Total evaluation tokens: input={total_input_tokens}, output={total_output_tokens}, "
+                f"total={total_tokens}, generations={len(all_evaluation_generations)}"
+            )
+            
+            # 如果提供了 session_id，直接写入该 session 的 inspection
+            if session_id:
+                try:
+                    from parlant.core.contextual_correlator import ContextualCorrelator
+                    
+                    # 从上下文获取当前请求的 correlation_id
+                    correlation_id = self._container[ContextualCorrelator].correlation_id
+                    
+                    # 记录详细的追溯信息
+                    self._container[Logger].debug(
+                        f"📊 Evaluation details for agent {agent_keys}:\n"
+                        + "\n".join([
+                            f"  [{i+1}] {g.schema_name} - {g.model}: "
+                            f"input={g.usage.input_tokens}, output={g.usage.output_tokens}, "
+                            f"total={g.usage.total_tokens or 0}, duration={g.duration:.3f}s"
+                            for i, g in enumerate(all_evaluation_generations)
+                        ])
+                    )
+                    
+                    # 将 evaluation_generations 写入 session 的 inspection
+                    # 注意：每个 generation 包含完整的追溯信息（model, schema, duration, tokens）
+                    await self._container[SessionStore].create_inspection(
+                        session_id=session_id,
+                        correlation_id=correlation_id,
+                        message_generations=[],
+                        preparation_iterations=[],
+                        response_analysis_generations=all_evaluation_generations,
+                    )
+                    self._container[Logger].info(
+                        f"✅ Evaluation inspection saved to session {session_id}: "
+                        f"{len(all_evaluation_generations)} generations, {total_tokens} tokens, "
+                        f"correlation_id={correlation_id}"
+                    )
+                    
+                except Exception as e:
+                    self._container[Logger].warning(
+                        f"⚠️ Failed to create evaluation inspection for session {session_id}: {e}"
+                    )
+            else:
+                # 没有 session_id，只记录日志
+                self._container[Logger].info(
+                    f"⚠️ No session_id provided, evaluation tokens not persisted to inspection"
+                )
+        else:
+            self._container[Logger].info(
+                f"Processed {len(evaluation_results)} evaluations for agent(s): {agent_keys} "
+                "(no generation info collected, possibly from cache)"
+            )
 
         # 清空已处理的评估队列
         for key in agent_keys:
@@ -2862,8 +2953,18 @@ class Server:
                 from parlant.adapters.db.mongo_db import MongoDocumentDatabase
 
                 if mongo_client is None:
+                    # 配置MongoDB超时参数（防止无限等待）
                     mongo_client = await self._exit_stack.enter_async_context(
-                        AsyncMongoClient[Any](url)
+                        AsyncMongoClient[Any](
+                            url,
+                            serverSelectionTimeoutMS=30000,  # 30秒服务器选择超时
+                            connectTimeoutMS=20000,          # 20秒连接超时
+                            socketTimeoutMS=30000,           # 30秒socket超时（关键！）
+                            maxPoolSize=100,                 # 连接池大小
+                            minPoolSize=10,
+                            maxIdleTimeMS=60000,             # 60秒空闲连接回收
+                            heartbeatFrequencyMS=10000,      # 10秒心跳检查
+                        )
                     )
 
                 db = await self._exit_stack.enter_async_context(

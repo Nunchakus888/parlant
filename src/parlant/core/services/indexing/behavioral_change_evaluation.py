@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import contextvars
 import traceback
 from typing import Optional, Sequence, cast
 
@@ -73,6 +74,25 @@ from parlant.core.services.indexing.journey_structure_proposer import (
 from parlant.core.services.indexing.journey_structure_analysis import (
     JourneyStructureProposition,
 )
+from parlant.core.nlp.generation_info import GenerationInfo
+
+
+# 模块级别的当前 evaluator 实例（用于 proposers 调用）
+# 注意：通过 contextvars 确保异步安全，每个 evaluation 任务独立
+_current_evaluator: contextvars.ContextVar["BehavioralChangeEvaluator | None"] = (
+    contextvars.ContextVar('_current_evaluator', default=None)
+)
+
+
+def add_generation_info(info: GenerationInfo) -> None:
+    """
+    添加 GenerationInfo 到当前评估任务
+    注意：此函数通过 contextvars 获取当前的 evaluator 实例，确保异步安全
+    影响范围：仅限于当前 evaluation 任务的调用链
+    """
+    evaluator = _current_evaluator.get()
+    if evaluator is not None:
+        evaluator.add_generation_info(info)
 
 
 class EvaluationValidationError(Exception):
@@ -564,6 +584,18 @@ class BehavioralChangeEvaluator:
 
         self._evaluation_store = evaluation_store
         self._entity_queries = entity_queries
+        
+        # 存储评估任务的 GenerationInfo（按 evaluation_id 管理）
+        # 注意：每个 evaluation_id 唯一，支持并发多个 evaluation 任务，无污染风险
+        # key: EvaluationId（唯一标识一次评估任务）
+        # value: list[GenerationInfo]（该评估的所有LLM调用记录）
+        self._evaluation_generations: dict[EvaluationId, list[GenerationInfo]] = {}
+        
+        # 当前评估任务的 GenerationInfo 收集器（本地变量，按 evaluation_id 隔离）
+        # 使用 contextvars 支持异步上下文，但限定在实例级别
+        self._current_generation_collector: contextvars.ContextVar[list[GenerationInfo] | None] = (
+            contextvars.ContextVar('_current_generation_collector', default=None)
+        )
 
         self._guideline_evaluator = GuidelineEvaluator(
             logger=logger,
@@ -584,6 +616,23 @@ class BehavioralChangeEvaluator:
             relative_action_proposer=relative_action_proposer,
         )
 
+    def add_generation_info(self, info: GenerationInfo) -> None:
+        """
+        添加 GenerationInfo 到当前评估任务的收集器
+        注意：只在 run_evaluation 上下文中有效，影响范围限定在当前 evaluation 任务
+        """
+        collector = self._current_generation_collector.get()
+        if collector is not None:
+            collector.append(info)
+    
+    def get_evaluation_generations(self, evaluation_id: EvaluationId) -> Sequence[GenerationInfo]:
+        """获取指定评估任务收集到的 GenerationInfo"""
+        return self._evaluation_generations.get(evaluation_id, [])
+    
+    def clear_evaluation_generations(self, evaluation_id: EvaluationId) -> None:
+        """清除指定评估任务的 GenerationInfo，释放内存"""
+        self._evaluation_generations.pop(evaluation_id, None)
+    
     async def validate_payloads(
         self,
         payload_descriptors: Sequence[PayloadDescriptor],
@@ -626,6 +675,12 @@ class BehavioralChangeEvaluator:
                 params={"status": EvaluationStatus.RUNNING},
             )
 
+            # 创建本地 GenerationInfo 收集器（每次评估任务独立）
+            # 使用 contextvars 支持异步调用链，但作用域限定在当前 evaluation
+            generation_infos: list[GenerationInfo] = []
+            collector_token = self._current_generation_collector.set(generation_infos)
+            evaluator_token = _current_evaluator.set(self)
+
             guideline_evaluation_data, journey_evaluation_data = await async_utils.safe_gather(
                 self._guideline_evaluator.evaluate(
                     payloads=[
@@ -654,6 +709,10 @@ class BehavioralChangeEvaluator:
                 invoice_checksum = md5_checksum(str(evaluation.invoices[i].payload))
                 state_version = str(hash("Temporarily"))
 
+                # logger the journey evaluation data
+                if evaluation.invoices[i].kind == PayloadKind.JOURNEY:
+                    self._logger.info(f"DAG evaluation data: {result.model_dump_json(indent=2)}")
+
                 invoices.append(
                     Invoice(
                         kind=evaluation.invoices[i].kind,
@@ -670,7 +729,21 @@ class BehavioralChangeEvaluator:
                 evaluation_id=evaluation.id,
                 params={"invoices": invoices},
             )
-
+            
+            # 存储收集到的 GenerationInfo
+            # 按 evaluation_id 存储，支持并发多个 evaluation 任务
+            if generation_infos:
+                self._evaluation_generations[evaluation.id] = generation_infos
+                total_tokens = sum(g.usage.total_tokens or 0 for g in generation_infos)
+                self._logger.info(
+                    f"📊 Evaluation {evaluation.id} collected {len(generation_infos)} generations, "
+                    f"total tokens: {total_tokens}, "
+                    f"models: {', '.join(set(g.model for g in generation_infos))}"
+                )
+            
+            # 重置 context variables（清理上下文，防止泄漏）
+            self._current_generation_collector.reset(collector_token)
+            _current_evaluator.reset(evaluator_token)
 
             await self._evaluation_store.update_evaluation(
                 evaluation_id=evaluation.id,

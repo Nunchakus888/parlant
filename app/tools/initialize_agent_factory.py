@@ -6,9 +6,11 @@ from typing import Dict, Any, List, Optional
 from parlant.core.agent_factory import AgentFactory
 import parlant.sdk as p
 from parlant.core.agents import AgentStore, AgentId
+from parlant.core.sessions import SessionId
 from app.tools import ToolManager
 from app.tools.http_config import AgentConfigRequest, HttpConfigLoader
 from app.tools.prompts_format import decode_markdown_links
+from app.tools.retriver import create_knowledge_retriever
 from parlant.core.services.journey_builder import JourneyBuilder
 from parlant.core.services.indexing.journey_structure_analysis import JourneyGraph
 
@@ -72,6 +74,8 @@ class CustomAgentFactory(AgentFactory):
             "md5_checksum": config_request.md5_checksum,
             "session_id": config_request.session_id
         }
+
+        session_id = SessionId(config_request.session_id) if config_request.session_id else None
         
         agent = await server.create_agent(
             id=AgentId(config_request.session_id) if config_request.session_id else None,
@@ -81,6 +85,9 @@ class CustomAgentFactory(AgentFactory):
             metadata=metadata,
         )
         
+        # 设置知识库检索器
+        await self._setup_retriever(agent, config_request, basic_settings)
+        
         # setup tools
         tools = await self._setup_tools(agent, config.get("tools", []))
         
@@ -88,13 +95,13 @@ class CustomAgentFactory(AgentFactory):
         # create guidelines
         guidelines = await self._create_guidelines(agent, config.get("action_books", []), tools)
         
-        # 处理该 agent 的评估队列（按 agent_id 隔离）
-        await server._process_evaluations(agent_id=agent.id)
+        # 处理该 agent 的评估队列（按 agent_id 隔离，写入 session inspection）
+        await server._process_evaluations(agent_id=agent.id, session_id=session_id)
         
         # 评估完成后，处理 journey 转换
         await self._process_journey_conversions(agent, guidelines, tools)
 
-        await server._process_evaluations(agent_id=agent.id)
+        await server._process_evaluations(agent_id=agent.id, session_id=session_id)
 
 
         end_time = time.time()
@@ -108,6 +115,55 @@ class CustomAgentFactory(AgentFactory):
 
         return agent
     
+    async def _setup_retriever(
+        self, 
+        agent: p.Agent, 
+        config_request: AgentConfigRequest,
+        basic_settings: Dict[str, Any]
+    ) -> None:
+        """
+        为Agent配置知识库检索器
+        
+        Args:
+            agent: Agent实例
+            config_request: HTTP配置请求，包含chatbot_id等信息
+            basic_settings: 基础配置，包含retrieve_knowledge_url
+        """
+        try:
+            # 从配置中获取知识库信息
+            chatbot_id = config_request.chatbot_id
+            retrieve_url = basic_settings.get("retrieve_knowledge_url")
+            
+            # 验证必要参数
+            if not chatbot_id:
+                self._logger.warning("chatbot_id not found, skipping retriever setup")
+                return
+                
+            if not retrieve_url:
+                self._logger.warning("retrieve_knowledge_url not found, skipping retriever setup")
+                return
+            
+            # 创建知识库检索器实例
+            knowledge_retriever = create_knowledge_retriever(
+                chatbot_id=chatbot_id,
+                retrieve_url=retrieve_url,
+                logger=self._logger,
+                timeout=int(os.getenv("RETRIEVER_TIMEOUT", "10"))
+            )
+            
+            # 将检索器注册到Agent
+            await agent.attach_retriever(
+                knowledge_retriever.retrieve,
+                # id="knowledge_retriever"
+            )
+            
+            self._logger.info(
+                f"🔍 Knowledge retriever attached: chatbot_id={chatbot_id}, url={retrieve_url}"
+            )
+            
+        except Exception as e:
+            self._logger.error(f"🔴 Failed to setup retriever: {type(e).__name__}: {str(e)}")
+            # 不抛出异常，允许Agent在没有检索器的情况下继续工作
 
     async def _setup_tools(self, agent: p.Agent, tools_config: List[Dict[str, Any]]) -> Dict[str, Any]:
         """setup tools and return the tool mapping"""
@@ -151,13 +207,6 @@ class CustomAgentFactory(AgentFactory):
                         associated_tools.append(available_tools[tool_name])
                     else:
                         self._logger.warning(f"tool {tool_name} not found, skip associating")
-                
-                # if type == "journey":
-                #     self._logger.info(f"skip journey: {action_book}")
-                #     await self._process_journey_4_test(agent, action_book)
-                #     continue
-                
-                # create guideline（评估任务会异步添加到队列）
                 guideline = await agent.create_guideline(
                     condition=condition,
                     action=action,
@@ -209,7 +258,7 @@ class CustomAgentFactory(AgentFactory):
                         
                         if journey_graph_data:
                             self._logger.trace(
-                                f"detect journey candidate (confidence: {confidence:.2f}): {guideline_with_metadata.content.condition[:50]}..."
+                                f"🔍 detect journey candidate (confidence: {confidence:.2f}): {guideline_with_metadata.content.condition[:50]}..."
                             )
                             
                             try:
@@ -223,6 +272,7 @@ class CustomAgentFactory(AgentFactory):
                                 # 1. 解析Journey Graph
                                 journey_graph = JourneyGraph.from_dict(journey_graph_data)
                                 
+                                self._logger.trace(f"✈️ create_journey: conditions: {condition}")
                                 journey = await agent.create_journey(
                                     title=journey_graph.title,
                                     description=journey_graph.description,

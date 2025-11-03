@@ -1313,6 +1313,28 @@ async def _ensure_session_and_customer(
         )
         logger.info(f"👤 created new customer: {customer.id}")
     
+    # 2. Session处理 - 优先创建，确保上下文连续和数据安全
+    logger.info(f"📝 Checking session: {session_id}")
+    session = None
+    try:
+        logger.debug(f"📖 Reading session from database: {session_id}")
+        session = await app.sessions.read(session_id)
+        logger.info(f"✅ Session found: {session.id}")
+    except ItemNotFoundError as e:
+        logger.info(f"📝 Session not found, creating new session: {session_id}")
+        # 先创建session（agent_id暂时使用session_id作为占位符）
+        session = await app.sessions.create(
+            session_id=session_id,
+            customer_id=customer_id,
+            agent_id=agent_id,
+            title=session_title,
+            allow_greeting=False,
+            tenant_id=params.tenant_id,
+            chatbot_id=params.chatbot_id,
+        )
+        logger.info(f"✅ Session created early: {session.id}")
+    
+    # 3. Agent处理 - 评估将写入上面创建的session
     try:
         agent = await app.agents.read(agent_id)
 
@@ -1330,9 +1352,9 @@ async def _ensure_session_and_customer(
         agent = await agent_creator(params)
         logger.info(f"🤖 created new agent: {agent.id}")
 
-    try:
-        session = await app.sessions.read(session_id)
-
+    # 4. 更新Session - 确保agent_id正确关联
+    if session and session.agent_id != agent.id:
+        logger.debug(f"🔄 Updating session agent_id: {session_id}")
         session = await app.sessions.update(
             session_id=session_id,
             params=SessionUpdateParams(
@@ -1340,19 +1362,7 @@ async def _ensure_session_and_customer(
               customer_id=customer_id,
             )
         )
-        logger.info(f"🔄 updated session to the latest status")
-
-    except ItemNotFoundError as e:
-        session = await app.sessions.create(
-            session_id=session_id,
-            customer_id=customer_id,
-            agent_id=agent.id,
-            title=session_title,
-            allow_greeting=False,
-            tenant_id=params.tenant_id,
-            chatbot_id=params.chatbot_id,
-        )
-        logger.info(f"💬 created new session: {session.id}")
+        logger.info(f"✅ Session updated with agent_id: {agent.id}")
 
     return session, customer, agent.id
 
@@ -2328,7 +2338,9 @@ def create_router(
         )
 
         request_end = time.time()
+        # logger user message
         logger.info(f"⏰ Total chat request duration: {(request_end - request_start):.3f}s")
+        logger.info(f"💬 User message: {params.message}")
         logger.info(f"🎉 Response: {response.model_dump()}")
         return response
 

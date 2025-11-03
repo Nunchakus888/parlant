@@ -195,6 +195,10 @@ Expected output (JSON):
         if not response.content:
             self._logger.warning("Completion:\nNo checks generated! This shouldn't happen.")
 
+        # 收集 GenerationInfo
+        from parlant.core.services.indexing.behavioral_change_evaluation import add_generation_info
+        add_generation_info(response.info)
+        
         return response.content
 
     def _format_shots(self, shots: Sequence[AgentIntentionProposerShot]) -> str:

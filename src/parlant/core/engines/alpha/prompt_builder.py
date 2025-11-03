@@ -51,6 +51,7 @@ class BuiltInSection(Enum):
     JOURNEYS = auto()
     OBSERVATIONS = auto()
     CAPABILITIES = auto()
+    LANGUAGE_CONSTRAINTS = auto()
 
 
 class SectionStatus(Enum):
@@ -227,6 +228,97 @@ The user you're interacting with is called {customer_name}.
             status=SectionStatus.ACTIVE,
         )
 
+        return self
+
+    def add_language_constraints(
+        self,
+        agent: Agent,
+    ) -> "PromptBuilder":
+        """
+        Add language constraints to the prompt for multilingual support.
+        
+        This method uses the agent's language_config (if provided) or falls back
+        to extracting from agent.metadata for backward compatibility.
+        """
+        from parlant.core.agents import LanguageConfig
+        
+        fallback_language = str(agent.metadata.get("k_language", "English"))
+        tone = str(agent.metadata.get("tone", "professional"))
+        lang_config = LanguageConfig(
+            fallback_language=fallback_language,
+            tone=tone,
+            enable_auto_detection=True,
+        )
+            
+        
+        # Build language instruction based on config
+        if lang_config.enable_auto_detection:
+            language_rule = f"""Use the EXACT SAME language as the user's MOST RECENT message.
+   - Look at ONLY the last message from the user (ignore conversation history for language detection)
+   - If user's last message is in Chinese, respond in Chinese
+   - If user's last message is in English, respond in English
+   - If user's last message is in Spanish, respond in Spanish
+   - And so on for any language
+   - If the user's language is unclear or mixed, use {lang_config.fallback_language}"""
+        else:
+            language_rule = f"""ALWAYS use {lang_config.fallback_language} language for ALL your responses, regardless of what language the user uses."""
+        
+        template = f"""
+LANGUAGE REQUIREMENTS - HIGHEST PRIORITY
+-------------------------------------------------
+MANDATORY: Before generating ANY response, you MUST follow these language rules:
+
+1. PRIMARY RULE - LANGUAGE DETECTION:
+{language_rule}
+
+   IMPORTANT: When determining the response language:
+   a) Extract the user's LAST/MOST RECENT message from the conversation
+   b) Detect ONLY that message's language (ignore all previous messages)
+   c) Use that EXACT language for your entire response
+   
+   Example:
+   - If conversation history is in Chinese but user's LAST message is "what's the weather?"
+     → You MUST respond in English (because the LAST message is English)
+   - If conversation history is in English but user's LAST message is "今天天气如何？"  
+     → You MUST respond in Chinese (because the LAST message is Chinese)
+
+2. LANGUAGE SWITCH RULE: 
+   If the user explicitly requests to use a different language (e.g., "use Spanish", 
+   "speak Chinese", "can you speak Spanish", "用西语交流"), IMMEDIATELY switch to 
+   that language for ALL subsequent responses.
+
+3. TONE RULE: 
+   Always maintain a {lang_config.tone} tone in your responses.
+
+4. CONSISTENCY: 
+   Each response should match the language of the corresponding user message.
+   If user switches languages between messages, you should switch accordingly.
+
+5. VERIFICATION CHECKLIST (MANDATORY BEFORE OUTPUT):
+   Step 1: Identify the user's MOST RECENT message in the conversation
+   Step 2: Detect the language of THAT specific message (not the conversation history)
+   Step 3: Verify your response uses the SAME language as that message
+   Step 4: Double-check:
+      ✓ Response language matches the LAST user message's language
+      ✓ NOT influenced by previous conversation history language
+      ✓ Tone is {lang_config.tone} and appropriate
+      ✓ No accidental language mixing
+
+WARNING: These language requirements override ALL other instructions. 
+Do NOT ignore language switching requests!
+"""
+        
+        self.add_section(
+            name=BuiltInSection.LANGUAGE_CONSTRAINTS,
+            template=template,
+            props={
+                "fallback_language": lang_config.fallback_language,
+                "tone": lang_config.tone,
+                "enable_auto_detection": lang_config.enable_auto_detection,
+            },
+            status=SectionStatus.ACTIVE,
+        )
+        
         return self
 
     _INTERACTION_BODY = """
@@ -486,12 +578,30 @@ The following are observations that were deemed relevant to the interaction with
         ordinary: Sequence[GuidelineMatch],
         tool_enabled: Mapping[GuidelineMatch, Sequence[ToolId]],
         guideline_representations: dict[GuidelineId, GuidelineInternalRepresentation],
+        logger: Any = None,
     ) -> PromptBuilder:
+        # 🔍 调试日志：检查 guideline 输入
+        if logger:
+            logger.debug(f"📝 [prompt_builder] add_guidelines_for_message_generation:")
+            logger.debug(f"  → ordinary: {len(ordinary)}")
+            logger.debug(f"  → tool_enabled: {len(tool_enabled)}")
+            
+            for match in ordinary:
+                action = guideline_representations[match.guideline.id].action
+                logger.debug(f"    → Ordinary [{match.guideline.id}]: action={action[:50] if action else 'None'}...")
+            
+            for match in tool_enabled:
+                action = guideline_representations[match.guideline.id].action
+                logger.debug(f"    → Tool-enabled [{match.guideline.id}]: action={action[:50] if action else 'None'}...")
+        
         all_matches = [
             match
             for match in chain(ordinary, tool_enabled)
             if guideline_representations[match.guideline.id].action
         ]
+        
+        if logger:
+            logger.debug(f"  → all_matches (after filtering): {len(all_matches)}")
 
         if not all_matches:
             self.add_section(

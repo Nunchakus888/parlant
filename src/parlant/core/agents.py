@@ -45,6 +45,14 @@ from parlant.core.tags import TagId
 AgentId = NewType("AgentId", str)
 
 
+@dataclass(frozen=True)
+class LanguageConfig:
+    """Agent's language configuration for multilingual support"""
+    fallback_language: str = "English"
+    tone: str = "professional"
+    enable_auto_detection: bool = True
+
+
 class CompositionMode(Enum):
     FLUID = "fluid"
     CANNED_FLUID = "canned_fluid"

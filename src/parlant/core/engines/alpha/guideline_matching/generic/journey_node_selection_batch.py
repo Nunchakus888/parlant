@@ -703,7 +703,9 @@ class GenericJourneyNodeSelectionBatch(GuidelineMatchingBatch):
         journey_conditions: Sequence[Guideline],
         shots: Sequence[JourneyNodeSelectionShot],
     ) -> PromptBuilder:
-        builder = PromptBuilder(on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}"))
+        builder = PromptBuilder(
+          # on_build=lambda prompt: self._logger.trace(f"Prompt:\n{prompt}")
+        )
 
         builder.add_section(
             name="journey-step-selection-general-instructions",
