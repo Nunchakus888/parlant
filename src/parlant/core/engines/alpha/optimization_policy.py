@@ -87,6 +87,44 @@ class OptimizationPolicy(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_max_history_for_tool_calls(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Gets the maximum number of interaction events to include for tool calling.
+        
+        Tool calling primarily focuses on recent interactions and doesn't require full
+        conversation history. Limiting history significantly reduces token consumption.
+        Can be configured via MAX_HISTORY_FOR_TOOL_CALLS environment variable.
+        """
+        ...
+
+    @abstractmethod
+    def get_max_history_for_message_generation(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Gets the maximum number of interaction events to include for message generation.
+        
+        Message generation needs more context than tool calling but should still be limited
+        to prevent unbounded token growth in long conversations.
+        Can be configured via MAX_HISTORY_FOR_MESSAGE_GENERATION environment variable.
+        """
+        ...
+
+    @abstractmethod
+    def get_max_history_for_guideline_matching(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Gets the maximum number of interaction events for guideline matching.
+        
+        Guideline matching needs moderate context to evaluate applicability.
+        Can be configured via MAX_HISTORY_FOR_GUIDELINE_MATCHING environment variable.
+        """
+        ...
+
 
 class BasicOptimizationPolicy(OptimizationPolicy):
     """A basic optimization policy that defines default behaviors for the engine."""
@@ -208,3 +246,42 @@ class BasicOptimizationPolicy(OptimizationPolicy):
         Setting to 1 may cause issues with timeouts or LLM output errors.
         """
         return int(os.getenv("MAX_GUIDELINE_PROPOSITION_ATTEMPTS", "2"))
+
+    @override
+    def get_max_history_for_tool_calls(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Get max history events for tool calling from environment variable.
+        
+        Defaults to 10 events (~5 rounds of conversation).
+        Tool calling focuses on recent interactions for parameter extraction.
+        Setting to 0 or negative disables the limit (uses full history).
+        """
+        return int(os.getenv("MAX_HISTORY_FOR_TOOL_CALLS", "10"))
+
+    @override
+    def get_max_history_for_message_generation(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Get max history events for message generation from environment variable.
+        
+        Defaults to 30 events (~15 rounds of conversation).
+        Message generation needs more context than tool calling for coherent responses.
+        Setting to 0 or negative disables the limit (uses full history).
+        """
+        return int(os.getenv("MAX_HISTORY_FOR_MESSAGE_GENERATION", "30"))
+
+    @override
+    def get_max_history_for_guideline_matching(
+        self,
+        hints: Mapping[str, Any] = {},
+    ) -> int:
+        """Get max history events for guideline matching from environment variable.
+        
+        Defaults to 10 events (~5 rounds of conversation).
+        Guideline matching focuses on recent context to evaluate applicability.
+        Setting to 0 or negative disables the limit (uses full history).
+        """
+        return int(os.getenv("MAX_HISTORY_FOR_GUIDELINE_MATCHING", "10"))

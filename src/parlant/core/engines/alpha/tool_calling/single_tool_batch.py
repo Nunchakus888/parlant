@@ -546,7 +546,13 @@ EXAMPLES
                 props={"terms": terms},
                 status=SectionStatus.ACTIVE,
             )
-        builder.add_interaction_history(interaction_event_list)
+        
+        # Use limited history for tool calling to reduce token consumption
+        max_history = self._optimization_policy.get_max_history_for_tool_calls()
+        builder.add_recent_interaction_history_for_tool_calls(
+            interaction_event_list, 
+            max_events=max_history
+        )
         builder.add_section(
             name=BuiltInSection.GUIDELINE_DESCRIPTIONS,
             template=self._add_guideline_matches_section(

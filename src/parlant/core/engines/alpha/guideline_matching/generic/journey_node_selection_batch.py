@@ -802,7 +802,11 @@ Example section is over. The following is the real data you need to use for your
         builder.add_context_variables(self._context.context_variables)
         builder.add_glossary(self._context.terms)
         builder.add_capabilities_for_guideline_matching(self._context.capabilities)
-        builder.add_interaction_history(self._context.interaction_history)
+        max_history = self._optimization_policy.get_max_history_for_guideline_matching()
+        builder.add_interaction_history(
+            self._context.interaction_history,
+            max_events=max_history
+        )
         builder.add_staged_tool_events(self._context.staged_events)
 
         builder.add_section(

@@ -365,8 +365,10 @@ Examples of ...:
         builder.add_agent_identity(self._context.agent)
         builder.add_context_variables(self._context.context_variables)
         builder.add_glossary(self._context.terms)
+        max_history = self._optimization_policy.get_max_history_for_guideline_matching()
         builder.add_interaction_history(
             self._context.interaction_history,
+            max_events=max_history,
             staged_events=self._context.staged_message_events,
         )
         builder.add_staged_tool_events(self._context.staged_tool_events)

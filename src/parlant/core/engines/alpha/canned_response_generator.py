@@ -362,9 +362,12 @@ The guidelines are not necessarily intended to aid your current task of field ge
                 )
             },
         )
+        # Field extraction only needs recent context, not full history
+        # Using fixed limit since this is a utility operation, not main message generation
         builder.add_interaction_history_for_message_generation(
             context.interaction_history,
-            context.staged_message_events,
+            max_events=20,  # ~10 rounds - sufficient for field extraction
+            staged_events=context.staged_message_events,
         )
         builder.add_glossary(context.terms)
         builder.add_staged_tool_events(context.staged_tool_events)
@@ -640,9 +643,11 @@ You will now be given the current state of the interaction to which you must gen
             },
         )
 
+        max_history = self._optimization_policy.get_max_history_for_message_generation()
         prompt_builder.add_interaction_history_for_message_generation(
             canrep_context.interaction_history,
-            context.state.message_events,
+            max_events=max_history,
+            staged_events=context.state.message_events,
         )
 
         await canrep_context.event_emitter.emit_status_event(
@@ -1266,8 +1271,10 @@ EXAMPLES
             guideline_representations,
             logger=self._logger,
         )
+        max_history = self._optimization_policy.get_max_history_for_message_generation()
         builder.add_interaction_history_for_message_generation(
             interaction_history,
+            max_events=max_history,
             staged_events=staged_message_events,
         )
         builder.add_staged_tool_events(staged_tool_events)
@@ -1444,8 +1451,10 @@ Produce a valid JSON object according to the following spec. Use the values prov
         builder.add_customer_identity(context.customer)
         builder.add_language_constraints(context.agent)
         builder.add_glossary(context.terms)
+        max_history = self._optimization_policy.get_max_history_for_message_generation()
         builder.add_interaction_history_for_message_generation(
             context.interaction_history,
+            max_events=max_history,
             staged_events=context.staged_message_events,
         )
 
@@ -2010,8 +2019,10 @@ EXAMPLES
         builder.add_agent_identity(context.agent)
         builder.add_customer_identity(context.customer)
         builder.add_language_constraints(context.agent)
+        max_history = self._optimization_policy.get_max_history_for_message_generation()
         builder.add_interaction_history(
             context.interaction_history,
+            max_events=max_history,
             staged_events=context.staged_message_events,
         )
 

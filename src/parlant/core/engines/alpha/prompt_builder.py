@@ -384,10 +384,22 @@ Proceed with your task accordingly.
     def add_interaction_history(
         self,
         events: Sequence[Event],
+        max_events: int = 0,
         staged_events: Sequence[EmittedEvent] = [],
     ) -> PromptBuilder:
+        """Add interaction history with optional limit.
+        
+        Args:
+            events: All interaction events
+            max_events: Maximum number of recent events (0 or negative = no limit)
+            staged_events: Events staged for emission
+        """
         if events:
-            interaction_events = self._gather_interaction_events(events, staged_events)
+            recent_events = (
+                events[-max_events:] if max_events > 0 and len(events) > max_events 
+                else events
+            )
+            interaction_events = self._gather_interaction_events(recent_events, staged_events)
             self._add_history_section(interaction_events=interaction_events)
         else:
             self._add_empty_history_section()
@@ -397,14 +409,56 @@ Proceed with your task accordingly.
     def add_interaction_history_for_message_generation(
         self,
         events: Sequence[Event],
+        max_events: int = 0,
         staged_events: Sequence[EmittedEvent] = [],
     ) -> PromptBuilder:
+        """Add interaction history for message generation.
+        
+        Args:
+            events: All interaction events
+            max_events: Maximum number of recent events to include (0 or negative = no limit)
+            staged_events: Events staged for emission
+        """
         if events:
-            interaction_events = self._gather_interaction_events(events, staged_events)
-            last_event_note = self._last_agent_message_note(events)
+            # Limit to recent events if max_events is positive
+            recent_events = (
+                events[-max_events:] if max_events > 0 and len(events) > max_events 
+                else events
+            )
+            interaction_events = self._gather_interaction_events(recent_events, staged_events)
+            last_event_note = self._last_agent_message_note(recent_events)
             self._add_history_section(
                 interaction_events=interaction_events, last_event_note=last_event_note
             )
+        else:
+            self._add_empty_history_section()
+
+        return self
+
+    def add_recent_interaction_history_for_tool_calls(
+        self,
+        events: Sequence[Event],
+        max_events: int,
+        staged_events: Sequence[EmittedEvent] = [],
+    ) -> PromptBuilder:
+        """Add limited interaction history for tool calling.
+        
+        Tool calling primarily focuses on recent interactions and doesn't require
+        full conversation history. This method limits events to reduce token consumption.
+        
+        Args:
+            events: All interaction events
+            max_events: Maximum number of recent events to include (0 or negative = no limit)
+            staged_events: Events staged for emission
+        """
+        if events:
+            # Limit to recent events if max_events is positive
+            recent_events = (
+                events[-max_events:] if max_events > 0 and len(events) > max_events 
+                else events
+            )
+            interaction_events = self._gather_interaction_events(recent_events, staged_events)
+            self._add_history_section(interaction_events=interaction_events)
         else:
             self._add_empty_history_section()
 

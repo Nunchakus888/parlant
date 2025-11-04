@@ -492,8 +492,11 @@ INTERACTION CONTEXT
             guideline_representations,
             logger=self._logger,
         )
+        max_history = self._optimization_policy.get_max_history_for_message_generation()
         builder.add_interaction_history_for_message_generation(
-            interaction_history, staged_message_events
+            interaction_history, 
+            max_events=max_history,
+            staged_events=staged_message_events
         )
         builder.add_staged_tool_events(staged_tool_events)
 

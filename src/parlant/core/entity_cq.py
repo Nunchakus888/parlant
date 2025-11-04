@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ast import Return
 from itertools import chain
 from typing import Mapping, Optional, Sequence, cast
 
@@ -341,7 +342,14 @@ class EntityQueries:
         agent_journeys = await self._journey_store.list_journeys(
             tags=[Tag.for_agent_id(agent_id)],
         )
-        global_journeys = await self._journey_store.list_journeys(tags=[])
+        self._logger.debug(f"📊 Found {len(agent_journeys)} agent-specific journeys for {agent_id}")
+        
+        # ❌ REMOVED: This was causing cross-agent data leakage due to bug in list_journeys(tags=[])
+        # The list_journeys(tags=[]) was intended to return "global journeys" (journeys with no tags),
+        # but due to a logic bug, it could return journeys from other agents.
+        # Since all journeys should belong to a specific agent, we don't need global journeys.
+        # global_journeys = await self._journey_store.list_journeys(tags=[])
+        # self._logger.debug(f"🌍 Found {len(global_journeys)} global journeys")
 
         agent = await self._agent_store.read_agent(agent_id)
         journeys_for_agent_tags = (
@@ -349,8 +357,10 @@ class EntityQueries:
             if agent.tags
             else []
         )
+        self._logger.debug(f"🏷️  Found {len(journeys_for_agent_tags)} journeys for agent tags")
+        # ✅ FIXED: Only use journeys that belong to this agent (no global_journeys)
+        return list(set(chain(agent_journeys, journeys_for_agent_tags)))
 
-        return list(set(chain(agent_journeys, global_journeys, journeys_for_agent_tags)))
 
     async def sort_journeys_by_contextual_relevance(
         self,
