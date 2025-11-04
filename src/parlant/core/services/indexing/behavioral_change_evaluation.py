@@ -14,6 +14,7 @@
 
 import asyncio
 import contextvars
+import json
 import traceback
 from typing import Optional, Sequence, cast
 
@@ -711,7 +712,13 @@ class BehavioralChangeEvaluator:
 
                 # logger the journey evaluation data
                 if evaluation.invoices[i].kind == PayloadKind.JOURNEY:
-                    self._logger.info(f"DAG evaluation data: {result.model_dump_json(indent=2)}")
+                    if hasattr(result, 'model_dump'):
+                        data_dict = result.model_dump()
+                    elif hasattr(result, 'dict'):
+                        data_dict = result.dict()
+                    else:
+                        data_dict = result.__dict__
+                    self._logger.info(f"DAG evaluation data: {json.dumps(data_dict, indent=2)}")
 
                 invoices.append(
                     Invoice(

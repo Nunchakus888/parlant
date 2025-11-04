@@ -27,7 +27,7 @@ from starlette.types import Receive, Scope, Send
 
 from lagom import Container
 
-from parlant.adapters.loggers.websocket import WebSocketLogger
+# from parlant.adapters.loggers.websocket import WebSocketLogger
 from parlant.api import agents, capabilities
 from parlant.api import evaluations
 from parlant.api import journeys
@@ -134,7 +134,7 @@ class AppWrapper:
 
 async def create_api_app(container: Container) -> ASGIApplication:
     logger = container[Logger]
-    websocket_logger = container[WebSocketLogger]
+    # websocket_logger = container[WebSocketLogger]
     correlator = container[ContextualCorrelator]
     authorization_policy = container[AuthorizationPolicy]
     session_listener = container[SessionListener]
@@ -432,10 +432,10 @@ async def create_api_app(container: Container) -> ASGIApplication:
     #     ),
     # )
 
-    api_app.include_router(
-        router=logs.create_router(
-            websocket_logger,
-        )
-    )
+    # api_app.include_router(
+    #     router=logs.create_router(
+    #         websocket_logger,
+    #     )
+    # )
 
     return AppWrapper(api_app)
