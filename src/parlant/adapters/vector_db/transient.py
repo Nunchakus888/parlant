@@ -371,7 +371,6 @@ class TransientVectorCollection(Generic[TDocument], VectorCollection[TDocument])
             )
         ]
 
-        self._logger.trace(f"Similar documents found\n{json.dumps(docs, indent=2)}")
 
         # FIXME: Distances here are fake (rank → normalized 0–0.8).
         # Proper cosine distance should be computed.
