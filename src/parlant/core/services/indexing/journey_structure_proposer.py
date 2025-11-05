@@ -242,47 +242,82 @@ Your task is to analyze a guideline and determine:
         builder.add_section(
             name="journey-structure-analysis-criteria",
             template="""
-## When to Convert to Journey
+## Journey Evaluation Criteria
 
-Convert to Journey if the guideline exhibits:
+Journey should be rare. Use Journey only when all of the following are true:
 
-1. **Multiple Sequential Steps**
-   - Contains sequence indicators: "first...then...", "after that...", "next...", "先...然后...", "接着..."
-   - Describes a process with clear ordering
-   - Multiple actions that must happen in sequence
+### Mandatory Requirements (all must be met)
 
-2. **Tool Chain Dependencies**
-   - Multiple tool calls where later tools depend on earlier results
-   - Data flow between operations
-   - One tool's output feeds into another tool's input
+1. Multiple API Calls with Serial Dependencies
+   - Not just collecting information then calling one API
+   - Multiple distinct tool or API calls where later calls depend on earlier results
+   - Data from API 1 must feed into API 2, which feeds into API 3
+   - Example: get_city_coordinates → get_weather_by_geo → send_email_alert
+   
+2. Strict Sequential Ordering
+   - Steps must happen in a specific order due to technical or business constraints
+   - Not just "collect info then call API" (guideline can handle this)
+   - Step 2 cannot execute before Step 1 is complete
+   - Clear cause-and-effect chain between steps
+   
+3. Complex State Management
+   - Need to track which specific steps are completed
+   - Different paths based on intermediate results
+   - Backtracking or conditional branching based on step outcomes
+   - Not just "collect fields and call API" (guideline handles this naturally)
 
-3. **State Management Requirements**
-   - Needs to track completion of steps
-   - Requires branching or conditional logic
-   - Customer input needed at specific points
+## When NOT to Convert to Journey
 
-4. **Conditional Branching**
-   - Different paths based on conditions
-   - If-then-else logic
-   - Decision points that affect the flow
+Use simple guideline if any of these apply:
 
-## When NOT to Convert
-
-Keep as simple guideline if:
-- Single action or tool call
+### Information Gathering + Single API
+- Collecting user input then calling one tool or API
+- Example: "Get user's name, email, phone → call save_customer_info"
+- Guideline handles multi-turn information gathering naturally
+  
+### Single or Independent Operations
+- Single action or single tool call
 - No dependencies between operations
 - Simple condition-action pair
-- No state tracking needed
-- Tools can run independently
-- **Multiple steps BUT no step dependencies** - If steps don't need data passed between them, use simple matching
-- **Can work with both approaches** - When either journey or simple matching would work, PREFER simple matching
-- Steps are mostly parallel or independent operations
+- Tools that can run independently or in parallel
+- Multiple information fields with only one API call at the end
 
-**General Principle: Minimize Journey Usage**
-- Journeys add complexity - use ONLY when truly necessary
-- Use Journey ONLY for clear step dependencies (one step's output → next step's input)
-- Use Journey ONLY when strict sequential ordering is mandatory
-- **When in doubt, use simple guideline matching instead of journey**
+### No Step Dependencies
+- Multiple steps but no data passing between them
+- Steps can happen in any order
+- No parameter dependencies between steps
+- Information gathering with no specific order required
+
+### Ambiguous Cases (Default to Guideline)
+- When both journey and guideline could work, choose guideline
+- When step ordering is suggested but not mandatory, use guideline
+- When collecting information without strict sequence, use guideline
+- Steps that are mostly parallel or independent, use guideline
+
+## Specific Anti-Patterns (DO NOT Convert to Journey)
+
+Anti-Pattern 1: Collection + Single API
+- Pattern: "Get field1, field2, field3... then call single_api"
+- Keep as guideline even if action mentions "first", "then", "finally"
+- Guideline naturally handles multi-turn collection
+- Example: "Ask for name → Ask for email → Call save_user_info"
+
+Anti-Pattern 2: Conditional but Single Decision
+- Pattern: "If X then call api_a, else call api_b"
+- Single conditional with no chaining
+- Guideline can handle simple if-else logic
+- Example: "If premium user call premium_api else call standard_api"
+
+Anti-Pattern 3: Parallel or Independent Steps
+- Steps don't depend on each other
+- Can execute in any order
+- Example: "Check user status AND send notification"
+
+General Principle: Minimize Journey Usage
+- Journeys add significant complexity and execution cost
+- Use Journey only for complex orchestration with clear dependencies
+- Default to guideline unless journey is absolutely necessary
+- When analyzing, actively look for reasons not to use journey
 """,
         )
         
@@ -343,32 +378,73 @@ A Journey Graph is a DAG (Directed Acyclic Graph) with:
             template="""
 ## Examples
 
-### Example 1: Multi-step Process with Proactive User Input (Journey Candidate)
+### Example 1: API Chain with Dependencies [JOURNEY]
 
 Input:
 - Condition: "用户询问天气情况"
 - Action: "先让用户提供城市名称，然后使用city_geo_info工具将城市转为坐标，获取经纬度后，立即使用get_weather_by_geo工具查询天气，最后用用户的语言回答天气情况"
 - Tools: ["city_geo_info", "get_weather_by_geo"]
 
-Analysis: Clear sequential steps with tool chain dependencies. Users may provide city name proactively (e.g., "上海天气").
+Decision: JOURNEY
+Rationale: Has API chain with dependencies where step 1 output (coordinates) feeds into step 2 input (weather query). Multiple APIs with data flowing between them. Sequential constraint enforced by technical requirement.
 
-### Example 2: Simple Response (NOT Journey)
+### Example 2: Information Collection + Single API [GUIDELINE]
+
+Input:
+- Condition: "Customer wants demo/pricing info/trial OR provides contact info"
+- Action: "If customer has not provided all required information fields, politely guide them to provide all required information. Once all required fields are collected, save the customer's information using the save_customer_information tool"
+- Tools: ["save_customer_information"]
+
+Decision: GUIDELINE
+Rationale: Only one API call at the end. Information collection has no strict ordering requirement. No API dependencies or chaining. Guideline naturally handles multi-turn information gathering without complex state management.
+
+### Example 3: Simple Response [GUIDELINE]
 
 Input:
 - Condition: "用户说你好"
 - Action: "友好地回应用户的问候"
 - Tools: []
 
-Analysis: Single-step interaction with no tool dependencies or state management.
+Decision: GUIDELINE
+Rationale: Single-step interaction with no tool dependencies or state management requirements.
 
-### Example 3: Single Tool Call (NOT Journey)
+### Example 4: Single Tool Call [GUIDELINE]
 
 Input:
 - Condition: "用户询问账户余额"
 - Action: "使用check_balance工具查询并告知用户余额"
 - Tools: ["check_balance"]
 
-Analysis: Single tool call with no dependencies or sequential steps.
+Decision: GUIDELINE
+Rationale: Single tool call with no dependencies or sequential steps.
+
+### Example 5: Multiple Fields Collection [GUIDELINE]
+
+Input:
+- Condition: "用户想要预订餐厅"
+- Action: "首先询问用户的姓名、电话号码、用餐人数和时间，收集完所有信息后使用book_restaurant工具预订"
+- Tools: ["book_restaurant"]
+
+Decision: GUIDELINE
+Rationale: Despite "首先...然后" keywords, only one API at the end. Fields can be collected in any order. No API dependencies. Guideline handles parameter collection naturally.
+
+### Example 6: Multi-API with Branching [JOURNEY]
+
+Input:
+- Condition: "用户需要完整的旅行规划"
+- Action: "首先用check_user_tier检查用户等级，如果是VIP用户使用premium_travel_api获取高级方案并用send_vip_email发送，否则用standard_travel_api获取标准方案"
+- Tools: ["check_user_tier", "premium_travel_api", "standard_travel_api", "send_vip_email"]
+
+Decision: JOURNEY
+Rationale: Multiple APIs with dependencies. check_user_tier output determines which API path to follow. Conditional branching based on API results. Different execution paths based on intermediate step outcomes.
+
+### Decision Rules
+
+Pattern: "Collect information + single API" → GUIDELINE
+Pattern: "API1 output → API2 input → API3 input" → JOURNEY
+Pattern: "Single API call" → GUIDELINE
+Pattern: "API with conditional branching + subsequent APIs" → JOURNEY
+Pattern: "Multiple fields, no API dependencies" → GUIDELINE
 """,
         )
         
