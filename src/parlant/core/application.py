@@ -191,7 +191,7 @@ class Application:
             
             delete_tasks = [self.guidelines.delete(guideline.id) for guideline in guidelines]
             await safe_gather(*delete_tasks)
-            self._logger.info(f"✅ Successfully deleted {len(guidelines)} guidelines")
+            self._logger.info(f"🗑️ Successfully deleted {len(guidelines)} guidelines")
         except Exception as e:
             self._logger.error(f"❌ Failed to delete guidelines for {agent_tag}: {e}")
             raise
@@ -208,11 +208,11 @@ class Application:
             
             # 详细记录每个Journey
             for journey in journeys:
-                self._logger.debug(f"  🗑️  Journey: {journey.id} - {journey.title}")
+                self._logger.debug(f"🗑️  Journey: {journey.id} - {journey.title}")
             
             delete_tasks = [self.journeys.delete(journey.id) for journey in journeys]
             await safe_gather(*delete_tasks)
-            self._logger.info(f"✅ Successfully deleted {len(journeys)} journeys")
+            self._logger.info(f"🗑️ Successfully deleted {len(journeys)} journeys")
         except Exception as e:
             self._logger.error(f"❌ Failed to delete journeys for {agent_tag}: {e}")
             raise
@@ -241,6 +241,6 @@ class Application:
         """清理指定Agent的所有工具"""
         try:
             await self.services.cleanup_agent_tools(agent_id)
-            self._logger.info(f"✅ Successfully cleaned up tools for agent {agent_id}")
+            self._logger.info(f"🗑️ Successfully cleaned up tools for agent {agent_id}")
         except Exception as e:
             self._logger.error(f"❌ Failed to cleanup tools for agent {agent_id}: {e}")

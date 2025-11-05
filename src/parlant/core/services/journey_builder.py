@@ -18,6 +18,7 @@ Journey构建器
 负责根据结构化的Journey Graph调用Journey API完成Journey配置。
 """
 
+import json
 from typing import Any, TYPE_CHECKING
 
 from parlant.core.loggers import Logger
@@ -111,6 +112,13 @@ class JourneyBuilder:
             self._logger.trace(
                 f"creating transition: {edge.from_node} -> {edge.to_node} ({condition_text})"
             )
+        
+        # 4. 输出完整的 Journey Graph (JSON格式) 便于调试和排查问题
+        self._logger.info(
+            f"🚕 create journey successfully: {journey_graph.title}\n"
+            f"  📐 Complete Journey Graph (JSON):\n"
+            f"{json.dumps(journey_graph.to_dict(), indent=2, ensure_ascii=False)}"
+        )
         
         return state_map
     

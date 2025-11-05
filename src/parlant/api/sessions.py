@@ -1342,7 +1342,7 @@ async def _ensure_session_and_customer(
             logger.info(f"🔄 MD5 checksum changed from {agent.metadata.get('md5_checksum')} to {md5_checksum}, updating agent...")
 
             await app.delete_agent_cascade(agent_id)
-            logger.info(f"✅ deleted agent: {agent_id}")
+            logger.info(f"🗑️ deleted agent: {agent_id}")
             agent = await agent_creator(params)
             logger.info(f"🤖 created new agent: {agent.id}")
         else:
@@ -1362,7 +1362,7 @@ async def _ensure_session_and_customer(
               customer_id=customer_id,
             )
         )
-        logger.info(f"✅ Session updated with agent_id: {agent.id}")
+        logger.info(f"🆕 Session updated with agent_id: {agent.id}")
 
     return session, customer, agent.id
 

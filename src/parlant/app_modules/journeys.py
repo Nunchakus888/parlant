@@ -213,7 +213,7 @@ class JourneyModule:
             
             if not other_journeys:
                 # 没有其他journey使用，可以安全删除
-                self._logger.debug(f"   🗑️  Deleting guideline {condition} (not used by other journeys)")
+                self._logger.debug(f"🗑️  Deleting guideline {condition} (not used by other journeys)")
                 await self._guideline_store.delete_guideline(guideline_id=condition)
             else:
                 # 还被其他journey使用，只移除当前journey的tag
@@ -221,14 +221,14 @@ class JourneyModule:
 
                 if guideline.tags == [Tag.for_journey_id(journey_id)]:
                     # 只有当前journey的tag，删除guideline
-                    self._logger.debug(f"   🗑️  Deleting guideline {condition} (only tagged with current journey)")
+                    self._logger.debug(f"🗑️  Deleting guideline {condition} (only tagged with current journey)")
                     await self._guideline_store.delete_guideline(guideline_id=condition)
                 else:
                     # 有其他tags，只移除当前journey的tag
-                    self._logger.debug(f"   🏷️  Removing journey tag from guideline {condition} (has other tags)")
+                    self._logger.debug(f"🏷️  Removing journey tag from guideline {condition} (has other tags)")
                     await self._guideline_store.remove_tag(
                         guideline_id=condition,
                         tag_id=Tag.for_journey_id(journey_id),
                     )
         
-        self._logger.info(f"✅ Successfully deleted journey {journey_id} and cleaned up dependencies")
+        self._logger.info(f"🗑️ Successfully deleted journey {journey_id} and cleaned up dependencies")

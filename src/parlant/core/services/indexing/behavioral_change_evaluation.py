@@ -710,16 +710,6 @@ class BehavioralChangeEvaluator:
                 invoice_checksum = md5_checksum(str(evaluation.invoices[i].payload))
                 state_version = str(hash("Temporarily"))
 
-                # logger the journey evaluation data
-                if evaluation.invoices[i].kind == PayloadKind.JOURNEY:
-                    if hasattr(result, 'model_dump'):
-                        data_dict = result.model_dump()
-                    elif hasattr(result, 'dict'):
-                        data_dict = result.dict()
-                    else:
-                        data_dict = result.__dict__
-                    self._logger.info(f"DAG evaluation data: {json.dumps(data_dict, indent=2)}")
-
                 invoices.append(
                     Invoice(
                         kind=evaluation.invoices[i].kind,
