@@ -254,12 +254,10 @@ The user you're interacting with is called {customer_name}.
         # Build language instruction based on config
         if lang_config.enable_auto_detection:
             language_rule = f"""Use the EXACT SAME language as the user's MOST RECENT message.
-   - Look at ONLY the last message from the user (ignore conversation history for language detection)
-   - If user's last message is in Chinese, respond in Chinese
-   - If user's last message is in English, respond in English
-   - If user's last message is in Spanish, respond in Spanish
-   - And so on for any language
-   - If the user's language is unclear or mixed, use {lang_config.fallback_language}"""
+   - Look at ONLY the last message (ignore conversation history)
+   - Remove punctuation (。.,!?etc) before detecting - analyze WORDS only
+   - Match the language of the words (e.g., English words → English response)
+   - If unclear or mixed languages → use {lang_config.fallback_language}"""
         else:
             language_rule = f"""ALWAYS use {lang_config.fallback_language} language for ALL your responses, regardless of what language the user uses."""
         
@@ -272,15 +270,13 @@ MANDATORY: Before generating ANY response, you MUST follow these language rules:
 {language_rule}
 
    IMPORTANT: When determining the response language:
-   a) Extract the user's LAST/MOST RECENT message from the conversation
-   b) Detect ONLY that message's language (ignore all previous messages)
+   a) Extract the user's LAST message from the conversation
+   b) Detect ONLY that message's language (ignore previous messages)
    c) Use that EXACT language for your entire response
    
    Example:
-   - If conversation history is in Chinese but user's LAST message is "what's the weather?"
-     → You MUST respond in English (because the LAST message is English)
-   - If conversation history is in English but user's LAST message is "今天天气如何？"  
-     → You MUST respond in Chinese (because the LAST message is Chinese)
+   - History in Chinese, user says "what's the weather?" → respond in English
+   - History in English, user says "今天天气如何？" → respond in Chinese
 
 2. LANGUAGE SWITCH RULE: 
    If the user explicitly requests to use a different language (e.g., "use Spanish", 
@@ -295,14 +291,10 @@ MANDATORY: Before generating ANY response, you MUST follow these language rules:
    If user switches languages between messages, you should switch accordingly.
 
 5. VERIFICATION CHECKLIST (MANDATORY BEFORE OUTPUT):
-   Step 1: Identify the user's MOST RECENT message in the conversation
-   Step 2: Detect the language of THAT specific message (not the conversation history)
-   Step 3: Verify your response uses the SAME language as that message
-   Step 4: Double-check:
-      ✓ Response language matches the LAST user message's language
-      ✓ NOT influenced by previous conversation history language
-      ✓ Tone is {lang_config.tone} and appropriate
-      ✓ No accidental language mixing
+   Step 1: Identify the user's MOST RECENT message
+   Step 2: Detect its language (ignore conversation history)
+   Step 3: Verify your response matches that language
+   Step 4: Check tone is {lang_config.tone} and no language mixing
 
 WARNING: These language requirements override ALL other instructions. 
 Do NOT ignore language switching requests!

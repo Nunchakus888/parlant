@@ -96,6 +96,9 @@ class BasicNoMatchResponseProvider(NoMatchResponseProvider):
 
 class CannedResponseDraftSchema(DefaultBaseModel):
     last_message_of_user: Optional[str]
+    detected_user_language: Optional[str] = None
+    language_detection_reasoning: Optional[str] = None
+    target_response_language: Optional[str] = None
     guidelines: list[str]
     insights: Optional[list[str]] = None
     response_preamble_that_was_already_sent: Optional[str] = None
@@ -1344,6 +1347,7 @@ Produce a valid JSON object according to the following spec. Use the values prov
 """,
             props={
                 "formatted_output_format": self._get_draft_output_format(
+                    agent,
                     interaction_history,
                     list(chain(ordinary_guideline_matches, tool_enabled_guideline_matches)),
                 ),
@@ -1365,6 +1369,7 @@ Produce a valid JSON object according to the following spec. Use the values prov
 
     def _get_draft_output_format(
         self,
+        agent: Agent,
         interaction_history: Sequence[Event],
         guidelines: Sequence[GuidelineMatch],
     ) -> str:
@@ -1407,15 +1412,30 @@ Produce a valid JSON object according to the following spec. Use the values prov
             [f'"{g.guideline}"' for g in guidelines if internal_representation(g.guideline).action]
         )
 
+        # Get fallback language from agent metadata
+        fallback_language = str(agent.metadata.get("k_language", "English"))
+
         return f"""
 {{
     "last_message_of_user": "{last_user_message}",
+    "detected_user_language": "<MANDATORY: ISO 639-1 code (en|zh|es|pt|ar|fr|de|ja|ko|it|ru|hi|etc) or 'mixed'>",
+    "language_detection_reasoning": "<Explain: 1) Remove punctuation from last_message_of_user 2) Identify the language of the WORDS (not punctuation) 3) State the detected language>",
+    "target_response_language": "<MUST be the FULL language name matching detected_user_language code (e.g., en→English, zh→Chinese, es→Spanish). If 'mixed' or unclear → use '{fallback_language}'>",
     "guidelines": [{guidelines_list_text}],
     "insights": [<Up to 3 original insights to adhere to>],
     "response_preamble_that_was_already_sent": "{agent_preamble}",
-    "response_body": "<response message text (that would immediately follow the preamble)>"
+    "response_body": "<CRITICAL: MUST be in target_response_language>"
 }}
-###"""
+###
+
+LANGUAGE DETECTION VERIFICATION:
+Before outputting, verify:
+- Removed ALL punctuation before detecting?
+- Showed cleaned text in reasoning?
+- Valid ISO 639-1 code (or 'mixed')?
+- Response in target_response_language?
+- Mixed/unclear → used '{fallback_language}'?
+"""
 
     def _build_selection_prompt(
         self,
