@@ -755,8 +755,11 @@ Check if the customer has changed a previous decision that requires returning to
 
 ## 3: Current Step Completion
 Evaluate whether the last executed step is complete:
-- For CUSTOMER_DEPENDENT steps: Customer has provided the required information (either after being asked or proactively in earlier messages. If so, set completed to 'completed'.
- If not, set completed to 'needs_customer_input' and do not advance past this step.
+- For CUSTOMER_DEPENDENT steps: 
+  * **CRITICAL**: Check if the customer's CURRENT message satisfies any outgoing transition condition
+  * If ANY outgoing transition condition is met by the current message, mark as 'completed' and advance
+  * Customer has provided the required information (either after being asked or proactively in earlier messages). If so, set completed to 'completed'
+  * Only set 'needs_customer_input' if the customer has NOT provided the information AND no transition condition is satisfied
 - For REQUIRES AGENT ACTION steps: The agent has performed the required communication or action. If so, set completed to 'completed'. If not, set completed to 'needs_agent_action'
 and do not advance past this step.
 - For REQUIRES_TOOL_CALLS steps: The step requires a tool call to execute for it to be completed. If you begin your advancement at this step, mark it as complete if the tool executed, and move onwards. Otherwise, always set completed to false and return it as next_step.
@@ -765,9 +768,14 @@ and do not advance past this step.
 ## 4: Journey Advancement
 Starting from the last executed step, advance through subsequent steps, documenting each step's completion status in the step_advancement array.
 Only advance to the next step if the current step is marked as completed.
-At each completed step, carefully evaluate the follow-up steps from the 'transitions' section, and advance only to the step whose condition is satisfied.
-Base advancement decisions strictly on these transitions and their conditions — never jump to a step whose condition was not met, even if you believe it should logically be executed next.
-Pleasing the customer is not a valid reason to violate the transitions - always traverse to the next step according to its conditions.
+
+**CRITICAL TRANSITION EVALUATION**:
+At each completed step, MUST evaluate outgoing transitions:
+- For unconditional transitions (condition=null): automatically advance to target step
+- For conditional transitions: check if condition is satisfied by customer's message/context
+- If multiple conditions exist, select the ONE that matches the current situation
+- Advance to target step whose condition is met
+- Base decisions STRICTLY on transitions — never skip steps even if logically reasonable
 
 Document your advancement path in step_advancement as a list of step advancement objects, starting with the last_step and ending with the next step to execute. Each step must be a legal
 follow-up of the previous step, and you can only advance if the previous step was completed.
