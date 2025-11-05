@@ -429,6 +429,38 @@ class SessionStore(ABC):
     ) -> Session: ...
 
     @abstractmethod
+    async def read_or_create_session(
+        self,
+        session_id: SessionId,
+        customer_id: CustomerId,
+        agent_id: AgentId,
+        creation_utc: Optional[datetime] = None,
+        title: Optional[str] = None,
+        mode: Optional[SessionMode] = None,
+        tenant_id: Optional[str] = None,
+        chatbot_id: Optional[str] = None,
+    ) -> tuple[Session, bool]:
+        """
+        原子地获取或创建 session
+        
+        使用 MongoDB 的 upsert + $setOnInsert 原子操作，避免并发竞态条件。
+        
+        Args:
+            session_id: Session ID
+            customer_id: Customer ID
+            agent_id: Agent ID
+            creation_utc: 创建时间（可选）
+            title: Session 标题（可选）
+            mode: Session 模式（可选）
+            tenant_id: Tenant ID（可选）
+            chatbot_id: Chatbot ID（可选）
+        
+        Returns:
+            (session, created): session 对象和是否新创建的标志
+        """
+        ...
+
+    @abstractmethod
     async def read_session(
         self,
         session_id: SessionId,
@@ -1291,6 +1323,50 @@ class SessionDocumentStore(SessionStore):
             await self._session_collection.insert_one(document=self._serialize_session(session))
 
         return session
+
+    @override
+    async def read_or_create_session(
+        self,
+        session_id: SessionId,
+        customer_id: CustomerId,
+        agent_id: AgentId,
+        creation_utc: Optional[datetime] = None,
+        title: Optional[str] = None,
+        mode: Optional[SessionMode] = None,
+        tenant_id: Optional[str] = None,
+        chatbot_id: Optional[str] = None,
+    ) -> tuple[Session, bool]:
+        """原子地获取或创建 session - 依赖 MongoDB 唯一索引 + upsert"""
+        creation_utc = creation_utc or datetime.now(timezone.utc)
+        updated_utc = datetime.now(timezone.utc)
+
+        session = Session(
+            id=session_id,
+            creation_utc=creation_utc,
+            customer_id=customer_id,
+            agent_id=agent_id,
+            mode=mode or "auto",
+            consumption_offsets={"client": 0},
+            title=title,
+            agent_states=[],
+            updated_utc=updated_utc,
+            tenant_id=tenant_id,
+            chatbot_id=chatbot_id,
+        )
+
+        # MongoDB 原子操作：$setOnInsert + upsert + 唯一索引
+        result = await self._session_collection.update_one(
+            filters={"id": {"$eq": session_id}},
+            params={"$setOnInsert": self._serialize_session(session)},
+            upsert=True,
+        )
+
+        created = result.upserted_id is not None
+        
+        if not created:
+            session = await self.read_session(session_id)
+        
+        return session, created
 
     @override
     async def delete_session(

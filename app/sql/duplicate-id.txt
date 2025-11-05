@@ -1,0 +1,45 @@
+[
+    {
+        '_id': ObjectId("690a2f2c4ea5d6e231cdbc92"),
+        'id': "61065615704995840",
+        'version': "0.6.0",
+        'creation_utc': "2025-11-04T16:51:56.288884+00:00",
+        'customer_id': "+22567630886",
+        'agent_id': "61065615704995840",
+        'mode': "auto",
+        'title': null,
+        'consumption_offsets': {
+            'client': 0
+        },
+        'agent_states': [
+            {
+                'correlation_id': "RRUbZdIfgrK::process",
+                'applied_guideline_ids': [
+                ],
+                'journey_paths': {
+                }
+            }
+        ],
+        'updated_utc': "2025-11-04T16:52:37.633852+00:00",
+        'tenant_id': "67c0146a8998006ef8fc658f",
+        'chatbot_id': "68f991c252af4273985d1e80"
+    },
+    {
+        '_id': ObjectId("690a2f2c4ea5d6e231cdbc93"),
+        'id': "61065615704995840",
+        'version': "0.6.0",
+        'creation_utc': "2025-11-04T16:51:56.291212+00:00",
+        'customer_id': "+22567630886",
+        'agent_id': "61065615704995840",
+        'mode': "auto",
+        'title': null,
+        'consumption_offsets': {
+            'client': 0
+        },
+        'agent_states': [
+        ],
+        'updated_utc': "2025-11-03T10:53:57.861661+00:00",
+        'tenant_id': "67c0146a8998006ef8fc658f",
+        'chatbot_id': "68f991c252af4273985d1e80"
+    }
+]

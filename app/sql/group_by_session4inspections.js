@@ -27,3 +27,8 @@ db.sessions.find({
   // like query end with 3648
   _id: { $regex: "3648$" }
 }).pretty()
+
+
+db.sessions.find({
+  id: { $regex: "^test_concurrent_" }
+})

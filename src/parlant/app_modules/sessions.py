@@ -122,6 +122,30 @@ class SessionModule:
         session = await self._session_store.read_session(session_id=session_id)
         return session
 
+    async def read_or_create(
+        self,
+        session_id: SessionId,
+        customer_id: CustomerId,
+        agent_id: AgentId,
+        title: str | None = None,
+        tenant_id: str | None = None,
+        chatbot_id: str | None = None,
+    ) -> tuple[Session, bool]:
+        """
+        原子地获取或创建 session，避免并发竞态条件
+        
+        Returns:
+            (session, created): session 对象和是否新创建的标志
+        """
+        return await self._session_store.read_or_create_session(
+            session_id=session_id,
+            customer_id=customer_id,
+            agent_id=agent_id,
+            title=title,
+            tenant_id=tenant_id,
+            chatbot_id=chatbot_id,
+        )
+
     async def find(
         self,
         agent_id: AgentId | None,

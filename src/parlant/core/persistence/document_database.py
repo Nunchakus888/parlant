@@ -49,6 +49,7 @@ class UpdateResult(Generic[TDocument]):
     matched_count: int
     modified_count: int
     updated_document: Optional[TDocument]
+    upserted_id: Optional[ObjectId] = None  # MongoDB upsert 操作时返回的插入文档ID
 
 
 @dataclass(frozen=True)

@@ -1313,26 +1313,22 @@ async def _ensure_session_and_customer(
         )
         logger.info(f"👤 created new customer: {customer.id}")
     
-    # 2. Session处理 - 优先创建，确保上下文连续和数据安全
+    # 2. Session处理 - 使用原子操作避免并发竞态条件
     logger.info(f"📝 Checking session: {session_id}")
-    session = None
-    try:
-        logger.debug(f"📖 Reading session from database: {session_id}")
-        session = await app.sessions.read(session_id)
-        logger.info(f"✅ Session found: {session.id}")
-    except ItemNotFoundError as e:
-        logger.info(f"📝 Session not found, creating new session: {session_id}")
-        # 先创建session（agent_id暂时使用session_id作为占位符）
-        session = await app.sessions.create(
-            session_id=session_id,
-            customer_id=customer_id,
-            agent_id=agent_id,
-            title=session_title,
-            allow_greeting=False,
-            tenant_id=params.tenant_id,
-            chatbot_id=params.chatbot_id,
-        )
-        logger.info(f"✅ Session created early: {session.id}")
+    # 内部使用 MongoDB 的 upsert + $setOnInsert 确保并发安全
+    session, created = await app.sessions.read_or_create(
+        session_id=session_id,
+        customer_id=customer_id,
+        agent_id=agent_id,
+        title=session_title,
+        tenant_id=params.tenant_id,
+        chatbot_id=params.chatbot_id,
+    )
+    
+    if created:
+        logger.info(f"✅ Session created (atomic): {session.id}")
+    else:
+        logger.info(f"✅ Session found (atomic): {session.id}")
     
     # 3. Agent处理 - 评估将写入上面创建的session
     try:

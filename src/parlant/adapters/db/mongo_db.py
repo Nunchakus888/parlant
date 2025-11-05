@@ -457,13 +457,22 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
     ) -> UpdateResult[TDocument]:
         try:
             async with asyncio.timeout(self.DEFAULT_TIMEOUT):
-                update_result = await self._collection.update_one(filters, {"$set": params}, upsert)
+                # 检查 params 是否已经包含 MongoDB 操作符（如 $set, $setOnInsert 等）
+                # 如果包含，直接使用；否则包装成 {"$set": params}
+                is_operator_format = any(key.startswith("$") for key in params.keys())
+                update_doc = params if is_operator_format else {"$set": params}
+                
+                update_result = await self._collection.update_one(filters, update_doc, upsert)
+                
+                # upsert 时可能需要查询刚插入的文档
                 result_document = await self._collection.find_one(filters)
+                
                 return UpdateResult[TDocument](
-                    update_result.acknowledged,
-                    update_result.matched_count,
-                    update_result.modified_count,
-                    result_document,
+                    acknowledged=update_result.acknowledged,
+                    matched_count=update_result.matched_count,
+                    modified_count=update_result.modified_count,
+                    updated_document=result_document,
+                    upserted_id=update_result.upserted_id,  # 返回 upsert 时的插入ID
                 )
         except asyncio.TimeoutError:
             self._database._logger.error(
