@@ -29,7 +29,7 @@ async def main() -> None:
 
     async with p.Server(
         nlp_service=p.NLPServices.openrouter,
-        log_level=LogLevel.TRACE if os.getenv("DEPLOY_ENV") != "online" else LogLevel.DEBUG,
+        log_level=LogLevel.TRACE,
         session_store=encode_mongodb_url(os.environ.get("MONGODB_SESSION_STORE")),
         initialize_container=initialize_agent_factory
     ) as server:
