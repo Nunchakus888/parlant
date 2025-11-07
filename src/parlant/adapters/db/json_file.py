@@ -366,3 +366,12 @@ class JSONFileDocumentCollection(DocumentCollection[TDocument]):
             deleted_count=0,
             deleted_document=None,
         )
+
+    @override
+    async def count(
+        self,
+        filters: Where,
+    ) -> int:
+        """计数匹配的文档"""
+        async with self._lock.reader_lock:
+            return sum(1 for d in self.documents if matches_filters(filters, d))

@@ -231,3 +231,11 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
         """删除内存中的文档（对于 Transient 存储，等同于 delete_one）"""
         # Transient 存储本身就只在内存中，所以直接调用 delete_one
         return await self.delete_one(filters)
+
+    @override
+    async def count(
+        self,
+        filters: Where,
+    ) -> int:
+        """计数匹配的文档"""
+        return sum(1 for d in self._documents if matches_filters(filters, d))

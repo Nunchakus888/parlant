@@ -182,3 +182,15 @@ class DocumentCollection(ABC, Generic[TDocument]):
         but preserve data in the persistent storage.
         """
         ...
+
+    @abstractmethod
+    async def count(
+        self,
+        filters: Where,
+    ) -> int:
+        """Counts documents that match the given filters.
+        
+        This is more efficient than fetching all documents and counting them
+        in application memory, especially for large collections.
+        """
+        ...

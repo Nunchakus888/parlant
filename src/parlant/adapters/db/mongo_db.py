@@ -14,7 +14,7 @@
 
 from typing import Any, Awaitable, Callable, Optional, Sequence
 from bson import CodecOptions
-from typing_extensions import Self
+from typing_extensions import Self, override
 from parlant.core.loggers import Logger
 from parlant.core.persistence.common import Where
 from parlant.core.persistence.document_database import (
@@ -508,3 +508,19 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
             deleted_count=0,
             deleted_document=None,
         )
+
+    @override
+    async def count(
+        self,
+        filters: Where,
+    ) -> int:
+        """高效计数：使用 MongoDB 的 count_documents"""
+        try:
+            async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                count = await self._collection.count_documents(filters)
+                return count
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB count_documents() timeout after {self.DEFAULT_TIMEOUT}s, filters: {filters}"
+            )
+            raise TimeoutError(f"Database count timeout after {self.DEFAULT_TIMEOUT}s")

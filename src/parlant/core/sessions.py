@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -744,7 +745,22 @@ class SessionDocumentStore(SessionStore):
         self._inspection_collection: DocumentCollection[_InspectionDocument]
         self._allow_migration = allow_migration
 
-        self._lock = ReaderWriterLock()
+        # Per-session 锁机制：每个 session 有独立的锁，避免不同 session 之间的竞争
+        self._session_locks: dict[SessionId, ReaderWriterLock] = {}
+        self._locks_lock = asyncio.Lock()  # 保护 _session_locks 字典的轻量级锁
+        self._global_lock = ReaderWriterLock()  # 用于全局操作（create_session, list_sessions）
+    
+    async def _get_session_lock(self, session_id: SessionId) -> ReaderWriterLock:
+        """获取指定 session 的锁（懒加载）"""
+        async with self._locks_lock:
+            if session_id not in self._session_locks:
+                self._session_locks[session_id] = ReaderWriterLock()
+            return self._session_locks[session_id]
+    
+    async def _release_session_lock(self, session_id: SessionId) -> None:
+        """释放并删除指定 session 的锁（清理资源）"""
+        async with self._locks_lock:
+            self._session_locks.pop(session_id, None)
 
     async def _session_document_loader(self, doc: BaseDocument) -> Optional[_SessionDocument]:
         async def v0_1_0_to_v0_4_0(doc: BaseDocument) -> Optional[BaseDocument]:
@@ -1300,7 +1316,7 @@ class SessionDocumentStore(SessionStore):
         tenant_id: Optional[str] = None,
         chatbot_id: Optional[str] = None,
     ) -> Session:
-        async with self._lock.writer_lock:
+        async with self._global_lock.writer_lock:
             creation_utc = creation_utc or datetime.now(timezone.utc)
             updated_utc = datetime.now(timezone.utc)
 
@@ -1373,32 +1389,46 @@ class SessionDocumentStore(SessionStore):
         self,
         session_id: SessionId,
     ) -> None:
-        async with self._lock.writer_lock:
-            events = await self._event_collection.find(filters={"session_id": {"$eq": session_id}})
-            await async_utils.safe_gather(
-                *(
-                    self._event_collection.delete_one(filters={"id": {"$eq": e["id"]}})
-                    for e in events
-                )
-            )
-
+        # 🚀 优化：查询和删除 events 在锁外执行，最小化写锁持有时间
+        # 1. 锁外查询所有 events（可能耗时数秒）
+        events = await self._event_collection.find(filters={"session_id": {"$eq": session_id}})
+        
+        # 2. 锁内只删除 session 文档本身（快速操作）
+        lock = await self._get_session_lock(session_id)
+        async with lock.writer_lock:
             await self._session_collection.delete_one({"id": {"$eq": session_id}})
+        
+        # 3. 锁外异步删除所有 events（不阻塞其他操作）
+        # 注意：此时 session 已删除但 events 还在，有短暂的不一致窗口，但比长时间持有锁好
+        await async_utils.safe_gather(
+            *(
+                self._event_collection.delete_one(filters={"id": {"$eq": e["id"]}})
+                for e in events
+            )
+        )
+        
+        # 4. 清理锁资源，防止内存泄漏
+        await self._release_session_lock(session_id)
 
     async def delete_session_from_memory_only(
         self,
         session_id: SessionId,
     ) -> None:
         """从内存中删除 session，但不删除数据库中的数据（用于 LRU 管理）"""
-        async with self._lock.writer_lock:
+        lock = await self._get_session_lock(session_id)
+        async with lock.writer_lock:
             # 只删除 session 文档本身，不删除 events（events 保留在数据库中）
             await self._session_collection.delete_one_from_memory_only({"id": {"$eq": session_id}})
+        # 清理锁资源
+        await self._release_session_lock(session_id)
 
     @override
     async def read_session(
         self,
         session_id: SessionId,
     ) -> Session:
-        async with self._lock.reader_lock:
+        lock = await self._get_session_lock(session_id)
+        async with lock.reader_lock:
             session_document = await self._session_collection.find_one(
                 filters={"id": {"$eq": session_id}}
             )
@@ -1414,7 +1444,8 @@ class SessionDocumentStore(SessionStore):
         session_id: SessionId,
         params: SessionUpdateParams,
     ) -> Session:
-        async with self._lock.writer_lock:
+        lock = await self._get_session_lock(session_id)
+        async with lock.writer_lock:
             session_document = await self._session_collection.find_one(
                 filters={"id": {"$eq": session_id}}
             )
@@ -1437,7 +1468,7 @@ class SessionDocumentStore(SessionStore):
         agent_id: Optional[AgentId] = None,
         customer_id: Optional[CustomerId] = None,
     ) -> Sequence[Session]:
-        async with self._lock.reader_lock:
+        async with self._global_lock.reader_lock:
             filters = {
                 **({"agent_id": {"$eq": agent_id}} if agent_id else {}),
                 **({"customer_id": {"$eq": customer_id}} if customer_id else {}),
@@ -1458,27 +1489,32 @@ class SessionDocumentStore(SessionStore):
         data: JSONSerializable,
         creation_utc: Optional[datetime] = None,
     ) -> Event:
-        async with self._lock.writer_lock:
-            if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
-                raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
-
-            session_events = await self.list_events(
-                session_id
-            )  # FIXME: we need a more efficient way to do this
-            creation_utc = creation_utc or datetime.now(timezone.utc)
-            offset = len(list(session_events))
-
-            event = Event(
-                id=EventId(generate_id()),
-                source=source,
-                kind=kind,
-                offset=offset,
-                creation_utc=creation_utc,
-                correlation_id=correlation_id,
-                data=data,
-                deleted=False,
-            )
-
+        # 🚀 最小化写锁持有时间：所有耗时操作在锁外完成
+        # 1. 锁外检查 session 是否存在（快速失败）
+        if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
+            raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+        
+        # 2. 锁外高效计数（使用数据库的 count 操作，只返回数字，不传输所有数据）
+        offset = await self._event_collection.count(
+            filters={"session_id": {"$eq": session_id}}
+        )
+        
+        # 3. 锁外准备数据
+        creation_utc = creation_utc or datetime.now(timezone.utc)
+        event = Event(
+            id=EventId(generate_id()),
+            source=source,
+            kind=kind,
+            offset=offset,
+            creation_utc=creation_utc,
+            correlation_id=correlation_id,
+            data=data,
+            deleted=False,
+        )
+        
+        # 4. 锁内只做快速的写入操作（~50ms）
+        lock = await self._get_session_lock(session_id)
+        async with lock.writer_lock:
             await self._event_collection.insert_one(
                 document=self._serialize_event(event, session_id)
             )
@@ -1491,7 +1527,8 @@ class SessionDocumentStore(SessionStore):
         session_id: SessionId,
         event_id: EventId,
     ) -> Event:
-        async with self._lock.reader_lock:
+        lock = await self._get_session_lock(session_id)
+        async with lock.reader_lock:
             if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
@@ -1507,7 +1544,15 @@ class SessionDocumentStore(SessionStore):
         self,
         event_id: EventId,
     ) -> None:
-        async with self._lock.writer_lock:
+        # 先查询 event 获取 session_id
+        event_doc = await self._event_collection.find_one(filters={"id": {"$eq": event_id}})
+        if not event_doc:
+            raise ItemNotFoundError(item_id=UniqueId(event_id), message="Event not found")
+        
+        session_id = event_doc["session_id"]
+        lock = await self._get_session_lock(session_id)
+        
+        async with lock.writer_lock:
             result = await self._event_collection.update_one(
                 filters={"id": {"$eq": event_id}},
                 params={"deleted": True},
@@ -1526,7 +1571,8 @@ class SessionDocumentStore(SessionStore):
         min_offset: Optional[int] = None,
         exclude_deleted: bool = True,
     ) -> Sequence[Event]:
-        async with self._lock.reader_lock:
+        lock = await self._get_session_lock(session_id)
+        async with lock.reader_lock:
             if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
@@ -1566,7 +1612,7 @@ class SessionDocumentStore(SessionStore):
         preparation_iterations: Sequence[PreparationIteration],
         response_analysis_generations: Sequence[GenerationInfo] | None = None,
     ) -> Inspection:
-        async with self._lock.writer_lock:
+        async with self._global_lock.writer_lock:
             if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
@@ -1592,7 +1638,7 @@ class SessionDocumentStore(SessionStore):
         session_id: SessionId,
         correlation_id: str,
     ) -> Inspection:
-        async with self._lock.reader_lock:
+        async with self._global_lock.reader_lock:
             if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
