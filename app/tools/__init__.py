@@ -5,5 +5,6 @@
 """
 
 from .tools import ToolManager, ToolConfig
+from .api_config import API, get_chatbot_host, get_callback_host
 
-__all__ = ['ToolManager', 'ToolConfig']
+__all__ = ['ToolManager', 'ToolConfig', 'API', 'get_chatbot_host', 'get_callback_host']

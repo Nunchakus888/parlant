@@ -1,22 +1,30 @@
 """
-HTTP配置模块
+HTTP工具模块
 
-提供从HTTP请求获取Agent配置信息的功能
+提供通用的异步HTTP请求功能和Agent配置加载
 """
 
 import json
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import aiohttp
-import os
+
+from parlant.core.loggers import Logger
+from .api_config import API, get_chatbot_host
 
 
-class AgentConfigError(Exception):
-    """Agent配置相关业务异常"""
-    def __init__(self, message: str, code: int = None):
+class HttpRequestError(Exception):
+    """HTTP请求相关异常"""
+    def __init__(self, message: str, code: Optional[int] = None, status_code: Optional[int] = None):
         super().__init__(message)
         self.message = message
         self.code = code
+        self.status_code = status_code
+
+
+class AgentConfigError(HttpRequestError):
+    """Agent配置相关业务异常（向后兼容）"""
+    pass
 
 
 @dataclass
@@ -51,12 +59,85 @@ class AgentConfigRequest:
             session_id=data.get("sessionId")
         )
 
+class AsyncHttpClient:
+    """通用异步HTTP客户端"""
+    
+    def __init__(self, logger: Logger, timeout: float = 10.0):
+        """
+        Args:
+            logger: 日志记录器
+            timeout: 默认超时时间（秒）
+        """
+        self.logger = logger
+        self.timeout = timeout
+    
+    async def post_json(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        发送POST请求（JSON格式）
+        
+        Args:
+            url: 目标URL
+            payload: 请求体数据
+            headers: 自定义请求头
+            timeout: 超时时间（覆盖默认值）
+            
+        Returns:
+            响应JSON数据
+            
+        Raises:
+            HttpRequestError: HTTP请求失败或响应错误
+        """
+        final_timeout = aiohttp.ClientTimeout(total=timeout or self.timeout)
+        final_headers = {"Content-Type": "application/json"}
+        if headers:
+            final_headers.update(headers)
+        
+        try:
+            async with aiohttp.ClientSession(timeout=final_timeout) as session:
+                self.logger.debug(f"📤 POST {url}")
+                self.logger.debug(f"📦 Payload: {json.dumps(payload, indent=2)}")
+                
+                async with session.post(url, json=payload, headers=final_headers) as response:
+                    status = response.status
+                    
+                    try:
+                        data = await response.json()
+                    except (aiohttp.ContentTypeError, json.JSONDecodeError):
+                        text = await response.text()
+                        raise HttpRequestError(
+                            f"Invalid JSON response: {text[:200]}",
+                            status_code=status
+                        )
+                    
+                    if status >= 400:
+                        error_msg = data.get("message", f"HTTP {status}")
+                        raise HttpRequestError(error_msg, status_code=status)
+                    
+                    self.logger.debug(f"✅ Response: {status}")
+                    return data
+                    
+        except aiohttp.ClientError as e:
+            self.logger.error(f"❌ HTTP request failed: {e}")
+            raise HttpRequestError(f"HTTP request failed: {e}")
+        except Exception as e:
+            if isinstance(e, HttpRequestError):
+                raise
+            self.logger.error(f"❌ Unexpected error: {e}")
+            raise HttpRequestError(f"Unexpected error: {e}")
+
 
 class HttpConfigLoader:
     """HTTP配置加载器"""
     
-    def __init__(self, logger):
+    def __init__(self, logger: Logger):
         self.logger = logger
+        self._http_client = AsyncHttpClient(logger, timeout=10.0)
     
     async def load_config_from_http(self, request: AgentConfigRequest) -> Dict[str, Any]:
         """
@@ -74,10 +155,8 @@ class HttpConfigLoader:
             AgentConfigError: 业务逻辑错误（如配置未找到、验证失败等）
             ValueError: 响应数据格式错误
         """
-        api_path = "/chatbot/ai-inner/get-agent-config"
-        url = f"{os.environ.get('AGENT_CONFIGS_HOST').rstrip('/')}{api_path}"
+        url = API.build_url(API.GET_AGENT_CONFIG, base_url=get_chatbot_host())
         
-        # 构建请求体
         request_data = {
             "tenantId": request.tenant_id,
             "chatbotId": request.chatbot_id,
@@ -87,32 +166,21 @@ class HttpConfigLoader:
         }
         
         try:
-            timeout = aiohttp.ClientTimeout(total=10.0)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                self.logger.info(f"正在从 {url} 获取配置信息...")
-                async with session.post(
-                    url,
-                    json=request_data,
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    response.raise_for_status()
-                    
-                    res = await response.json()
-                    if res.get("code") != 0:
-                        error_code = res.get("code")
-                        error_message = res.get("message", "未知业务错误")
-                        self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
-                        raise AgentConfigError(error_message, error_code)
-                    
-                    self.logger.info(f"✅成功加载配置: {json.dumps(res.get('data'), ensure_ascii=False, indent=2)}")
-                    return res.get("data")
-                
-        except aiohttp.ClientError as e:
-            self.logger.error(f"HTTP请求失败: {e}")
+            self.logger.info(f"正在从 {url} 获取配置信息...")
+            response = await self._http_client.post_json(url, request_data)
+            
+            # 检查业务响应码
+            if response.get("code") != 0:
+                error_code = response.get("code")
+                error_message = response.get("message", "未知业务错误")
+                self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
+                raise AgentConfigError(error_message, error_code)
+            
+            self.logger.info(f"✅成功加载配置")
+            return response.get("data")
+            
+        except HttpRequestError:
             raise
-        except json.JSONDecodeError as e:
-            self.logger.error(f"响应数据格式错误: {e}")
-            raise ValueError(f"Invalid JSON response: {e}")
         except Exception as e:
             self.logger.error(f"获取配置信息时发生未知错误: {e}")
             raise
