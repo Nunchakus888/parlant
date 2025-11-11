@@ -96,6 +96,14 @@ export const processSessionObject = (session: SessionInterface): SessionInterfac
 	};
 };
 
+export interface PaginatedSessionsInterface {
+	items: SessionInterface[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
 export interface SessionCsvInterface {
 	Source: 'AI Agent' | 'Customer';
 	Participant: string;

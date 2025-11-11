@@ -148,15 +148,29 @@ class SessionModule:
 
     async def find(
         self,
-        agent_id: AgentId | None,
-        customer_id: CustomerId | None,
+        agent_id: AgentId | None = None,
+        customer_id: CustomerId | None = None,
+        skip: int | None = None,
+        limit: int | None = None,
     ) -> Sequence[Session]:
         sessions = await self._session_store.list_sessions(
             agent_id=agent_id,
             customer_id=customer_id,
+            skip=skip,
+            limit=limit,
         )
 
         return sessions
+
+    async def count(
+        self,
+        agent_id: AgentId | None = None,
+        customer_id: CustomerId | None = None,
+    ) -> int:
+        return await self._session_store.count_sessions(
+            agent_id=agent_id,
+            customer_id=customer_id,
+        )
 
     async def update(
         self,

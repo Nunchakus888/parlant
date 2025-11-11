@@ -131,6 +131,8 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
         self,
         filters: Where,
         sort: Optional[list[tuple[str, int]]] = None,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> Sequence[TDocument]:
         result = []
         for doc in filter(
@@ -146,6 +148,12 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
                     key=lambda d: d.get(field, 0),
                     reverse=(direction == -1)
                 )
+
+        # Apply pagination in memory
+        if skip is not None:
+            result = result[skip:]
+        if limit is not None:
+            result = result[:limit]
 
         return result
 

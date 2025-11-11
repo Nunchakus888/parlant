@@ -125,6 +125,8 @@ class DocumentCollection(ABC, Generic[TDocument]):
         self,
         filters: Where,
         sort: Optional[list[tuple[str, int]]] = None,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> Sequence[TDocument]:
         """Finds all documents that match the given filters.
         
@@ -133,6 +135,8 @@ class DocumentCollection(ABC, Generic[TDocument]):
             sort: Optional list of (field, direction) tuples for sorting.
                   Direction: 1 for ascending, -1 for descending.
                   Example: [("offset", 1)] sorts by offset ascending.
+            skip: Optional number of documents to skip (for pagination)
+            limit: Optional maximum number of documents to return (for pagination)
         """
         ...
 

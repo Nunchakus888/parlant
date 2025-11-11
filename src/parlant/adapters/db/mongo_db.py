@@ -405,6 +405,8 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
         self, 
         filters: Where,
         sort: Optional[list[tuple[str, int]]] = None,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> Sequence[TDocument]:
         try:
             async with asyncio.timeout(self.DEFAULT_TIMEOUT):
@@ -413,6 +415,12 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
                 # Apply sorting at database level if specified
                 if sort:
                     mongo_cursor = mongo_cursor.sort(sort)
+                
+                # Apply pagination at database level
+                if skip is not None:
+                    mongo_cursor = mongo_cursor.skip(skip)
+                if limit is not None:
+                    mongo_cursor = mongo_cursor.limit(limit)
                 
                 result = await mongo_cursor.to_list()
                 await mongo_cursor.close()

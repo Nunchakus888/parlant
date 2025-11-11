@@ -659,7 +659,7 @@ class ChatRequestDTO(
         default=57,
         description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
         examples=[57, 120],
-    ),
+    )
     source: Optional[EventSourceDTO] = Field(
         default=EventSourceDTO.CUSTOMER,
         description="Source of the request. Defaults to 'customer'.",
@@ -1418,6 +1418,35 @@ KindsQuery: TypeAlias = Annotated[
     ),
 ]
 
+PageQuery: TypeAlias = Annotated[
+    int,
+    Query(
+        description="Page number (1-indexed)",
+        ge=1,
+        examples=[1, 2, 3],
+    ),
+]
+
+PageSizeQuery: TypeAlias = Annotated[
+    int,
+    Query(
+        description="Number of items per page",
+        ge=1,
+        le=100,
+        examples=[10, 20, 50],
+    ),
+]
+
+
+class PaginatedSessionsDTO(DefaultBaseModel):
+    """Paginated sessions response."""
+    
+    items: Sequence[SessionDTO] = Field(description="List of sessions in current page")
+    total: int = Field(description="Total number of sessions")
+    page: int = Field(description="Current page number (1-indexed)")
+    page_size: int = Field(description="Number of items per page")
+    total_pages: int = Field(description="Total number of pages")
+
 
 async def _ensure_session_and_customer(
     params: ChatRequestDTO,
@@ -1702,19 +1731,19 @@ def create_router(
             chatbot_id=session.chatbot_id,
         )
 
-    # @router.get(
-    #     "/{session_id}",
-    #     operation_id="read_session",
-    #     response_model=SessionDTO,
-    #     responses={
-    #         status.HTTP_200_OK: {
-    #             "description": "Session details successfully retrieved",
-    #             "content": {"application/json": {"example": session_example}},
-    #         },
-    #         status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-    #     },
-    #     **apigen_config(group_name=API_GROUP, method_name="retrieve"),
-    # )
+    @router.get(
+        "/{session_id}",
+        operation_id="read_session",
+        response_model=SessionDTO,
+        responses={
+            status.HTTP_200_OK: {
+                "description": "Session details successfully retrieved",
+                "content": {"application/json": {"example": session_example}},
+            },
+            status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
+        },
+        **apigen_config(group_name=API_GROUP, method_name="retrieve"),
+    )
     async def read_session(
         request: Request,
         session_id: SessionIdPath,
@@ -1738,39 +1767,64 @@ def create_router(
             chatbot_id=session.chatbot_id,
         )
 
-    # @router.get(
-    #     "",
-    #     operation_id="list_sessions",
-    #     response_model=Sequence[SessionDTO],
-    #     responses={
-    #         status.HTTP_200_OK: {
-    #             "description": "List of all matching sessions",
-    #             "content": {"application/json": {"example": [session_example]}},
-    #         },
-    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
-    #             "description": "Validation error in request parameters"
-    #         },
-    #     },
-    #     **apigen_config(group_name=API_GROUP, method_name="list"),
-    # )
+    @router.get(
+        "",
+        operation_id="list_sessions",
+        response_model=PaginatedSessionsDTO,
+        responses={
+            status.HTTP_200_OK: {
+                "description": "Paginated list of matching sessions",
+                "content": {"application/json": {"example": {
+                    "items": [session_example],
+                    "total": 100,
+                    "page": 1,
+                    "page_size": 20,
+                    "total_pages": 5
+                }}},
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY: {
+                "description": "Validation error in request parameters"
+            },
+        },
+        **apigen_config(group_name=API_GROUP, method_name="list"),
+    )
     async def list_sessions(
         request: Request,
         agent_id: AgentIdQuery | None = None,
         customer_id: CustomerIdQuery | None = None,
-    ) -> Sequence[SessionDTO]:
-        """Lists all sessions matching the specified filters.
+        page: PageQuery = 1,
+        page_size: PageSizeQuery = 20,
+    ) -> PaginatedSessionsDTO:
+        """Lists sessions matching the specified filters with pagination.
 
-        Can filter by agent_id and/or customer_id. Returns all sessions if no
-        filters are provided."""
+        Can filter by agent_id and/or customer_id. Returns paginated results."""
         await authorization_policy.authorize(request=request, operation=Operation.LIST_SESSIONS)
 
-        sessions = await app.sessions.find(
+        # Get total count from database
+        total = await app.sessions.count(
             agent_id=agent_id,
             customer_id=customer_id,
         )
 
-        return [
-            SessionDTO(
+        # Calculate pagination
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+        skip = (page - 1) * page_size
+
+        # Database-level pagination query
+        sessions = await app.sessions.find(
+            agent_id=agent_id,
+            customer_id=customer_id,
+            skip=skip,
+            limit=page_size,
+        )
+
+        # Convert to DTOs (filter invalid sessions)
+        valid_sessions = []
+        for s in sessions:
+            if s.id is None:
+                logger.warning(f"⚠️ Skipping session with None id: agent_id={s.agent_id}, customer_id={s.customer_id}")
+                continue
+            valid_sessions.append(SessionDTO(
                 id=s.id,
                 agent_id=s.agent_id,
                 creation_utc=s.creation_utc,
@@ -1781,9 +1835,16 @@ def create_router(
                 ),
                 mode=SessionModeDTO(s.mode),
                 tenant_id=s.tenant_id,
-            )
-            for s in sessions
-        ]
+                chatbot_id=s.chatbot_id,
+            ))
+        
+        return PaginatedSessionsDTO(
+            items=valid_sessions,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
 
     # @router.delete(
     #     "/{session_id}",

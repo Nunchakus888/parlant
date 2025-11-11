@@ -252,22 +252,22 @@ def create_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.post(
-        "",
-        status_code=status.HTTP_201_CREATED,
-        operation_id="create_agent",
-        response_model=AgentDTO,
-        responses={
-            status.HTTP_201_CREATED: {
-                "description": "Agent successfully created. Returns the complete agent object including generated ID.",
-                "content": example_json_content(agent_example),
-            },
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in request parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="create"),
-    )
+    # @router.post(
+    #     "",
+    #     status_code=status.HTTP_201_CREATED,
+    #     operation_id="create_agent",
+    #     response_model=AgentDTO,
+    #     responses={
+    #         status.HTTP_201_CREATED: {
+    #             "description": "Agent successfully created. Returns the complete agent object including generated ID.",
+    #             "content": example_json_content(agent_example),
+    #         },
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in request parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="create"),
+    # )
     async def create_agent(
         request: Request,
         params: AgentCreationParamsDTO,
@@ -391,24 +391,24 @@ def create_router(
             tags=agent.tags,
         )
 
-    @router.patch(
-        "/{agent_id}",
-        operation_id="update_agent",
-        response_model=AgentDTO,
-        responses={
-            status.HTTP_200_OK: {
-                "description": "Agent successfully updated. Returns the updated agent.",
-                "content": example_json_content(agent_example),
-            },
-            status.HTTP_404_NOT_FOUND: {
-                "description": "Agent not found. the specified `agent_id` does not exist"
-            },
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in update parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="update"),
-    )
+    # @router.patch(
+    #     "/{agent_id}",
+    #     operation_id="update_agent",
+    #     response_model=AgentDTO,
+    #     responses={
+    #         status.HTTP_200_OK: {
+    #             "description": "Agent successfully updated. Returns the updated agent.",
+    #             "content": example_json_content(agent_example),
+    #         },
+    #         status.HTTP_404_NOT_FOUND: {
+    #             "description": "Agent not found. the specified `agent_id` does not exist"
+    #         },
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in update parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="update"),
+    # )
     async def update_agent(
         request: Request,
         agent_id: AgentIdPath,
@@ -448,20 +448,20 @@ def create_router(
             tags=agent.tags,
         )
 
-    @router.delete(
-        "/{agent_id}",
-        operation_id="delete_agent",
-        status_code=status.HTTP_204_NO_CONTENT,
-        responses={
-            status.HTTP_204_NO_CONTENT: {
-                "description": "Agent successfully deleted. No content returned."
-            },
-            status.HTTP_404_NOT_FOUND: {
-                "description": "Agent not found. The specified `agent_id` does not exist"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="delete"),
-    )
+    # @router.delete(
+    #     "/{agent_id}",
+    #     operation_id="delete_agent",
+    #     status_code=status.HTTP_204_NO_CONTENT,
+    #     responses={
+    #         status.HTTP_204_NO_CONTENT: {
+    #             "description": "Agent successfully deleted. No content returned."
+    #         },
+    #         status.HTTP_404_NOT_FOUND: {
+    #             "description": "Agent not found. The specified `agent_id` does not exist"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="delete"),
+    # )
     async def delete_agent(
         request: Request,
         agent_id: AgentIdPath,

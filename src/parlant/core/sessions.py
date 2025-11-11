@@ -501,7 +501,16 @@ class SessionStore(ABC):
         self,
         agent_id: Optional[AgentId] = None,
         customer_id: Optional[CustomerId] = None,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> Sequence[Session]: ...
+
+    @abstractmethod
+    async def count_sessions(
+        self,
+        agent_id: Optional[AgentId] = None,
+        customer_id: Optional[CustomerId] = None,
+    ) -> int: ...
 
     @abstractmethod
     async def create_event(
@@ -1482,6 +1491,8 @@ class SessionDocumentStore(SessionStore):
         self,
         agent_id: Optional[AgentId] = None,
         customer_id: Optional[CustomerId] = None,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> Sequence[Session]:
         async with self._global_lock.reader_lock:
             filters = {
@@ -1489,10 +1500,28 @@ class SessionDocumentStore(SessionStore):
                 **({"customer_id": {"$eq": customer_id}} if customer_id else {}),
             }
 
-            return [
-                self._deserialize_session(d)
-                for d in await self._session_collection.find(filters=cast(Where, filters))
-            ]
+            # Database-level pagination
+            documents = await self._session_collection.find(
+                filters=cast(Where, filters),
+                skip=skip,
+                limit=limit,
+            )
+
+            return [self._deserialize_session(d) for d in documents]
+
+    @override
+    async def count_sessions(
+        self,
+        agent_id: Optional[AgentId] = None,
+        customer_id: Optional[CustomerId] = None,
+    ) -> int:
+        async with self._global_lock.reader_lock:
+            filters = {
+                **({"agent_id": {"$eq": agent_id}} if agent_id else {}),
+                **({"customer_id": {"$eq": customer_id}} if customer_id else {}),
+            }
+
+            return await self._session_collection.count(filters=cast(Where, filters))
 
     @override
     async def create_event(
