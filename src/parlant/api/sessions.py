@@ -1640,22 +1640,22 @@ def create_router(
             return 0
 
 
-    @router.post(
-        "",
-        status_code=status.HTTP_201_CREATED,
-        operation_id="create_session",
-        response_model=SessionDTO,
-        responses={
-            status.HTTP_201_CREATED: {
-                "description": "Session successfully created. Returns the complete session object.",
-                "content": {"application/json": {"example": session_example}},
-            },
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in request parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="create"),
-    )
+    # @router.post(
+    #     "",
+    #     status_code=status.HTTP_201_CREATED,
+    #     operation_id="create_session",
+    #     response_model=SessionDTO,
+    #     responses={
+    #         status.HTTP_201_CREATED: {
+    #             "description": "Session successfully created. Returns the complete session object.",
+    #             "content": {"application/json": {"example": session_example}},
+    #         },
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in request parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="create"),
+    # )
     async def create_session(
         request: Request,
         params: SessionCreationParamsDTO,
@@ -1702,19 +1702,19 @@ def create_router(
             chatbot_id=session.chatbot_id,
         )
 
-    @router.get(
-        "/{session_id}",
-        operation_id="read_session",
-        response_model=SessionDTO,
-        responses={
-            status.HTTP_200_OK: {
-                "description": "Session details successfully retrieved",
-                "content": {"application/json": {"example": session_example}},
-            },
-            status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-        },
-        **apigen_config(group_name=API_GROUP, method_name="retrieve"),
-    )
+    # @router.get(
+    #     "/{session_id}",
+    #     operation_id="read_session",
+    #     response_model=SessionDTO,
+    #     responses={
+    #         status.HTTP_200_OK: {
+    #             "description": "Session details successfully retrieved",
+    #             "content": {"application/json": {"example": session_example}},
+    #         },
+    #         status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="retrieve"),
+    # )
     async def read_session(
         request: Request,
         session_id: SessionIdPath,
@@ -1738,21 +1738,21 @@ def create_router(
             chatbot_id=session.chatbot_id,
         )
 
-    @router.get(
-        "",
-        operation_id="list_sessions",
-        response_model=Sequence[SessionDTO],
-        responses={
-            status.HTTP_200_OK: {
-                "description": "List of all matching sessions",
-                "content": {"application/json": {"example": [session_example]}},
-            },
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in request parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="list"),
-    )
+    # @router.get(
+    #     "",
+    #     operation_id="list_sessions",
+    #     response_model=Sequence[SessionDTO],
+    #     responses={
+    #         status.HTTP_200_OK: {
+    #             "description": "List of all matching sessions",
+    #             "content": {"application/json": {"example": [session_example]}},
+    #         },
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in request parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="list"),
+    # )
     async def list_sessions(
         request: Request,
         agent_id: AgentIdQuery | None = None,
@@ -1785,16 +1785,16 @@ def create_router(
             for s in sessions
         ]
 
-    @router.delete(
-        "/{session_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-        operation_id="delete_session",
-        responses={
-            status.HTTP_204_NO_CONTENT: {"description": "Session successfully deleted"},
-            status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-        },
-        **apigen_config(group_name=API_GROUP, method_name="delete"),
-    )
+    # @router.delete(
+    #     "/{session_id}",
+    #     status_code=status.HTTP_204_NO_CONTENT,
+    #     operation_id="delete_session",
+    #     responses={
+    #         status.HTTP_204_NO_CONTENT: {"description": "Session successfully deleted"},
+    #         status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="delete"),
+    # )
     async def delete_session(
         request: Request,
         session_id: SessionIdPath,
@@ -1806,20 +1806,20 @@ def create_router(
 
         await app.sessions.delete(session_id=session_id)
 
-    @router.delete(
-        "",
-        status_code=status.HTTP_204_NO_CONTENT,
-        operation_id="delete_sessions",
-        responses={
-            status.HTTP_204_NO_CONTENT: {
-                "description": "All matching sessions successfully deleted"
-            },
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in request parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="delete_many"),
-    )
+    # @router.delete(
+    #     "",
+    #     status_code=status.HTTP_204_NO_CONTENT,
+    #     operation_id="delete_sessions",
+    #     responses={
+    #         status.HTTP_204_NO_CONTENT: {
+    #             "description": "All matching sessions successfully deleted"
+    #         },
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in request parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="delete_many"),
+    # )
     async def delete_sessions(
         request: Request,
         agent_id: AgentIdQuery | None = None,
@@ -1839,18 +1839,18 @@ def create_router(
         for s in sessions:
             await app.sessions.delete(s.id)
 
-    @router.patch(
-        "/{session_id}",
-        operation_id="update_session",
-        responses={
-            status.HTTP_200_OK: {"description": "Session successfully updated"},
-            status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in update parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="update"),
-    )
+    # @router.patch(
+    #     "/{session_id}",
+    #     operation_id="update_session",
+    #     responses={
+    #         status.HTTP_200_OK: {"description": "Session successfully updated"},
+    #         status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in update parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="update"),
+    # )
     async def update_session(
         request: Request,
         session_id: SessionIdPath,
@@ -1896,23 +1896,23 @@ def create_router(
             tenant_id=session.tenant_id,
         )
 
-    @router.post(
-        "/{session_id}/events",
-        status_code=status.HTTP_201_CREATED,
-        operation_id="create_event",
-        response_model=EventDTO,
-        responses={
-            status.HTTP_201_CREATED: {
-                "description": "Event successfully created",
-                "content": {"application/json": {"example": event_example}},
-            },
-            status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in event parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="create_event"),
-    )
+    # @router.post(
+    #     "/{session_id}/events",
+    #     status_code=status.HTTP_201_CREATED,
+    #     operation_id="create_event",
+    #     response_model=EventDTO,
+    #     responses={
+    #         status.HTTP_201_CREATED: {
+    #             "description": "Event successfully created",
+    #             "content": {"application/json": {"example": event_example}},
+    #         },
+    #         status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in event parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="create_event"),
+    # )
     async def create_event(
         request: Request,
         session_id: SessionIdPath,
@@ -2221,19 +2221,19 @@ def create_router(
             for e in events
         ]
 
-    @router.delete(
-        "/{session_id}/events",
-        status_code=status.HTTP_204_NO_CONTENT,
-        operation_id="delete_events",
-        responses={
-            status.HTTP_204_NO_CONTENT: {"description": "Events successfully deleted"},
-            status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-            status.HTTP_422_UNPROCESSABLE_ENTITY: {
-                "description": "Validation error in request parameters"
-            },
-        },
-        **apigen_config(group_name=API_GROUP, method_name="delete_events"),
-    )
+    # @router.delete(
+    #     "/{session_id}/events",
+    #     status_code=status.HTTP_204_NO_CONTENT,
+    #     operation_id="delete_events",
+    #     responses={
+    #         status.HTTP_204_NO_CONTENT: {"description": "Events successfully deleted"},
+    #         status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
+    #         status.HTTP_422_UNPROCESSABLE_ENTITY: {
+    #             "description": "Validation error in request parameters"
+    #         },
+    #     },
+    #     **apigen_config(group_name=API_GROUP, method_name="delete_events"),
+    # )
     async def delete_events(
         request: Request,
         session_id: SessionIdPath,
