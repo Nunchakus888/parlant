@@ -75,6 +75,22 @@ class EventSource(Enum):
     CUSTOMER = "customer"
     """Represents an event from the customer, such as a message or action."""
 
+    AI_AGENT = "ai_agent"
+    """Represents an event from an AI agent, such as a status update, message or action."""
+
+    SYSTEM = "system"
+    """Represents an event from the system, such as a tool execution."""
+
+    BACK_UI = "back_ui"
+    """Represents an event from the back UI, such as back-ycloud.com UI."""
+
+    PREVIEW_UI = "preview_ui"
+    """Represents an event from the preview mode."""
+
+    DEVELOPMENT = "development"
+    """Represents an event from the development mode."""
+
+
     CUSTOMER_UI = "customer_ui"
     """Represents an event from the customer UI, such as a page navigation or button click."""
 
@@ -83,12 +99,6 @@ class EventSource(Enum):
 
     HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT = "human_agent_on_behalf_of_ai_agent"
     """Represents an event from a human agent acting on behalf of an AI agent, such as a status update, message or action."""
-
-    AI_AGENT = "ai_agent"
-    """Represents an event from an AI agent, such as a status update, message or action."""
-
-    SYSTEM = "system"
-    """Represents an event from the system, such as a tool execution."""
 
 
 class EventKind(Enum):
@@ -1068,6 +1078,7 @@ class SessionDocumentStore(SessionStore):
             doc_params["mode"] = params["mode"]
         if "title" in params:
             doc_params["title"] = params["title"]
+        # 每次更新时都设置当前时间作为更新时间
         if "updated_utc" in params:
             doc_params["updated_utc"] = params["updated_utc"].isoformat()
         else:
@@ -1452,6 +1463,10 @@ class SessionDocumentStore(SessionStore):
 
             if not session_document:
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+
+            # 确保每次更新时都设置当前时间作为更新时间
+            if "updated_utc" not in params:
+                params["updated_utc"] = datetime.now(timezone.utc)
 
             result = await self._session_collection.update_one(
                 filters={"id": {"$eq": session_id}},

@@ -15,9 +15,9 @@
 from datetime import datetime
 from enum import Enum
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
-from itertools import chain
-from pydantic import Field
+from pydantic import Field, field_validator
 from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, cast
+import asyncio
 import json
 import time
 
@@ -37,7 +37,7 @@ from parlant.core.engines.types import UtteranceRationale, UtteranceRequest
 from parlant.core.loggers import Logger
 from parlant.core.nlp.generation_info import GenerationInfo
 from parlant.core.nlp.moderation import ModerationService
-from parlant.core.nlp.service import NLPService
+
 from parlant.core.sessions import (
     Event,
     EventId,
@@ -76,13 +76,12 @@ class EventSourceDTO(Enum):
 
     Identifies who or what generated the event.
     """
-
-    CUSTOMER = "customer"
-    CUSTOMER_UI = "customer_ui"
-    HUMAN_AGENT = "human_agent"
-    HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT = "human_agent_on_behalf_of_ai_agent"
     AI_AGENT = "ai_agent"
     SYSTEM = "system"
+    CUSTOMER = "customer"
+    BACK_UI = "back_ui"
+    PREVIEW_UI = "preview_ui"
+    DEVELOPMENT = "development"
 
 
 class ModerationDTO(Enum):
@@ -402,6 +401,19 @@ class CapabilityChatDataDTO(DefaultBaseModel):
     session_id: str = Field(description="Session ID")
 
 
+class ChatAsyDataDTOWithEvents(DefaultBaseModel):
+    """Capability chat data."""
+    id: str = Field(description="ID")
+    source: EventSourceDTO = Field(description="Event source")
+    kind: EventKindDTO = Field(description="Event kind")
+    # offset: int = Field(description="Offset")
+    creation_utc: datetime = Field(description="Creation UTC")
+    correlation_id: str = Field(description="Correlation ID")
+    total_tokens: int = Field(description="Total tokens")
+    session_id: str = Field(description="Session ID")
+    message: str = Field(description="Message")
+
+
 # RESTful API Response Wrapper for Chat endpoint
 class ChatResponseDTO(DefaultBaseModel):
     """RESTful response wrapper for chat endpoint."""
@@ -421,10 +433,111 @@ chat_response_success_example = {
     }
 }
 
+
+# Async Chat Business Code
+class AsyncChatCode(int, Enum):
+    """Business status codes for async chat response.
+
+    Non-negative: Normal business states
+    Negative: Error states
+    """
+    
+    TIMEOUT = -2
+    """Error: Timeout waiting for AI response"""
+    
+    PROCESSING_ERROR = -1
+    """Error: Failure during AI processing or background task"""
+    
+    SUCCESS = 0
+    """Success (processing accepted or AI response generated)"""
+    
+    CANCELLED = 1
+    """Normal cancellation (superseded by newer request for same session)"""
+
+
+# Async Chat Response Status
+class AsyncChatStatus(str, Enum):
+    """Status messages for async chat response."""
+    
+    PROCESSING = "PROCESSING"
+    """Request accepted and processing started (immediate response)"""
+    
+    SUCCESS = "SUCCESS"
+    """AI processing completed successfully (callback with data)"""
+    
+    CANCELLED = "CANCELLED"
+    """Request superseded by newer request for same session_id (callback without data)"""
+    
+    TIMEOUT_ERROR = "TIMEOUT_ERROR"
+    """Genuine timeout waiting for AI response (callback without data)"""
+    
+    PROCESSING_ERROR = "PROCESSING_ERROR"
+    """Error during background processing (callback without data)"""
+    
+    NO_EVENTS_FOUND = "NO_EVENTS_FOUND"
+    """No events found after processing (callback without data)"""
+
+
 chat_response_error_example = {
     "status": 504,
-    "code": 504, 
-    "message": "TIMEOUT_ERROR",
+    "code": AsyncChatCode.TIMEOUT.value, 
+    "message": AsyncChatStatus.TIMEOUT_ERROR.value,
+    "data": None
+}
+
+
+# Async Chat Response DTO
+class ChatAsyncResponseDTO(DefaultBaseModel):
+    """
+    Unified response for async chat endpoint.
+    
+    Used for both:
+    - Immediate response (data=None, message=PROCESSING)
+    - Callback notification with different states:
+      * message=SUCCESS - AI processing completed successfully (data included)
+      * message=CANCELLED - Request superseded by newer request for same session_id (data=None)
+      * message=TIMEOUT_ERROR - Genuine timeout waiting for AI response (data=None)
+      * message=PROCESSING_ERROR - Error during processing (data=None)
+      * message=NO_EVENTS_FOUND - No events found after processing (data=None)
+    """
+    
+    status: int = Field(description="HTTP status code")
+    code: int = Field(description="Business status code: -2=timeout, -1=processing_error, 0=success, 1=cancelled")
+    message: str = Field(description="Response message status")
+    correlation_id: str = Field(description="Correlation ID for tracking the async task")
+    data: ChatAsyDataDTOWithEvents | None = Field(default=None, description="Chat result data (None for immediate response, populated in callback)")
+
+
+chat_async_response_immediate_example = {
+    "status": 200,
+    "code": AsyncChatCode.SUCCESS.value,
+    "message": AsyncChatStatus.PROCESSING.value,
+    "correlation_id": "corr_123xyz::process",
+    "data": None
+}
+
+chat_async_response_callback_success_example = {
+    "status": 200,
+    "code": AsyncChatCode.SUCCESS.value,
+    "message": AsyncChatStatus.SUCCESS.value,
+    "correlation_id": "corr_123xyz::process",
+    "data": {
+        "id": "evt_123xyz",
+        "total_tokens": 1234,
+        "message": "AI response message",
+        "source": "ai_agent",
+        "kind": "message",
+        "creation_utc": "2025-01-01T00:00:00Z",
+        "correlation_id": "corr_123xyz::process",
+        "session_id": "sess_123xyz",
+    }
+}
+
+chat_async_response_callback_cancelled_example = {
+    "status": 200,
+    "code": AsyncChatCode.CANCELLED.value,
+    "message": AsyncChatStatus.CANCELLED.value,
+    "correlation_id": "corr_123xyz::process",
     "data": None
 }
 
@@ -458,6 +571,7 @@ class SessionUpdateParamsDTO(
 chat_request_example: ExampleJson = {
     "message": "Hello, I need help with my order",
     "customer_id": "cust_123xy",
+    "session_id": "sess_123xyz",
     "tenant_id": "xxx",
     "chatbot_id": "xxx",
     "md5_checksum": "xxx",
@@ -467,6 +581,22 @@ chat_request_example: ExampleJson = {
     "session_title": "",
     "timeout": 60,
 }
+
+async_chat_request_example: ExampleJson = {
+    "message": "Hello, I need help with my order",
+    "customer_id": "cust_123xy",
+    "session_id": "sess_123xyz",  # Required for async chat
+    "tenant_id": "xxx",
+    "chatbot_id": "xxx",
+    "md5_checksum": "xxx",
+    "source": "back_ui",
+    "is_preview": False,
+    "preview_action_book_ids": [],
+    "autofill_params": {},
+    "session_title": "",
+    "timeout": 60,
+}
+
 
 
 class ChatRequestDTO(
@@ -486,10 +616,9 @@ class ChatRequestDTO(
       default=None,
       description="unique identifier for the customer, if not provided, a new customer will be created."
     )
-    session_id: Optional[str] = Field(
-        default=None,
-        description="unique identifier for the session. If not provided, a new session will be created.",
-        examples=["ses_123xyz"],
+    session_id: str = Field(
+        description="Unique identifier for the session (REQUIRED, accepts string or number)",
+        examples=["sess_123xyz", "12345"],
     )
     session_title: Optional[str] = Field(
         default=None,
@@ -530,7 +659,20 @@ class ChatRequestDTO(
         default=57,
         description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
         examples=[57, 120],
+    ),
+    source: Optional[EventSourceDTO] = Field(
+        default=EventSourceDTO.CUSTOMER,
+        description="Source of the request. Defaults to 'customer'.",
+        examples=["customer", "ai_agent", "system", "back_ui", "preview_ui", "development"],
     )
+    
+    @field_validator('session_id', mode='before')
+    @classmethod
+    def convert_session_id_to_str(cls, v: Any) -> str:
+        """Convert session_id to string if it's a number."""
+        if isinstance(v, (int, float)):
+            return str(v)
+        return v
 
 
 ToolResultDataField: TypeAlias = Annotated[
@@ -1411,9 +1553,8 @@ def _event_kind_to_event_kind_dto(kind: EventKind) -> EventKindDTO:
 def _event_source_dto_to_event_source(dto: EventSourceDTO) -> EventSource:
     if source := {
         EventSourceDTO.CUSTOMER: EventSource.CUSTOMER,
-        EventSourceDTO.CUSTOMER_UI: EventSource.CUSTOMER_UI,
-        EventSourceDTO.HUMAN_AGENT: EventSource.HUMAN_AGENT,
-        EventSourceDTO.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT: EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT,
+        EventSourceDTO.BACK_UI: EventSource.BACK_UI,
+        EventSourceDTO.PREVIEW_UI: EventSource.PREVIEW_UI,
         EventSourceDTO.AI_AGENT: EventSource.AI_AGENT,
         EventSourceDTO.SYSTEM: EventSource.SYSTEM,
     }.get(dto):
@@ -1425,9 +1566,8 @@ def _event_source_dto_to_event_source(dto: EventSourceDTO) -> EventSource:
 def _event_source_to_event_source_dto(source: EventSource) -> EventSourceDTO:
     if dto := {
         EventSource.CUSTOMER: EventSourceDTO.CUSTOMER,
-        EventSource.CUSTOMER_UI: EventSourceDTO.CUSTOMER_UI,
-        EventSource.HUMAN_AGENT: EventSourceDTO.HUMAN_AGENT,
-        EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT: EventSourceDTO.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT,
+        EventSource.BACK_UI: EventSourceDTO.BACK_UI,
+        EventSource.PREVIEW_UI: EventSourceDTO.PREVIEW_UI,
         EventSource.AI_AGENT: EventSourceDTO.AI_AGENT,
         EventSource.SYSTEM: EventSourceDTO.SYSTEM,
     }.get(source):
@@ -1483,13 +1623,6 @@ def create_router(
             return agent
         else:
             raise ValueError("No agent factory provided")
-            # logger.info(f"No agent factory provided, using default agent for customer: {customer_id}")
-            # agent = await app.agents.create(
-            #     name=f"Default Agent for {customer_id}",
-            #     description=f"Default agent for customer {customer_id}",
-            # )
-            # logger.info(f"🤖 Created default agent: {agent.id}")
-            # return agent
 
 
     async def _get_total_tokens_for_event(session_id: str, correlation_id: str) -> int:
@@ -2118,6 +2251,274 @@ def create_router(
 
 
     
+    # Helper function for async chat background processing
+    async def _async_chat_background(
+        params: ChatRequestDTO,
+        correlation_id: str,
+        app: Application,
+        session_listener: SessionListener,
+        logger: Logger,
+        agent_creator: Callable[..., Awaitable[tuple[Agent, AgentId]]],
+    ) -> None:
+        """
+        Background task for async chat.
+        
+        Flow:
+        1. Create session (slow, includes agent setup)
+        2. Create event and trigger processing
+        3. Wait for processing to complete
+        4. Send callback with result
+        
+        Task Management (Unified Event Detection):
+        - Each request creates its own customer event (always recorded)
+        - Only one level of restart: 'process-session(session_id)'
+          * Triggered by create_event(trigger_processing=True)
+          * Ensures only latest AI processing runs
+          * Old AI tasks cancelled automatically
+          
+        - Efficient cancellation detection via single listener:
+          * Listen for ANY new message (no source filter)
+          * On event arrival, classify by source and correlation_id
+          * AI response with matching correlation_id → SUCCESS
+          * User message (CUSTOMER/BACK_UI/PREVIEW_UI) → CANCELLED (superseded)
+          * Timeout → TIMEOUT_ERROR
+          
+        Benefits:
+        1. Every customer message recorded (no event loss)
+        2. Only latest AI runs (automatic via restart)
+        3. Old requests cancelled immediately (< 1s via polling)
+        4. Complete lifecycle - every request gets exactly one callback
+        5. 50% fewer database queries (1 per poll vs 2)
+        """
+        
+        from app.tools import API, get_callback_host
+        
+        # Check callback configuration once at the beginning
+        callback_host = get_callback_host()
+        if not callback_host:
+            logger.warning("⚠️ CALLBACK_HOST not configured, background task will process but skip callback")
+            return  # Early return if no callback configured
+        
+        callback_url = API.build_url(API.CALLBACK_AGENT_RECEIVE, base_url=callback_host)
+        logger.info(f"⏳ Callback URL: {callback_url}")
+        
+        async def send_callback(response_data: ChatAsyncResponseDTO) -> None:
+            """Helper to send callback with error handling."""
+            try:
+                await _post_callback(callback_url, response_data, logger)
+            except Exception as e:
+                logger.error(f"❌ Failed to send callback: {e}")
+        
+        try:
+            # Step 1: Session creation and initialization (this is the slow part)
+            logger.info(f"🔄 Background task started for correlation_id: {correlation_id}")
+            
+            session, customer, agent_id = await _ensure_session_and_customer(
+                params=params,
+                app=app,
+                logger=logger,
+                agent_creator=agent_creator,
+            )
+            logger.info(f"✅ Session ready: {session.id}")
+            
+            # Step 2: Create event and trigger processing
+            # Note: We have two-level task management:
+            # - Outer level: async-chat(session_id) - manages whole flow (create + wait + callback)
+            # - Inner level: process-session(session_id) - manages AI processing
+            # Both use restart() to ensure only latest task runs for each session_id
+            message_data: MessageEventData = {
+                "message": params.message,
+                "participant": {
+                    "id": params.customer_id,
+                    "display_name": params.customer_id,
+                },
+                "flagged": False,
+                "tags": [],
+            }
+            
+            customer_event = await app.sessions.create_event(
+                session_id=session.id,
+                kind=EventKind.MESSAGE,
+                data=message_data,
+                source=_event_source_dto_to_event_source(params.source) if params.source else EventSource.CUSTOMER,
+                trigger_processing=True,  # ← This calls dispatch_processing_task internally
+            )
+            logger.info(f"📝 Event created - event_id: {customer_event.id}, offset: {customer_event.offset}")
+            
+            # Track session (LRU management)
+            await app.resource_manager.track_session(session.id, agent_id)
+            
+            # Step 3: Wait for processing to complete and send callback
+            await _wait_and_callback(
+                session_id=session.id,
+                customer_event_offset=customer_event.offset,
+                processing_correlation_id=f"{correlation_id}::process",
+                params=params,
+                app=app,
+                session_listener=session_listener,
+                callback_url=callback_url,
+                logger=logger,
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Background task error for correlation_id {correlation_id}: {e}")
+            
+            # Send error callback
+            await send_callback(
+                ChatAsyncResponseDTO(
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    code=AsyncChatCode.PROCESSING_ERROR.value,
+                    message=f"{AsyncChatStatus.PROCESSING_ERROR.value}: {str(e)}",
+                    correlation_id=correlation_id,
+                    data=None
+                )
+            )
+    
+    # Helper function for posting callback
+    async def _post_callback(
+        callback_url: str,
+        response_data: ChatAsyncResponseDTO,
+        logger: Logger,
+    ) -> None:
+        """Post async chat result to callback URL."""
+        from app.tools.http_config import AsyncHttpClient, HttpRequestError
+        
+        try:
+            http_client = AsyncHttpClient(logger)
+            
+            # Use mode='json' to properly serialize enums (EventSourceDTO, EventKindDTO)
+            payload = response_data.model_dump(mode="json")
+
+            await http_client.post_json(callback_url, payload)
+            logger.info(f"✅ Callback successful for correlation_id: {response_data.correlation_id}")
+            
+        except HttpRequestError as e:
+            logger.warning(f"⚠️ Callback failed: {e.message} (status: {e.status_code})")
+        except Exception as e:
+            logger.error(f"❌ Callback error for correlation_id {response_data.correlation_id}: {e}")
+    
+    # Helper function for waiting and callback
+    async def _wait_and_callback(
+        session_id: str,
+        customer_event_offset: int,
+        processing_correlation_id: str,
+        params: ChatRequestDTO,
+        app: Application,
+        session_listener: SessionListener,
+        callback_url: str,
+        logger: Logger,
+    ) -> None:
+        """
+        Wait for AI processing to complete and send callback.
+        
+        Race between three outcomes:
+        1. AI completes → SUCCESS callback
+        2. Newer request arrives → CANCELLED callback (immediate)
+        3. Timeout → TIMEOUT_ERROR callback
+        """
+        
+        logger.info(f"⏳ Waiting for processing completion, callback URL: {callback_url}")
+
+        try:
+            timeout = params.timeout or 300
+            logger.info(f"⏳ Waiting for AI response or cancellation signal, correlation_id: {processing_correlation_id}, timeout: {timeout}s")
+            
+            # Single listener for both AI response and cancellation signal
+            # More efficient: 1 database query per poll instead of 2
+            has_events = await session_listener.wait_for_events(
+                session_id=session_id,
+                min_offset=customer_event_offset + 1,
+                kinds=[EventKind.MESSAGE],
+                # No source filter - listen to both CUSTOMER and AI_AGENT
+                # No correlation_id filter - listen to all messages
+                timeout=Timeout(timeout),
+            )
+            
+            if not has_events:
+                # Timeout - neither AI nor cancellation detected
+                logger.warning(f"⏰ Task timeout for correlation_id: {processing_correlation_id}")
+                response_data = ChatAsyncResponseDTO(
+                    status=status.HTTP_504_GATEWAY_TIMEOUT,
+                    code=AsyncChatCode.TIMEOUT.value,
+                    message=AsyncChatStatus.TIMEOUT_ERROR.value,
+                    correlation_id=processing_correlation_id,
+                    data=None
+                )
+            else:
+                # Events detected - check what kind
+                all_events = await app.sessions.find_events(
+                    session_id=session_id,
+                    min_offset=customer_event_offset + 1,
+                    source=None,  # No source filter - get all message events
+                    kinds=[EventKind.MESSAGE],
+                    correlation_id=None,  # No correlation_id filter
+                )
+                
+                # Classify events in single pass for efficiency
+                ai_events = []
+                user_events = []
+                for e in all_events:
+                    if e.source == EventSource.AI_AGENT:
+                        # AI response with matching correlation_id
+                        if e.correlation_id == processing_correlation_id:
+                            ai_events.append(e)
+                    elif e.source != EventSource.SYSTEM:
+                        # User input (CUSTOMER, BACK_UI, PREVIEW_UI, etc.) - cancellation signal
+                        user_events.append(e)
+                
+                if ai_events:
+                    # AI response arrived → SUCCESS
+                    first_event = ai_events[0]
+                    total_tokens = await _get_total_tokens_for_event(session_id, processing_correlation_id)
+                    
+                    response_data = ChatAsyncResponseDTO(
+                        status=status.HTTP_200_OK,
+                        code=AsyncChatCode.SUCCESS.value,
+                        message=AsyncChatStatus.SUCCESS.value,
+                        correlation_id=processing_correlation_id,
+                        data=ChatAsyDataDTOWithEvents(
+                            id=first_event.id,
+                            kind=_event_kind_to_event_kind_dto(first_event.kind),
+                            source=_event_source_to_event_source_dto(first_event.source),
+                            creation_utc=first_event.creation_utc,
+                            correlation_id=first_event.correlation_id,
+                            total_tokens=total_tokens,
+                            session_id=session_id,
+                            message=cast(MessageEventData, first_event.data)["message"],
+                        )
+                    )
+                    logger.info(f"✅ Task completed for correlation_id: {processing_correlation_id}")
+                elif user_events:
+                    # Newer user message arrived → CANCELLED
+                    logger.info(f"🚫 Request cancelled (superseded by newer user message) for correlation_id: {processing_correlation_id}")
+                    response_data = ChatAsyncResponseDTO(
+                        status=status.HTTP_200_OK,
+                        code=AsyncChatCode.CANCELLED.value,
+                        message=AsyncChatStatus.CANCELLED.value,
+                        correlation_id=processing_correlation_id,
+                        data=None
+                    )
+                else:
+                    # Should not happen - has_events=True but no matching events
+                    logger.warning(f"⚠️ No relevant events found for correlation_id: {processing_correlation_id}")
+                    response_data = ChatAsyncResponseDTO(
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        code=AsyncChatCode.PROCESSING_ERROR.value,
+                        message=AsyncChatStatus.NO_EVENTS_FOUND.value,
+                        correlation_id=processing_correlation_id,
+                        data=None
+                    )
+            
+            # Post result to callback URL
+            await _post_callback(
+                callback_url=callback_url,
+                response_data=response_data,
+                logger=logger,
+            )
+                
+        except Exception as e:
+            logger.error(f"❌ Monitor task error for correlation_id {processing_correlation_id}: {e}")
+    
     # Simple chat endpoint
     @router.post(
         "/chat",
@@ -2170,7 +2571,7 @@ def create_router(
         If session_id is provided, it will be used, otherwise a new session will be created.
         """
         request_start = time.time()
-        logger.info(f"🚀 Chat request started\n {json.dumps(params.model_dump(), indent=2)}")
+        logger.info(f"🚀 Chat request started\n {json.dumps(params.model_dump(mode="json"), indent=2)}")
         
         try:
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
@@ -2339,5 +2740,101 @@ def create_router(
         logger.info(f"💬 User message: {params.message}")
         logger.info(f"🎉 Response: {response.model_dump()}")
         return response
+
+    @router.post(
+        "/chat_async",
+        summary="Async chat with AI agent",
+        description="""
+        Asynchronous chat endpoint that returns immediately with correlation_id.
+        The result will be posted to the configured callback URL when processing completes.
+        
+        Key features:
+        - Returns immediately with correlation_id for tracking
+        - **session_id is REQUIRED** for proper concurrent request handling
+        - Automatically cancels previous requests for the same session (uses latest only)
+        - Posts completion result to CALLBACK_HOST environment variable
+        - Callback always sent for each request (SUCCESS, CANCELLED, or ERROR)
+        
+        Callback States:
+        - SUCCESS: AI processing completed successfully (data included)
+        - CANCELLED: Request superseded by newer request for same session_id (data=None)
+        - TIMEOUT_ERROR: Genuine timeout waiting for AI response (data=None)
+        - PROCESSING_ERROR: Error during processing (data=None)
+        
+        Important:
+        - session_id must be provided to enable proper task cancellation for concurrent requests
+        - Every request receives exactly one callback notification (complete lifecycle)
+        - Old requests receive CANCELLED notification when superseded
+        """,
+        responses={
+            status.HTTP_200_OK: {
+                "description": "Request accepted and processing started",
+                "model": ChatAsyncResponseDTO,
+                "content": {"application/json": {"example": chat_async_response_immediate_example}},
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY: {
+                "description": "Validation error - session_id is required",
+                "model": ChatAsyncResponseDTO,
+                "content": {"application/json": {"example": {
+                    "status": 422,
+                    "code": -1,
+                    "message": "session_id is required for async chat (to properly handle concurrent requests)",
+                    "correlation_id": "",
+                    "data": None
+                }}},
+            },
+            status.HTTP_500_INTERNAL_SERVER_ERROR: {
+                "description": "Internal server error",
+                "model": ChatAsyncResponseDTO,
+            },
+        },
+        operation_id="chat_async",
+        **apigen_config(group_name=API_GROUP, method_name="chat_async"),
+    )
+    async def chat_async(
+        request: Request,
+        params: ChatRequestDTO,
+    ) -> ChatAsyncResponseDTO:
+        """Async chat endpoint - returns immediately and posts result to callback URL."""
+        
+        logger.info(f"🚀 Async chat request started\n {json.dumps(params.model_dump(mode='json'), indent=2)}")
+
+        # Get current request's correlation_id from the correlator (set by middleware)
+        # This will be used to track the entire async flow: event → processing → callback
+        current_correlation_id = app.sessions._correlator.correlation_id
+        
+        logger.info(f"📋 Request correlation_id: {current_correlation_id}, session_id: {params.session_id}")
+        
+        # Design: Use single-layer task management
+        # - Each request creates its own customer event (recorded in session)
+        # - Only the latest request's AI processing runs (via restart in dispatch_processing_task)
+        # - Old requests detect cancellation via correlation_id and exit gracefully
+        # 
+        # This ensures:
+        # 1. Every customer message is recorded (event creation always completes)
+        # 2. Only latest AI processing runs (old ones cancelled via restart)
+        # 3. No unnecessary callbacks from old requests
+        
+        # Start background task (no restart - allow concurrent execution)
+        # Each task will create its event, but only latest triggers successful AI processing
+        asyncio.create_task(_async_chat_background(
+            params=params,
+            correlation_id=current_correlation_id,
+            app=app,
+            session_listener=session_listener,
+            logger=logger,
+            agent_creator=_agent_creator,
+        ))
+        
+        # Return immediately with correlation_id for tracking
+        logger.info(f"✅ Chat async request accepted, correlation_id: {current_correlation_id}")
+        return ChatAsyncResponseDTO(
+            status=200,
+            code=AsyncChatCode.SUCCESS.value,
+            message=AsyncChatStatus.PROCESSING.value,
+            # return processing correlation_id for tracking, not the request correlation_id, because the request correlation_id is not available in the callback.
+            correlation_id=f"{current_correlation_id}::process",
+            data=None
+        )
 
     return router
