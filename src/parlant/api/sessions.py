@@ -2632,7 +2632,7 @@ def create_router(
         If session_id is provided, it will be used, otherwise a new session will be created.
         """
         request_start = time.time()
-        logger.info(f"🚀 Chat request started\n {json.dumps(params.model_dump(mode="json"), indent=2)}")
+        logger.info(f"🚀 Chat request started\n {json.dumps(params.model_dump(mode='json'), indent=2)}")
         
         try:
             await authorization_policy.authorize(request=request, operation=Operation.CREATE_CUSTOMER_EVENT)
