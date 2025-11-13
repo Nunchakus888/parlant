@@ -2055,6 +2055,8 @@ class Agent:
 
         self._server._retrievers[self.id][id] = retriever
 
+        # Immediately setup hooks for this retriever
+        await self._server._setup_retriever_hooks(self.id, id, retriever)
 
 class ToolContextAccessor:
     """A context accessor for tools, providing access to the server and other relevant data."""
@@ -2205,7 +2207,6 @@ class Server:
         self._creation_progress.__exit__(None, None, None)
         self._creation_progress = None
 
-        await self._setup_retrievers()
         await self._startup_context_manager.__aexit__(exc_type, exc_value, tb)
         await self._exit_stack.aclose()
         return False
@@ -2492,15 +2493,25 @@ class Server:
             if key in self._journey_evaluations:
                 del self._journey_evaluations[key]
 
-    async def _setup_retrievers(self) -> None:
+    async def _setup_retriever_hooks(
+        self,
+        agent_id: AgentId,
+        retriever_id: str,
+        retriever: Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]],
+    ) -> None:
+        """Setup hooks for a single retriever immediately when it's attached"""
+        c = self._container
+        
         async def setup_retriever(
             c: Container,
             agent_id: AgentId,
             retriever_id: str,
             retriever: Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]],
         ) -> None:
+            # Use session_id as key to avoid correlation_id scope mismatch issues
+            # Session ID remains constant throughout the entire processing flow
             tasks_for_this_retriever: dict[
-                str,
+                SessionId,
                 tuple[Timeout, asyncio.Task[JSONSerializable | RetrieverResult]],
             ] = {}
 
@@ -2512,16 +2523,16 @@ class Server:
                 # First do some garbage collection if needed.
                 # This might be needed if tasks were not awaited
                 # because of exceptions during engine processing.
-                for correlation_id in list(tasks_for_this_retriever.keys()):
-                    if tasks_for_this_retriever[correlation_id][0].expired():
+                for session_id in list(tasks_for_this_retriever.keys()):
+                    if tasks_for_this_retriever[session_id][0].expired():
                         # Very, very little change that this task is still meant to be running,
                         # or that anyone is still waiting for it. It's 99.999% garbage.
                         try:
-                            tasks_for_this_retriever[correlation_id][1].add_done_callback(
+                            tasks_for_this_retriever[session_id][1].add_done_callback(
                                 default_done_callback()
                             )
-                            tasks_for_this_retriever[correlation_id][1].cancel()
-                            del tasks_for_this_retriever[correlation_id]
+                            tasks_for_this_retriever[session_id][1].cancel()
+                            del tasks_for_this_retriever[session_id]
                         except BaseException:
                             # If anything went unexpectedly here, whatever. Carry on.
                             pass
@@ -2546,11 +2557,12 @@ class Server:
                     )
                 )
 
-                c[Logger].trace(
-                    f"Starting retriever {retriever_id} for agent {agent_id} with correlation {ctx.correlator.correlation_id}"
+                c[Logger].info(
+                    f"🔍 Starting retriever {retriever_id} for agent {agent_id}, session {ctx.session.id}, correlation {ctx.correlator.correlation_id}"
                 )
 
-                tasks_for_this_retriever[ctx.correlator.correlation_id] = (
+                # Use session_id as key instead of correlation_id to avoid scope mismatch
+                tasks_for_this_retriever[ctx.session.id] = (
                     Timeout(600),  # Expiration timeout for garbage collection purposes
                     asyncio.create_task(
                         cast(Coroutine[Any, Any, JSONSerializable | RetrieverResult], coroutine),
@@ -2565,9 +2577,18 @@ class Server:
                 payload: Any,
                 exc: Optional[Exception],
             ) -> EngineHookResult:
+                c[Logger].debug(
+                    f"🔍 on_generating_messages: session={ctx.session.id}, correlation={ctx.correlator.correlation_id}, "
+                    f"available_retriever_tasks={list(tasks_for_this_retriever.keys())}"
+                )
+                
+                # Use session_id as key to match what was stored in on_acknowledged
                 if timeout_and_task := tasks_for_this_retriever.pop(
-                    ctx.correlator.correlation_id, None
+                    ctx.session.id, None
                 ):
+                    c[Logger].info(
+                        f"🔍 Waiting for retriever {retriever_id} result for session {ctx.session.id}..."
+                    )
                     _, task = timeout_and_task
                     task_result = await task
 
@@ -2621,9 +2642,13 @@ class Server:
             c[EngineHooks].on_acknowledged.append(on_message_acknowledged)
             c[EngineHooks].on_generating_messages.append(on_generating_messages)
 
+        await setup_retriever(c, agent_id, retriever_id, retriever)
+        
+    async def _setup_retrievers(self) -> None:
+        """Setup hooks for all existing retrievers (called at server startup)"""
         for agent in self._retrievers:
             for retriever_id, retriever in self._retrievers[agent].items():
-                await setup_retriever(self._container, agent, retriever_id, retriever)
+                await self._setup_retriever_hooks(agent, retriever_id, retriever)
 
     async def create_tag(self, name: str) -> Tag:
         self._advance_creation_progress()

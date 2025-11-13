@@ -235,15 +235,18 @@ The user you're interacting with is called {customer_name}.
         agent: Agent,
     ) -> "PromptBuilder":
         """
-        Add language constraints to the prompt for multilingual support.
+        Add language constraints and communication style to the prompt.
         
         This method uses the agent's language_config (if provided) or falls back
         to extracting from agent.metadata for backward compatibility.
+        Also includes communication_style guidelines if provided in metadata.
         """
         from parlant.core.agents import LanguageConfig
         
         fallback_language = str(agent.metadata.get("k_language", "English"))
         tone = str(agent.metadata.get("tone", "professional"))
+        communication_style = agent.metadata.get("communication_style", [])
+        
         lang_config = LanguageConfig(
             fallback_language=fallback_language,
             tone=tone,
@@ -261,10 +264,20 @@ The user you're interacting with is called {customer_name}.
         else:
             language_rule = f"""ALWAYS use {lang_config.fallback_language} language for ALL your responses, regardless of what language the user uses."""
         
+        # Build communication style section if provided
+        style_section = ""
+        if communication_style and isinstance(communication_style, list):
+            style_items = "\n".join(f"   - {item}" for item in communication_style)
+            style_section = f"""
+
+4. COMMUNICATION STYLE:
+{style_items}
+"""
+        
         template = f"""
-LANGUAGE REQUIREMENTS - HIGHEST PRIORITY
+LANGUAGE & COMMUNICATION REQUIREMENTS - HIGHEST PRIORITY
 -------------------------------------------------
-MANDATORY: Before generating ANY response, you MUST follow these language rules:
+MANDATORY: Before generating ANY response, you MUST follow these rules:
 
 1. PRIMARY RULE - LANGUAGE DETECTION:
 {language_rule}
@@ -285,12 +298,12 @@ MANDATORY: Before generating ANY response, you MUST follow these language rules:
 
 3. TONE RULE: 
    Always maintain a {lang_config.tone} tone in your responses.
-
-4. CONSISTENCY: 
+{style_section}
+{"5" if style_section else "4"}. CONSISTENCY: 
    Each response should match the language of the corresponding user message.
    If user switches languages between messages, you should switch accordingly.
 
-5. VERIFICATION CHECKLIST (MANDATORY BEFORE OUTPUT):
+{"6" if style_section else "5"}. VERIFICATION CHECKLIST (MANDATORY BEFORE OUTPUT):
    Step 1: Identify the user's MOST RECENT message
    Step 2: Detect its language (ignore conversation history)
    Step 3: Verify your response matches that language
@@ -307,6 +320,7 @@ Do NOT ignore language switching requests!
                 "fallback_language": lang_config.fallback_language,
                 "tone": lang_config.tone,
                 "enable_auto_detection": lang_config.enable_auto_detection,
+                "communication_style": communication_style,
             },
             status=SectionStatus.ACTIVE,
         )

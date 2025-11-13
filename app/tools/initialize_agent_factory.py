@@ -17,7 +17,7 @@ from parlant.core.services.indexing.journey_structure_analysis import JourneyGra
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/case/step/weather.json"
+        self.config_path = "app/case/journey-tool.json"
         self.container = container
 
     def _load_config(self) -> Dict[str, Any]:
@@ -68,6 +68,7 @@ class CustomAgentFactory(AgentFactory):
 
         metadata = {
             "k_language": basic_settings.get("language", "English"),
+            "communication_style": basic_settings.get("communication_style", []),
             "tone": basic_settings.get("tone", "Friendly and professional"),
             "chatbot_id": config_request.chatbot_id,
             "tenant_id": config_request.tenant_id,
@@ -92,8 +93,14 @@ class CustomAgentFactory(AgentFactory):
         tools = await self._setup_tools(agent, config.get("tools", []))
         
         start_time = time.time()
+        # 将handover配置转换为actionbook
+        action_books = config.get("action_books", [])
+        handover_actionbook = self._convert_handover_to_actionbook(basic_settings)
+        if handover_actionbook:
+            action_books = action_books + [handover_actionbook]
+        
         # create guidelines
-        guidelines = await self._create_guidelines(agent, config.get("action_books", []), tools)
+        guidelines = await self._create_guidelines(agent, action_books, tools)
         
         # 处理该 agent 的评估队列（按 agent_id 隔离，写入 session inspection）
         await server._process_evaluations(agent_id=agent.id, session_id=session_id)
@@ -222,6 +229,41 @@ class CustomAgentFactory(AgentFactory):
         self._logger.info(f"📖 successfully created {len(action_books)} actionbooks")
         return created_guidelines
 
+    def _convert_handover_to_actionbook(self, basic_settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        将handover配置转换为actionbook格式
+        
+        Args:
+            basic_settings: 基础配置，可能包含handover配置
+            
+        Returns:
+            actionbook格式的字典，如果没有配置则返回None
+        """
+        handover_config = basic_settings.get("handover")
+        
+        if not handover_config or not isinstance(handover_config, list) or len(handover_config) == 0:
+            return None
+        
+        condition_parts = [rule.strip() for rule in handover_config if isinstance(rule, str) and rule.strip()]
+        
+        if not condition_parts:
+            return None
+        
+        condition = "\n".join(condition_parts)
+        
+        action = (
+            "Only output: 'ho000001:Translate \"Got it! Let me connect you with one of our team members "
+            "who'll be happy to help you further.\" to the conversation language' "
+            "Ensure correct format without additional text"
+        )
+        
+        self._logger.info(f"✋ Converted handover config to actionbook with {len(condition_parts)} rules")
+        
+        return {
+            "condition": condition,
+            "action": action,
+            "tools": []
+        }
         
     async def _process_journey_conversions(
         self, 

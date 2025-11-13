@@ -1,0 +1,287 @@
+{
+  "tools": [
+    {
+      "name": "save_customer_information",
+      "description": "save the customer's information when they provide one or more fields",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "nick_name": {
+            "description": "The name of the customer",
+            "type": "string"
+          },
+          "wj_address": {
+            "description": "客户家庭地址",
+            "type": "string"
+          },
+          "wj_phone": {
+            "description": "客户的联系号码",
+            "type": "string"
+          },
+          "email": {
+            "description": "The email of the customer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "nick_name",
+          "wj_address",
+          "wj_phone"
+        ]
+      },
+      "endpoint": {
+        "url": "http://yunpian-attila-security.test.svc.cluster.local.:8080/contactsService/upsert",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phoneNumber": "+8615899990076",
+          "nick_name": "{nick_name}",
+          "customAttrs": [
+            {
+              "value": "{wj_address}",
+              "key": "wj_address"
+            },
+            {
+              "value": "{wj_phone}",
+              "key": "wj_phone"
+            }
+          ],
+          "tenantId": "62da0e8a5ce6040008ef476f",
+          "email": "{email}"
+        }
+      }
+    },
+    {
+      "name": "get_weather_by_geo",
+      "description": "get weather information by geo (lat and lon)",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "lat": {
+            "type": "number",
+            "description": "the lat number of a geo "
+          },
+          "lon": {
+            "type": "number",
+            "description": "the lon number of a geo"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ]
+      },
+      "endpoint": {
+        "url": "https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid=0142cc1a5c295ac07dac4c8c2c7ad4a3",
+        "method": "GET",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{}"
+      }
+    },
+    {
+      "name": "city_geo_info",
+      "description": "get the geography information of a city by city name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "city name in english"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "endpoint": {
+        "url": "https://api.geoapify.com/v1/geocode/search?text={city}&apiKey=b143f80f38964538bdac7341ac627cd5",
+        "method": "GET",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{}"
+      }
+    },
+    {
+      "name": "tracking_inquiry",
+      "description": "圆通物流查询",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tracking_id": {
+            "type": "string",
+            "description": "圆通物流单号"
+          }
+        },
+        "required": [
+          "tracking_id"
+        ]
+      },
+      "endpoint": {
+        "url": "https://www.yto.net.cn/ec/order/gwWaybillInfoList",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "[\n  \"{tracking_id}\"\n]"
+      }
+    },
+    {
+      "name": "close_conversation",
+      "description": "Close the current conversation by ending the dialog",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "endpoint": {
+        "url": "http://yunpian-attila-inbox.test.svc.cluster.local.:8080/inboxConversationService/close?dialogId=61101283456497664",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{}"
+      }
+    },
+    {
+      "name": "WhatsApp_message_send",
+      "description": "WhatsApp消息发送",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "description": "接收WhatsApp消息的手机号"
+          },
+          "template_name": {
+            "type": "string",
+            "description": "模板名称"
+          }
+        },
+        "required": [
+          "phone",
+          "template_name"
+        ]
+      },
+      "endpoint": {
+        "url": "https://api-prepare.ycloud.com/v2/whatsapp/messages",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "8d06577d479b833c3c95483041a28b8d"
+        },
+        "body": "{\n    \"from\":\"8615718892334\",\n    \"to\":\"{phone}\",\n    \"externalId\":\"\",\n    \"type\":\"template\",\n    \"filterBlocked\":true,\n    \"filterUnsubscribed\":true,\n    \"template\":{\n        \"name\":\"{template_name}\",\n        \"language\": {\n            \"code\": \"zh_CN\"\n        },\n        \"components\": [\n            \n        ]\n    }\n}"
+      }
+    },
+    {
+      "name": "whatapp_template_get",
+      "description": "WhatsApp消息模板审核结果查询",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "模板名称"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "endpoint": {
+        "url": "https://api-prepare.ycloud.com/v2/whatsapp/templates/105125325944430/{name}/zh_CN",
+        "method": "GET",
+        "headers": {
+          "X-API-Key": "edf1bc12ad9ee642892da24fbfed4ae6",
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "name": "WhatsApp_template_create",
+      "description": "WhatsApp消息模板创建",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "模板名称"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "endpoint": {
+        "url": "https://api-prepare.ycloud.com/v2/whatsapp/templates",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "edf1bc12ad9ee642892da24fbfed4ae6"
+        },
+        "body": "{\n    \"wabaId\": \"105125325944430\",\n    \"category\": \"MARKETING\",\n    \"name\": \"{name}\",\n    \"language\": \"zh_CN\",\n    \"components\": [\n        {\n            \"type\": \"BODY\",\n            \"text\": \"假期将至，欢迎选购\"\n        }\n    ]\n}"
+      }
+    }
+  ],
+  "basic_settings": {
+    "name": "wuj-11-04-留资",
+    "description": "Initiate conversations with potential customers and qualify their interest. Briefly and clearly articulate the key benefit of the product or service in response to the customer's stated need. Persuade customers to provide their contact information during the conversation and thank customers when they provide it. Never hallucinate information.",
+    "background": "",
+    "language": "English",
+    "tone": "professional",
+    "chatbot_id": "68d510aedff9455e5b019b3e",
+    "retrieve_knowledge_url": "http://121.43.165.245:18080/chatbot/ai-inner/retrieve-knowledge",
+    "communication_style": [
+      "Always maintain a friendly and professional tone throughout the conversation",
+      "Use simple and clear language, avoid technical jargon unless the customer demonstrates technical knowledge",
+      "Keep responses concise and to the point, typically 2-3 sentences unless more detail is specifically requested",
+      "Use emojis sparingly and only when appropriate to the conversation context"
+    ],
+    "handover": [
+      "Transfer to a human agent when the customer explicitly requests to speak with a person",
+      "Transfer when the customer expresses frustration or dissatisfaction that you cannot resolve",
+      "Transfer when the query requires human judgment, authorization, or access to systems you don't have",
+      "Transfer when the customer asks complex questions that are beyond your knowledge base or capabilities",
+      "Always inform the customer before initiating the handover and set appropriate expectations about wait times"
+    ]
+  },
+  "action_books": [
+    {
+      "condition": "用户询问天气",
+      "action": "用户询问天气，如果没有提供城市，先让用户提供天气所在的城市\n\n然后使用 [city_geo_info](city_geo_info) 将城市转为 GEO 坐标信息，抽取其中的经度（lon）和纬度（lat），然后立即使用[get_weather_by_geo](get_weather_by_geo)传入经纬度信息，查询天气信息，抽取信息后，用用户的语言回答用户天气情况",
+      "tools": [
+        "city_geo_info",
+        "get_weather_by_geo"
+      ]
+    },
+    {
+      "condition": "客户咨询快递物流相关的信息",
+      "action": "1. 询问客户：“您需通过运单号还是手机号查询物流？”，确定查询类型。​\n2. 根据客户选择，追问：“请提供对应编号，方便校验”，收集核心信息。​\n3. 告知客户：“正在校验信息，若有误我会提醒您修正”，并调用[tracking_inquiry](tracking_inquiry)完成物流信息查询。​\n4. 向客户反馈：“您的包裹当前在 XX，预计 X 日送达，需要看详细轨迹吗？”，展示结果并确认需求。​\n5. 依据客户回应，如果客户回应无需看详细轨迹，调用工具[close_conversation](close_conversation)礼貌结束当前会话。如果客户回应需要查看详细轨迹，就用步骤3输出的结果值输出给客户。",
+      "tools": [
+        "tracking_inquiry",
+        "close_conversation"
+      ]
+    },
+    {
+      "condition": "客户想发送WhatsApp消息",
+      "action": "1. 亲切问好，并询问是否需要代发 WhatsApp 消息。\n2. 客户同意后，说明需新建模板，请提供模板名称。\n3. 获取名称，立即调用[WhatsApp_template_create](WhatsApp_template_create)提交创建。\n4. 告知审核需要时间，请稍候，并索要接收消息的手机号。\n5. 收到手机号后，再调用[whatapp_template_get](whatapp_template_get)检查刚创建的模板状态，\n6. 若审核通过，询问是否立即用该模板发送；若未通过，则告知使用备用模板template_utility_20250818175832来发送WhatsApp消息。\n7. 根据客户的回复来调用工具[WhatsApp_message_send](WhatsApp_message_send)发送WhatsApp消息",
+      "tools": [
+        "WhatsApp_template_create",
+        "whatapp_template_get",
+        "WhatsApp_message_send"
+      ]
+    },
+    {
+      "condition": "Customer explicitly wants to schedule a demo OR wants to sign up for a free trial OR explicitly provides contact information (name, email, phone, address) OR explicitly reveals strong purchase intention",
+      "action": "If customer has not provided all required information fields, politely guide them to provide all required information as specified in the tool parameters. Once all required fields are collected, save the customer's information using the save_customer_information tool",
+      "tools": [
+        "save_customer_information"
+      ]
+    }
+  ]
+}
