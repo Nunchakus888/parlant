@@ -502,7 +502,7 @@ async_chat_request_example: ExampleJson = {
 }
 
 # Async Chat Response DTO
-class ChatAsyncResponseDTO(DefaultBaseModel, json_schema_extra={"example": async_chat_request_example}):
+class ChatAsyncResponseDTO(DefaultBaseModel):
     """
     Unified response for async chat endpoint.
     
@@ -582,25 +582,9 @@ class SessionUpdateParamsDTO(
     title: SessionTitleField | None = None
     mode: SessionModeField | None = None
 
-
-chat_request_example: ExampleJson = {
-    "message": "Hello, I need help with my order",
-    "customer_id": "cust_123xy",
-    "session_id": "68d510aedff9455e5b019b3e",
-    "tenant_id": "dev-test",
-    "chatbot_id": "68d510aedff9455e5b019b3e",
-    "md5_checksum": "1234567890",
-    "is_preview": False,
-    "preview_action_book_ids": [],
-    "autofill_params": {},
-    "session_title": "",
-    "timeout": 60,
-}
-
-
 class ChatRequestDTO(
     DefaultBaseModel,
-    json_schema_extra={"example": chat_request_example},
+    json_schema_extra={"example": async_chat_request_example},
 ):
     """Parameters for simplified chat endpoint."""
     

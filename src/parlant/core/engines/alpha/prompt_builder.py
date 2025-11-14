@@ -180,6 +180,9 @@ class PromptBuilder:
             EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT: "ai_agent",
             EventSource.AI_AGENT: "ai_agent",
             EventSource.SYSTEM: "system-provided",
+            EventSource.BACK_UI: "back_ui",
+            EventSource.PREVIEW_UI: "preview_ui",
+            EventSource.DEVELOPMENT: "development",
         }
 
         return json.dumps(
