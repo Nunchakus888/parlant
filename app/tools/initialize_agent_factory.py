@@ -165,7 +165,7 @@ class CustomAgentFactory(AgentFactory):
             )
             
             self._logger.info(
-                f"🔍 Knowledge retriever attached: chatbot_id={chatbot_id}, url={retrieve_url}"
+                f"🔍[KB] Attached: chatbot={chatbot_id}, url={retrieve_url}"
             )
             
         except Exception as e:
@@ -252,9 +252,8 @@ class CustomAgentFactory(AgentFactory):
         condition = "\n".join(condition_parts)
         
         action = (
-            "Only output: 'ho000001:Translate \"Got it! Let me connect you with one of our team members "
-            "who'll be happy to help you further.\" to the conversation language' "
-            "Ensure correct format without additional text"
+            "Output ONLY in this exact format: ho000001:<your message>\n"
+            "Your message should convey: 'Got it! Let me connect you with one of our team members who'll be happy to help you further.'"
         )
         
         self._logger.info(f"✋ Converted handover config to actionbook with {len(condition_parts)} rules")

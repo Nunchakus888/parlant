@@ -48,7 +48,7 @@ class KnowledgeRetriever:
         # 获取用户最后一条消息作为检索关键词
         last_message = context.interaction.last_customer_message
         if not last_message or not last_message.content:
-            self.logger.debug("🔍 No customer message found, skipping knowledge retrieval")
+            self.logger.debug("🔍[KB] Skip: no customer message")
             return p.RetrieverResult(None)
         
         keywords = last_message.content.strip()
@@ -62,9 +62,7 @@ class KnowledgeRetriever:
                 "keywords": keywords
             }
             
-            self.logger.debug(
-                f"📖 Retrieving knowledge: chatbot_id={self.chatbot_id}, keywords={keywords[:50]}..."
-            )
+            self.logger.info(f"🔍[KB] Retrieving: chatbot={self.chatbot_id}, query='{keywords}'")
             
             # 发送HTTP请求到知识库API
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -76,25 +74,33 @@ class KnowledgeRetriever:
                 response.raise_for_status()
                 
                 result = response.json()
-                end_time = time.time()
-                self.logger.debug(f"📖 ✅ Knowledge retrieved successfully: {result} in {end_time - start_time}s")
+                elapsed = time.time() - start_time
+                code = result.get('code')
+                msg = result.get('msg', '')
+                data_count = len(result.get('data', []))
+                
+                # 根据返回码判断成功或失败
+                if code == 200 or code == 0:
+                    self.logger.info(f"🔍[KB]✅ Success: items={data_count}, time={elapsed:.2f}s")
+                else:
+                    self.logger.warning(f"🔍[KB]❌ Failed: code={code}, msg={msg}, time={elapsed:.2f}s")
                 
                 # 返回检索结果，让Agent可以使用这些信息来回答用户
                 return p.RetrieverResult(result)
                 
         except httpx.TimeoutException:
-            end_time = time.time()
-            self.logger.warning(f"⏰ ❌ Knowledge retrieval timeout after {self.timeout}s in {end_time - start_time}s")
+            elapsed = time.time() - start_time
+            self.logger.warning(f"🔍[KB]❌ Timeout: {self.timeout}s exceeded, time={elapsed:.2f}s")
             return p.RetrieverResult(None)
             
         except httpx.HTTPStatusError as e:
-            end_time = time.time()
-            self.logger.error(f"🔴 ❌ Knowledge retrieval HTTP error: {e.response.status_code} in {end_time - start_time}s")
+            elapsed = time.time() - start_time
+            self.logger.error(f"🔍[KB]❌ HTTP Error: status={e.response.status_code}, time={elapsed:.2f}s")
             return p.RetrieverResult(None)
             
         except Exception as e:
-            end_time = time.time()
-            self.logger.error(f"🔴 ❌ Knowledge retrieval failed: {type(e).__name__}: {str(e)} in {end_time - start_time}s")
+            elapsed = time.time() - start_time
+            self.logger.error(f"🔍[KB]❌ Error: {type(e).__name__} - {str(e)}, time={elapsed:.2f}s")
             return p.RetrieverResult(None)
 
 

@@ -75,8 +75,22 @@ class Application:
         self.canned_responses = canned_response_module
         self._logger = logger
         
+        # Retriever cleanup callback (set by SDK Server)
+        self._retriever_cleanup_callback = None
+        
         # LRU 资源管理器
         self.resource_manager = ResourceManager(self, logger, background_task_service)
+    
+    def set_retriever_cleanup_callback(self, callback):
+        """Set callback for cleaning up retrievers when agent is deleted.
+        
+        This is called by the SDK Server to register its cleanup method.
+        
+        Args:
+            callback: Async function that takes agent_id and cleans up retrievers.
+                     Should have signature: async def(agent_id: AgentId) -> None
+        """
+        self._retriever_cleanup_callback = callback
 
     async def delete_agent_cascade(self, agent_id: AgentId) -> None:
         """
@@ -160,7 +174,14 @@ class Application:
         # 同一个 chatbot 的其他 agent 可能还在使用这些缓存
         # 如果需要清理 chatbot 的缓存，应该在 chatbot 配置变更时使用新的 chatbot_id
         
-        # 10. 最后删除 Agent 本身
+        # 10. 清理 Retrievers 和 Hooks (SDK模式)
+        if self._retriever_cleanup_callback:
+            try:
+                await self._retriever_cleanup_callback(agent_id)
+            except Exception as e:
+                self._logger.error(f"❌ Failed to cleanup retrievers via callback: {e}")
+        
+        # 11. 最后删除 Agent 本身
         await self.agents.delete(agent_id)
 
     async def _delete_customer_from_memory_for_session(self, session_id: SessionId) -> None:

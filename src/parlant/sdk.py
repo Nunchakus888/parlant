@@ -100,6 +100,7 @@ from parlant.core.customers import (
     CustomerStore,
 )
 from parlant.core.emissions import EmittedEvent, EventEmitterFactory
+from parlant.core.entity_cq import EntityQueries
 from parlant.core.engines.alpha.prompt_builder import PromptBuilder, PromptSection
 from parlant.core.engines.alpha.hooks import EngineHook, EngineHookResult, EngineHooks
 from parlant.core.engines.alpha.loaded_context import LoadedContext, Interaction, InteractionMessage
@@ -535,7 +536,7 @@ class _CachedEvaluator:
 
         if cached_evaluation := await guideline_collection.find_one({"id": {"$eq": _hash}}):
             self._logger.trace(
-                f"Using cached evaluation for guideline: Condition: {g.condition or 'None'}; Action: {g.action or 'None'}"
+                f"Cached: C:{(g.condition or '')[:30]} A:{(g.action or '')[:30]}"
             )
 
             return self.GuidelineEvaluation(
@@ -2134,6 +2135,10 @@ class Server:
             AgentId,
             dict[str, Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]]],
         ] = defaultdict(dict)
+        self._retriever_hooks: dict[
+            AgentId,
+            list[tuple[EngineHook, EngineHook]],  # (on_acknowledged, on_generating_messages)
+        ] = defaultdict(list)
         self._exit_stack = AsyncExitStack()
 
         self._plugin_server: PluginServer
@@ -2493,6 +2498,7 @@ class Server:
             if key in self._journey_evaluations:
                 del self._journey_evaluations[key]
 
+        
     async def _setup_retriever_hooks(
         self,
         agent_id: AgentId,
@@ -2508,10 +2514,8 @@ class Server:
             retriever_id: str,
             retriever: Callable[[RetrieverContext], Awaitable[JSONSerializable | RetrieverResult]],
         ) -> None:
-            # Use session_id as key to avoid correlation_id scope mismatch issues
-            # Session ID remains constant throughout the entire processing flow
             tasks_for_this_retriever: dict[
-                SessionId,
+                str,
                 tuple[Timeout, asyncio.Task[JSONSerializable | RetrieverResult]],
             ] = {}
 
@@ -2523,19 +2527,35 @@ class Server:
                 # First do some garbage collection if needed.
                 # This might be needed if tasks were not awaited
                 # because of exceptions during engine processing.
-                for session_id in list(tasks_for_this_retriever.keys()):
-                    if tasks_for_this_retriever[session_id][0].expired():
+                for correlation_id in list(tasks_for_this_retriever.keys()):
+                    if tasks_for_this_retriever[correlation_id][0].expired():
                         # Very, very little change that this task is still meant to be running,
                         # or that anyone is still waiting for it. It's 99.999% garbage.
                         try:
-                            tasks_for_this_retriever[session_id][1].add_done_callback(
+                            tasks_for_this_retriever[correlation_id][1].add_done_callback(
                                 default_done_callback()
                             )
-                            tasks_for_this_retriever[session_id][1].cancel()
-                            del tasks_for_this_retriever[session_id]
+                            tasks_for_this_retriever[correlation_id][1].cancel()
+                            del tasks_for_this_retriever[correlation_id]
                         except BaseException:
                             # If anything went unexpectedly here, whatever. Carry on.
                             pass
+
+                # 🔧 FIX: Reload interaction to ensure it includes the newly created message
+                # This is critical for retriever to get the latest customer message
+                from parlant.core.engines.alpha.loaded_context import Interaction
+                
+                c[Logger].info(
+                    f"🔍[KB] Hook triggered: agent={agent_id}, retriever={retriever_id}"
+                )
+                
+                entity_queries = c[EntityQueries]
+                latest_history = await entity_queries.find_events(ctx.session.id)
+                ctx.interaction = Interaction(history=latest_history)
+                
+                c[Logger].debug(
+                    f"🔍[KB] Interaction reloaded: events={len(latest_history)}, last_msg={ctx.interaction.last_customer_message.content if ctx.interaction.last_customer_message else 'None'}"
+                )
 
                 agent = await self.get_agent(id=ctx.agent.id)
                 customer = await self.get_customer(id=ctx.customer.id)
@@ -2558,11 +2578,10 @@ class Server:
                 )
 
                 c[Logger].info(
-                    f"🔍 Starting retriever {retriever_id} for agent {agent_id}, session {ctx.session.id}, correlation {ctx.correlator.correlation_id}"
+                    f"🔍[KB] Starting: agent={agent_id}, retriever={retriever_id}, session={ctx.session.id}"
                 )
 
-                # Use session_id as key instead of correlation_id to avoid scope mismatch
-                tasks_for_this_retriever[ctx.session.id] = (
+                tasks_for_this_retriever[ctx.correlator.correlation_id] = (
                     Timeout(600),  # Expiration timeout for garbage collection purposes
                     asyncio.create_task(
                         cast(Coroutine[Any, Any, JSONSerializable | RetrieverResult], coroutine),
@@ -2577,18 +2596,9 @@ class Server:
                 payload: Any,
                 exc: Optional[Exception],
             ) -> EngineHookResult:
-                c[Logger].debug(
-                    f"🔍 on_generating_messages: session={ctx.session.id}, correlation={ctx.correlator.correlation_id}, "
-                    f"available_retriever_tasks={list(tasks_for_this_retriever.keys())}"
-                )
-                
-                # Use session_id as key to match what was stored in on_acknowledged
                 if timeout_and_task := tasks_for_this_retriever.pop(
-                    ctx.session.id, None
+                    ctx.correlator.correlation_id, None
                 ):
-                    c[Logger].info(
-                        f"🔍 Waiting for retriever {retriever_id} result for session {ctx.session.id}..."
-                    )
                     _, task = timeout_and_task
                     task_result = await task
 
@@ -2641,6 +2651,11 @@ class Server:
 
             c[EngineHooks].on_acknowledged.append(on_message_acknowledged)
             c[EngineHooks].on_generating_messages.append(on_generating_messages)
+            
+            # Track hooks for cleanup
+            self._retriever_hooks[agent_id].append(
+                (on_message_acknowledged, on_generating_messages)
+            )
 
         await setup_retriever(c, agent_id, retriever_id, retriever)
         
@@ -2649,6 +2664,54 @@ class Server:
         for agent in self._retrievers:
             for retriever_id, retriever in self._retrievers[agent].items():
                 await self._setup_retriever_hooks(agent, retriever_id, retriever)
+    
+    async def cleanup_agent_retrievers(self, agent_id: AgentId) -> None:
+        """Clean up retrievers and hooks for the specified agent.
+        
+        This method should be called when an agent is deleted to prevent memory leaks.
+        It removes:
+        1. Retriever references from self._retrievers
+        2. Hook functions from EngineHooks lists
+        
+        Args:
+            agent_id: The ID of the agent to clean up
+        """
+        try:
+            # 1. Clean up retrievers dictionary
+            if agent_id in self._retrievers:
+                retriever_count = len(self._retrievers[agent_id])
+                del self._retrievers[agent_id]
+                self._container[Logger].info(
+                    f"🔍[KB] Cleaned up: agent={agent_id}, count={retriever_count}"
+                )
+            
+            # 2. Clean up hooks from EngineHooks lists
+            if agent_id in self._retriever_hooks:
+                hooks_to_remove = self._retriever_hooks[agent_id]
+                engine_hooks = self._container[EngineHooks]
+                
+                for on_ack_hook, on_gen_hook in hooks_to_remove:
+                    try:
+                        engine_hooks.on_acknowledged.remove(on_ack_hook)
+                        engine_hooks.on_generating_messages.remove(on_gen_hook)
+                    except ValueError:
+                        # Hook already removed, ignore
+                        pass
+                
+                hook_pair_count = len(hooks_to_remove)
+                del self._retriever_hooks[agent_id]
+                
+                self._container[Logger].info(
+                    f"🧹 Cleaned up {hook_pair_count * 2} hook(s) for agent {agent_id}, "
+                    f"remaining on_acknowledged hooks: {len(engine_hooks.on_acknowledged)}"
+                )
+        
+        except Exception as e:
+            self._container[Logger].error(
+                f"❌ Failed to cleanup retrievers for agent {agent_id}: {e}"
+            )
+
+
 
     async def create_tag(self, name: str) -> Tag:
         self._advance_creation_progress()
@@ -3146,6 +3209,18 @@ class Server:
 
             if self._initialize:
                 await self._initialize(c)
+            
+            # Setup retriever hooks after all initialization is complete
+            await self._setup_retrievers()
+            
+            # Register retriever cleanup callback with Application
+            try:
+                from parlant.core.application import Application
+                app = c[Application]
+                app.set_retriever_cleanup_callback(self.cleanup_agent_retrievers)
+            except Exception:
+                # Application may not be in container (e.g., in test mode)
+                pass
 
         return StartupParameters(
             port=self.port,
