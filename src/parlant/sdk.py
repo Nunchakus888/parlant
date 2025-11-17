@@ -2377,56 +2377,64 @@ class Server:
                 )
             
             # 2. 处理评估结果并更新元数据
-            if entity_type == "guideline":
-                guideline = await self._container[GuidelineStore].read_guideline(
-                    guideline_id=cast(GuidelineId, entity_id)
-                )
-
-                properties = cast(_CachedEvaluator.GuidelineEvaluation, result).properties
-
-                properties_to_add = {
-                    k: v for k, v in properties.items() if k not in guideline.metadata
-                }
-
-                for key, value in properties_to_add.items():
-                    await self._container[GuidelineStore].set_metadata(
-                        guideline_id=cast(GuidelineId, entity_id),
-                        key=key,
-                        value=value,
+            try:
+                if entity_type == "guideline":
+                    guideline = await self._container[GuidelineStore].read_guideline(
+                        guideline_id=cast(GuidelineId, entity_id)
                     )
 
-            elif entity_type == "node":
-                node = await self._container[JourneyStore].read_node(
-                    node_id=cast(JourneyStateId, entity_id)
-                )
-                properties = cast(_CachedEvaluator.GuidelineEvaluation, result).properties
+                    properties = cast(_CachedEvaluator.GuidelineEvaluation, result).properties
 
-                properties_to_add = {k: v for k, v in properties.items() if k not in node.metadata}
-
-                for key, value in properties_to_add.items():
-                    await self._container[JourneyStore].set_node_metadata(
-                        node_id=cast(JourneyStateId, entity_id),
-                        key=key,
-                        value=value,
-                    )
-
-            elif entity_type == "journey":
-                for node_id, properties in cast(
-                    _CachedEvaluator.JourneyEvaluation, result
-                ).node_properties.items():
-                    node = await self._container[JourneyStore].read_node(node_id)
                     properties_to_add = {
-                        k: v
-                        for k, v in properties.items()
-                        if k not in node.metadata or node.metadata[k] is None
+                        k: v for k, v in properties.items() if k not in guideline.metadata
                     }
 
                     for key, value in properties_to_add.items():
-                        await self._container[JourneyStore].set_node_metadata(
-                            node_id=node_id,
+                        await self._container[GuidelineStore].set_metadata(
+                            guideline_id=cast(GuidelineId, entity_id),
                             key=key,
                             value=value,
                         )
+
+                elif entity_type == "node":
+                    node = await self._container[JourneyStore].read_node(
+                        node_id=cast(JourneyStateId, entity_id)
+                    )
+                    properties = cast(_CachedEvaluator.GuidelineEvaluation, result).properties
+
+                    properties_to_add = {k: v for k, v in properties.items() if k not in node.metadata}
+
+                    for key, value in properties_to_add.items():
+                        await self._container[JourneyStore].set_node_metadata(
+                            node_id=cast(JourneyStateId, entity_id),
+                            key=key,
+                            value=value,
+                        )
+
+                elif entity_type == "journey":
+                    for node_id, properties in cast(
+                        _CachedEvaluator.JourneyEvaluation, result
+                    ).node_properties.items():
+                        node = await self._container[JourneyStore].read_node(node_id)
+                        properties_to_add = {
+                            k: v
+                            for k, v in properties.items()
+                            if k not in node.metadata or node.metadata[k] is None
+                        }
+
+                        for key, value in properties_to_add.items():
+                            await self._container[JourneyStore].set_node_metadata(
+                                node_id=node_id,
+                                key=key,
+                                value=value,
+                            )
+            
+            except ItemNotFoundError:
+                # Entity was deleted (e.g., guideline converted to journey), skip silently
+                self._container[Logger].debug(
+                    f"Skipping evaluation for deleted {entity_type} {entity_id}"
+                )
+                continue
 
         # 记录评估 tokens 统计
         if all_evaluation_generations:
