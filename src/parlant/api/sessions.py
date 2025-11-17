@@ -2277,6 +2277,9 @@ def create_router(
         
         from app.tools import API, get_callback_host
         
+        # Ensure correlation_id consistency: always use processing scope
+        processing_correlation_id = f"{correlation_id}::process"
+        
         # Check callback configuration once at the beginning
         callback_host = get_callback_host()
         if not callback_host:
@@ -2336,7 +2339,7 @@ def create_router(
             await _wait_and_callback(
                 session_id=session.id,
                 customer_event_offset=customer_event.offset,
-                processing_correlation_id=f"{correlation_id}::process",
+                processing_correlation_id=processing_correlation_id,
                 params=params,
                 app=app,
                 session_listener=session_listener,
@@ -2347,13 +2350,13 @@ def create_router(
         except Exception as e:
             logger.error(f"❌ Background task error for correlation_id {correlation_id}: {e}")
             
-            # Send error callback
+            # Send error callback with consistent correlation_id
             await send_callback(
                 ChatAsyncResponseDTO(
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     code=AsyncChatCode.PROCESSING_ERROR.value,
                     message=f"{AsyncChatStatus.PROCESSING_ERROR.value}: {str(e)}",
-                    correlation_id=correlation_id,
+                    correlation_id=processing_correlation_id,
                     data=None
                 )
             )
