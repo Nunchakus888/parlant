@@ -290,57 +290,6 @@ class SessionModule:
             trigger_processing=trigger_processing,
         )
 
-    async def create_human_agent_message_event(
-        self,
-        session_id: SessionId,
-        message: str,
-        participant: Participant,
-    ) -> Event:
-        message_data: MessageEventData = {
-            "message": message,
-            "participant": {
-                "id": AgentId(participant["id"])
-                if "id" in participant and participant["id"]
-                else None,
-                "display_name": participant["display_name"],
-            },
-        }
-
-        event = await self.create_event(
-            session_id=session_id,
-            kind=EventKind.MESSAGE,
-            data=message_data,
-            source=EventSource.HUMAN_AGENT,
-            trigger_processing=False,
-        )
-
-        return event
-
-    async def create_human_agent_on_behalf_of_ai_agent_message_event(
-        self,
-        session_id: SessionId,
-        message: str,
-    ) -> Event:
-        session = await self._session_store.read_session(session_id)
-        agent = await self._agent_store.read_agent(session.agent_id)
-
-        message_data: MessageEventData = {
-            "message": message,
-            "participant": {
-                "id": agent.id,
-                "display_name": agent.name,
-            },
-        }
-
-        event = await self.create_event(
-            session_id=session_id,
-            kind=EventKind.MESSAGE,
-            data=message_data,
-            source=EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT,
-            trigger_processing=False,
-        )
-
-        return event
 
     async def dispatch_processing_task(self, session: Session) -> str:
         with self._correlator.scope("process", {"session": session}):

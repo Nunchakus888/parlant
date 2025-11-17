@@ -202,7 +202,9 @@ class BasicPerceivedPerformancePolicy(PerceivedPerformancePolicy):
 
         message_events = [e for e in context.interaction.history if e.kind == EventKind.MESSAGE]
 
-        customer_events = [e for e in message_events if e.source == EventSource.CUSTOMER]
+        # Include all customer-facing sources: CUSTOMER, BACK_UI, PREVIEW_UI
+        customer_sources = {EventSource.CUSTOMER, EventSource.BACK_UI, EventSource.PREVIEW_UI}
+        customer_events = [e for e in message_events if e.source in customer_sources]
         agent_events = [e for e in message_events if e.source == EventSource.AI_AGENT]
 
         for customer_event in customer_events:

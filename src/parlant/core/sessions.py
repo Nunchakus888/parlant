@@ -91,14 +91,15 @@ class EventSource(Enum):
     """Represents an event from the development mode."""
 
 
-    CUSTOMER_UI = "customer_ui"
-    """Represents an event from the customer UI, such as a page navigation or button click."""
-
-    HUMAN_AGENT = "human_agent"
-    """Represents an event from a human agent, such as a status update, message or action."""
-
-    HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT = "human_agent_on_behalf_of_ai_agent"
-    """Represents an event from a human agent acting on behalf of an AI agent, such as a status update, message or action."""
+# Mapping for converting EventSource to string representation used in prompts
+EVENT_SOURCE_TO_STRING: dict[EventSource, str] = {
+    EventSource.CUSTOMER: "user",
+    EventSource.AI_AGENT: "ai_agent",
+    EventSource.SYSTEM: "system-provided",
+    EventSource.BACK_UI: "back_ui",
+    EventSource.PREVIEW_UI: "preview_ui",
+    EventSource.DEVELOPMENT: "development",
+}
 
 
 class EventKind(Enum):
@@ -131,17 +132,10 @@ class Event:
     deleted: bool
 
     def is_from_client(self) -> bool:
-        return self.source in [
-            EventSource.CUSTOMER,
-            EventSource.CUSTOMER_UI,
-        ]
+        return self.source == EventSource.CUSTOMER
 
     def is_from_server(self) -> bool:
-        return self.source in [
-            EventSource.HUMAN_AGENT,
-            EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT,
-            EventSource.AI_AGENT,
-        ]
+        return self.source == EventSource.AI_AGENT
 
 
 class Participant(TypedDict):

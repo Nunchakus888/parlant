@@ -1978,22 +1978,10 @@ def create_router(
                     request=request, operation=Operation.CREATE_AGENT_EVENT
                 )
                 return await _add_agent_message(session_id, params)
-            elif params.source == EventSourceDTO.HUMAN_AGENT:
-                await authorization_policy.authorize(
-                    request=request,
-                    operation=Operation.CREATE_HUMAN_AGENT_EVENT,
-                )
-                return await _add_human_agent_message(session_id, params)
-            elif params.source == EventSourceDTO.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT:
-                await authorization_policy.authorize(
-                    request=request,
-                    operation=Operation.CREATE_HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT_EVENT,
-                )
-                return await _add_human_agent_message_on_behalf_of_ai_agent(session_id, params)
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail='Only "customer", "human_agent", and "human_agent_on_behalf_of_ai_agent" sources are supported for direct posting.',
+                    detail='Only "customer" and "ai_agent" sources are supported for message events.',
                 )
 
         elif params.kind == EventKindDTO.CUSTOM:
@@ -2096,54 +2084,6 @@ def create_router(
             event = await app.sessions.process(session_id)
             return event_to_dto(event)
 
-    async def _add_human_agent_message(
-        session_id: SessionIdPath,
-        params: EventCreationParamsDTO,
-    ) -> EventDTO:
-        if not params.message:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Missing 'message' field for event",
-            )
-        if not params.participant or not params.participant.display_name:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Missing 'participant' with 'display_name' for human agent message",
-            )
-
-        event = await app.sessions.create_human_agent_message_event(
-            session_id=session_id,
-            message=params.message,
-            participant=_participant_dto_to_participant(params.participant),
-        )
-
-        return event_to_dto(event)
-
-    async def _add_human_agent_message_on_behalf_of_ai_agent(
-        session_id: SessionIdPath,
-        params: EventCreationParamsDTO,
-    ) -> EventDTO:
-        if not params.message:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Missing 'data' field for message",
-            )
-
-        event = await app.sessions.create_human_agent_on_behalf_of_ai_agent_message_event(
-            session_id=session_id,
-            message=params.message,
-        )
-
-        return EventDTO(
-            id=event.id,
-            source=_event_source_to_event_source_dto(event.source),
-            kind=_event_kind_to_event_kind_dto(event.kind),
-            offset=event.offset,
-            creation_utc=event.creation_utc,
-            correlation_id=event.correlation_id,
-            data=cast(JSONSerializableDTO, event.data),
-            deleted=event.deleted,
-        )
 
     async def _add_custom_event(
         session_id: SessionIdPath,

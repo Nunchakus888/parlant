@@ -107,8 +107,11 @@ class Interaction:
     @property
     def last_customer_message(self) -> Optional[InteractionMessage]:
         """Returns the last customer message in the interaction session, if it exists"""
+        # Include all customer-facing sources: CUSTOMER, BACK_UI, PREVIEW_UI
+        customer_sources = {EventSource.CUSTOMER, EventSource.BACK_UI, EventSource.PREVIEW_UI}
+        
         for event in reversed(self.history):
-            if event.kind == EventKind.MESSAGE and event.source == EventSource.CUSTOMER:
+            if event.kind == EventKind.MESSAGE and event.source in customer_sources:
                 message_data = cast(MessageEventData, event.data)
 
                 return InteractionMessage(

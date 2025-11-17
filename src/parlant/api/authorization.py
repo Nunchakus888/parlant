@@ -107,10 +107,6 @@ class Operation(Enum):
     DELETE_SESSIONS = "delete_sessions"
     CREATE_CUSTOMER_EVENT = "create_customer_event"
     CREATE_AGENT_EVENT = "create_agent_event"
-    CREATE_HUMAN_AGENT_EVENT = "create_human_agent_event"
-    CREATE_HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT_EVENT = (
-        "create_human_agent_on_behalf_of_ai_agent_event"
-    )
     CREATE_STATUS_EVENT = "create_status_event"
     CREATE_CUSTOM_EVENT = "create_custom_event"
     READ_EVENT = "read_event"

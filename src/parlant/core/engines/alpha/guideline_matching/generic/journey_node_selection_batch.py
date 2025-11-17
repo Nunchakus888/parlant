@@ -27,7 +27,13 @@ from parlant.core.journeys import Journey
 from parlant.core.loggers import Logger
 from parlant.core.nlp.generation import SchematicGenerator
 from parlant.core.nlp.generation_info import GenerationInfo, UsageInfo
-from parlant.core.sessions import Event, EventId, EventKind, EventSource
+from parlant.core.sessions import (
+    EVENT_SOURCE_TO_STRING,
+    Event,
+    EventId,
+    EventKind,
+    EventSource,
+)
 from parlant.core.shots import Shot, ShotCollection
 
 PRE_ROOT_INDEX = "0"
@@ -542,18 +548,9 @@ class GenericJourneyNodeSelectionBatch(GuidelineMatchingBatch):
 
     def _format_shot(self, shot: JourneyNodeSelectionShot) -> str:
         def adapt_event(e: Event) -> JSONSerializable:
-            source_map: dict[EventSource, str] = {
-                EventSource.CUSTOMER: "user",
-                EventSource.CUSTOMER_UI: "frontend_application",
-                EventSource.HUMAN_AGENT: "human_service_agent",
-                EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT: "ai_agent",
-                EventSource.AI_AGENT: "ai_agent",
-                EventSource.SYSTEM: "system-provided",
-            }
-
             return {
                 "event_kind": e.kind.value,
-                "event_source": source_map[e.source],
+                "event_source": EVENT_SOURCE_TO_STRING[e.source],
                 "data": e.data,
             }
 

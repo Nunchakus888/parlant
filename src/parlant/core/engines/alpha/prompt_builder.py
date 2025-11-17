@@ -29,7 +29,14 @@ from parlant.core.engines.alpha.guideline_matching.generic.common import (
     internal_representation,
 )
 from parlant.core.engines.alpha.guideline_matching.guideline_match import GuidelineMatch
-from parlant.core.sessions import Event, EventKind, EventSource, MessageEventData, ToolEventData
+from parlant.core.sessions import (
+    EVENT_SOURCE_TO_STRING,
+    Event,
+    EventKind,
+    EventSource,
+    MessageEventData,
+    ToolEventData,
+)
 from parlant.core.glossary import Term
 from parlant.core.engines.alpha.utils import (
     context_variables_to_json,
@@ -173,22 +180,10 @@ class PromptBuilder:
                 ]
             }
 
-        source_map: dict[EventSource, str] = {
-            EventSource.CUSTOMER: "user",
-            EventSource.CUSTOMER_UI: "frontend_application",
-            EventSource.HUMAN_AGENT: "human_service_agent",
-            EventSource.HUMAN_AGENT_ON_BEHALF_OF_AI_AGENT: "ai_agent",
-            EventSource.AI_AGENT: "ai_agent",
-            EventSource.SYSTEM: "system-provided",
-            EventSource.BACK_UI: "back_ui",
-            EventSource.PREVIEW_UI: "preview_ui",
-            EventSource.DEVELOPMENT: "development",
-        }
-
         return json.dumps(
             {
                 "event_kind": e.kind.value,
-                "event_source": source_map[e.source],
+                "event_source": EVENT_SOURCE_TO_STRING[e.source],
                 "data": data,
             }
         )
