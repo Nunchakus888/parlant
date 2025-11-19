@@ -65,12 +65,6 @@ class CustomAgentFactory(AgentFactory):
 
         basic_settings = config.get("basic_settings", {})
 
-        action_books = config.get("action_books", [])
-        if not action_books:
-            self._logger.warning(
-                "⚠️  action_books 配置为空，将创建基础智能体（仅支持知识库查询和通用问答能力）"
-            )
-
         metadata = {
             "k_language": basic_settings.get("language", "English"),
             "communication_style": basic_settings.get("communication_style", []),
@@ -98,20 +92,19 @@ class CustomAgentFactory(AgentFactory):
         tools = await self._setup_tools(agent, config.get("tools", []))
         
         start_time = time.time()
-        # 将handover配置转换为actionbook并合并到 action_books
-        # 注意：如果 action_books 为 None，这里使用空列表作为默认值
-        action_books_list = action_books if action_books else []
+        # get action_books and merge handover config
+        action_books = config.get("action_books", [])
         handover_actionbook = self._convert_handover_to_actionbook(basic_settings)
         if handover_actionbook:
-            action_books_list = action_books_list + [handover_actionbook]
+            action_books.append(handover_actionbook)
         
-        # create guidelines（即使列表为空也会执行，返回空的 guidelines 列表）
-        guidelines = await self._create_guidelines(agent, action_books_list, tools)
+        # create guidelines
+        guidelines = await self._create_guidelines(agent, action_books, tools)
         
-        # 处理该 agent 的评估队列（按 agent_id 隔离，写入 session inspection）
+        # process the evaluation queue of the agent (isolated by agent_id, write into session inspection)
         await server._process_evaluations(agent_id=agent.id, session_id=session_id)
         
-        # 评估完成后，处理 journey 转换
+        # after evaluation, process the journey conversion
         await self._process_journey_conversions(agent, guidelines, tools)
 
         await server._process_evaluations(agent_id=agent.id, session_id=session_id)
@@ -143,11 +136,11 @@ class CustomAgentFactory(AgentFactory):
             basic_settings: 基础配置，包含retrieve_knowledge_url
         """
         try:
-            # 从配置中获取知识库信息
+            # get the knowledge base information from the config
             chatbot_id = config_request.chatbot_id
             retrieve_url = basic_settings.get("retrieve_knowledge_url")
             
-            # 验证必要参数
+            # validate the necessary parameters
             if not chatbot_id:
                 self._logger.warning("chatbot_id not found, skipping retriever setup")
                 return
@@ -156,7 +149,7 @@ class CustomAgentFactory(AgentFactory):
                 self._logger.warning("retrieve_knowledge_url not found, skipping retriever setup")
                 return
             
-            # 创建知识库检索器实例
+            # create the knowledge base retriever instance
             knowledge_retriever = create_knowledge_retriever(
                 chatbot_id=chatbot_id,
                 retrieve_url=retrieve_url,
@@ -164,7 +157,7 @@ class CustomAgentFactory(AgentFactory):
                 timeout=int(os.getenv("RETRIEVER_TIMEOUT", "10"))
             )
             
-            # 将检索器注册到Agent
+            # register the retriever to the agent
             await agent.attach_retriever(
                 knowledge_retriever.retrieve,
                 # id="knowledge_retriever"
@@ -176,7 +169,7 @@ class CustomAgentFactory(AgentFactory):
             
         except Exception as e:
             self._logger.error(f"🔴 Failed to setup retriever: {type(e).__name__}: {str(e)}")
-            # 不抛出异常，允许Agent在没有检索器的情况下继续工作
+            # do not raise an exception, allow the agent to continue working without the retriever
 
     async def _setup_tools(self, agent: p.Agent, tools_config: List[Dict[str, Any]]) -> Dict[str, Any]:
         """setup tools and return the tool mapping"""
@@ -195,18 +188,20 @@ class CustomAgentFactory(AgentFactory):
     
     async def _create_guidelines(self, agent: p.Agent, action_books: List[Dict[str, Any]], available_tools: Dict[str, Any]) -> List[p.Guideline]:
         """
-        创建 guidelines，返回创建的 guideline 列表
+        create guidelines and return the created guideline list
         
         Args:
-            agent: Agent 实例
-            action_books: actionbook 配置列表，可以为空
-            available_tools: 可用工具字典
+            agent: Agent instance
+            action_books: actionbook config list, can be empty
+            available_tools: available tools dictionary
             
         Returns:
-            创建的 guideline 列表，如果 action_books 为空则返回空列表
+            created guideline list, if action_books is empty, return an empty list
         """
         if not action_books:
-            self._logger.warning("no guidelines config, skip creating")
+            self._logger.info(
+                "📖 action_books is empty, skip creating guidelines (Agent will run in basic mode, relying on knowledge base and general conversation abilities)"
+            )
             return []
         
         created_guidelines = []
