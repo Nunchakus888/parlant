@@ -82,11 +82,12 @@ class KnowledgeRetriever:
                 # 根据返回码判断成功或失败
                 if code == 200 or code == 0:
                     self.logger.info(f"🔍[KB]✅ Success: items={data_count}, time={elapsed:.2f}s")
+                    # 成功：返回检索结果，让Agent使用这些信息来回答用户
+                    return p.RetrieverResult(result)
                 else:
+                    # 失败：不传递错误信息给AI，避免不必要的上下文占用
                     self.logger.error(f"🔍[KB] ❌ Failed: code={code}, msg={msg}, time={elapsed:.2f}s")
-                
-                # 返回检索结果，让Agent可以使用这些信息来回答用户
-                return p.RetrieverResult(result)
+                    return p.RetrieverResult(None)
                 
         except httpx.TimeoutException:
             elapsed = time.time() - start_time
