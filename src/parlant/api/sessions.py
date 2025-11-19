@@ -2287,7 +2287,6 @@ def create_router(
             return  # Early return if no callback configured
         
         callback_url = API.build_url(API.CALLBACK_AGENT_RECEIVE, base_url=callback_host)
-        logger.info(f"⏳ Callback URL: {callback_url}")
         
         async def send_callback(response_data: ChatAsyncResponseDTO) -> None:
             """Helper to send callback with error handling."""

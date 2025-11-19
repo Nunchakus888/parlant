@@ -41,14 +41,19 @@ class CustomAgentFactory(AgentFactory):
         """
         从HTTP配置请求创建个性化智能体
         
+        该方法支持灵活的配置方式：
+        - action_books 为可选配置，即使为空也能创建基础智能体
+        - 基础智能体具备完整的知识库查询和通用问答能力
+        - tools 和 retrievers 可独立配置，不依赖 action_books
+        
         Args:
             config_request: HTTP配置请求参数，必须提供
             
         Returns:
-            创建的Agent实例
+            创建的Agent实例（包含知识库检索器、工具和 guidelines）
             
         Raises:
-            RuntimeError: 当配置加载失败时
+            RuntimeError: 当 Server 不可用或配置加载失败时
         """
         server = self._get_server_from_container()
         if not server:
@@ -60,11 +65,11 @@ class CustomAgentFactory(AgentFactory):
 
         basic_settings = config.get("basic_settings", {})
 
-        action_books = config.get("action_books")
+        action_books = config.get("action_books", [])
         if not action_books:
-            self._logger.error("❌ 没有找到 action_books，无法创建智能体")
-            # todo: handle this
-            raise RuntimeError("没有找到 action_books，无法创建智能体")
+            self._logger.warning(
+                "⚠️  action_books 配置为空，将创建基础智能体（仅支持知识库查询和通用问答能力）"
+            )
 
         metadata = {
             "k_language": basic_settings.get("language", "English"),
@@ -93,14 +98,15 @@ class CustomAgentFactory(AgentFactory):
         tools = await self._setup_tools(agent, config.get("tools", []))
         
         start_time = time.time()
-        # 将handover配置转换为actionbook
-        action_books = config.get("action_books", [])
+        # 将handover配置转换为actionbook并合并到 action_books
+        # 注意：如果 action_books 为 None，这里使用空列表作为默认值
+        action_books_list = action_books if action_books else []
         handover_actionbook = self._convert_handover_to_actionbook(basic_settings)
         if handover_actionbook:
-            action_books = action_books + [handover_actionbook]
+            action_books_list = action_books_list + [handover_actionbook]
         
-        # create guidelines
-        guidelines = await self._create_guidelines(agent, action_books, tools)
+        # create guidelines（即使列表为空也会执行，返回空的 guidelines 列表）
+        guidelines = await self._create_guidelines(agent, action_books_list, tools)
         
         # 处理该 agent 的评估队列（按 agent_id 隔离，写入 session inspection）
         await server._process_evaluations(agent_id=agent.id, session_id=session_id)
@@ -188,7 +194,17 @@ class CustomAgentFactory(AgentFactory):
         return tool_manager._tools
     
     async def _create_guidelines(self, agent: p.Agent, action_books: List[Dict[str, Any]], available_tools: Dict[str, Any]) -> List[p.Guideline]:
-        """创建 guidelines，返回创建的 guideline 列表"""
+        """
+        创建 guidelines，返回创建的 guideline 列表
+        
+        Args:
+            agent: Agent 实例
+            action_books: actionbook 配置列表，可以为空
+            available_tools: 可用工具字典
+            
+        Returns:
+            创建的 guideline 列表，如果 action_books 为空则返回空列表
+        """
         if not action_books:
             self._logger.warning("no guidelines config, skip creating")
             return []
@@ -226,7 +242,9 @@ class CustomAgentFactory(AgentFactory):
                 self._logger.error(f"create guideline failed: {e}")
                 continue
         
-        self._logger.info(f"📖 successfully created {len(action_books)} actionbooks")
+        self._logger.info(
+            f"📖 successfully created {len(created_guidelines)}/{len(action_books)} guidelines"
+        )
         return created_guidelines
 
     def _convert_handover_to_actionbook(self, basic_settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
