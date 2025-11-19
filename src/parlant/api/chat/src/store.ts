@@ -1,11 +1,11 @@
 import {atom} from 'jotai';
-import {AgentInterface, ChatConfigInterface, CustomerInterface, EventInterface, SessionInterface} from './utils/interfaces';
+import {AgentInterface, ChatConfigInterface, CustomerInterface, EventInterface, SessionInterface, EVENT_SOURCE} from './utils/interfaces';
 import {ReactNode} from 'react';
 import {Dimensions} from './hooks/useDialog';
 
 export const emptyPendingMessage: () => EventInterface = () => ({
 	kind: 'message',
-	source: 'customer',
+	source: EVENT_SOURCE.CUSTOMER,
 	creation_utc: new Date(),
 	serverStatus: 'pending',
 	offset: 0,

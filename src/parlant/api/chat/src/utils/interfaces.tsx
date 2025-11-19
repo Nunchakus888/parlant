@@ -16,7 +16,46 @@ export interface Log {
 }
 
 export type ServerStatus = 'pending' | 'error' | 'accepted' | 'acknowledged' | 'processing' | 'typing' | 'ready';
-type eventSource = 'customer' | 'customer_ui' | 'human_agent' | 'human_agent_on_behalf_of_ai_agent' | 'ai_agent' | 'system';
+
+/**
+ * Event source type - matches EventSourceDTO from backend
+ * @see src/parlant/api/sessions.py EventSourceDTO
+ */
+export type EventSource = 'ai_agent' | 'system' | 'customer' | 'back_ui' | 'preview_ui' | 'development';
+
+/**
+ * Event source constants for type-safe usage
+ * Matches EventSourceDTO enum from backend API
+ */
+export const EVENT_SOURCE = {
+	AI_AGENT: 'ai_agent',
+	SYSTEM: 'system',
+	CUSTOMER: 'customer',
+	BACK_UI: 'back_ui',
+	PREVIEW_UI: 'preview_ui',
+	DEVELOPMENT: 'development',
+} as const;
+
+/**
+ * Customer-side event sources
+ * These sources represent messages originating from the customer/user side
+ */
+export const CUSTOMER_SIDE_SOURCES: ReadonlyArray<EventSource> = [
+	EVENT_SOURCE.CUSTOMER,
+	EVENT_SOURCE.BACK_UI,
+	EVENT_SOURCE.PREVIEW_UI,
+] as const;
+
+/**
+ * Check if an event source is from the customer side
+ * @param source - The event source to check
+ * @returns true if the source is from customer side (customer, back_ui, or preview_ui)
+ */
+export const isCustomerSource = (source: EventSource): boolean => {
+	return CUSTOMER_SIDE_SOURCES.includes(source);
+};
+
+type eventSource = EventSource;
 
 export interface EventInterface {
 	id?: string;

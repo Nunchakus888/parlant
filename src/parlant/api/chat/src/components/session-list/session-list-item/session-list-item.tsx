@@ -4,7 +4,7 @@ import Tooltip from '../../ui/custom/tooltip';
 import {Button} from '../../ui/button';
 import {BASE_URL, deleteData, patchData} from '@/utils/api';
 import {toast} from 'sonner';
-import {EventInterface, SessionCsvInterface, SessionInterface} from '@/utils/interfaces';
+import {EventInterface, SessionCsvInterface, SessionInterface, EVENT_SOURCE} from '@/utils/interfaces';
 import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from '../../ui/dropdown-menu';
 import {getDateStr, getTimeStr} from '@/utils/date';
 import styles from './session-list-item.module.scss';
@@ -126,7 +126,7 @@ export default function SessionListItem({session, isSelected, refetch, editingTi
 				messages.forEach((message) => {
 					exportData.push({
 						'Correlation ID': message.correlation_id,
-						Source: message.source === 'ai_agent' ? 'AI Agent' : 'Customer',
+						Source: message.source === EVENT_SOURCE.AI_AGENT ? 'AI Agent' : 'Customer',
 						Participant: message?.data?.participant?.display_name || '',
 						Timestamp: message.creation_utc || '',
 						Message: message.data?.message || '',

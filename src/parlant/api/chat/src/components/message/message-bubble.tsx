@@ -11,7 +11,7 @@ import {getAvatarColor} from '../avatar/avatar';
 import {copy} from '@/lib/utils';
 import {Eye, EyeOff, Flag, Search} from 'lucide-react';
 import FlagMessage from '../message-details/flag-message';
-import {EventInterface} from '@/utils/interfaces';
+import {EventInterface, isCustomerSource} from '@/utils/interfaces';
 import DraftBubble from './draft-bubble';
 
 interface Props {
@@ -58,7 +58,7 @@ const MessageBubble = ({event, isFirstMessageInDate, showLogs, isContinual, show
 	// until fixed.  -- Yam
 	const isOneLiner = false; // FIXME: see above
 
-	const isCustomer = event.source === 'customer' || event.source === 'customer_ui';
+	const isCustomer = isCustomerSource(event.source);
 	const serverStatus = event.serverStatus;
 	const isGuest = customer?.id === 'guest';
 	const customerName = isGuest ? 'G' : customer?.name?.[0]?.toUpperCase();

@@ -6,7 +6,7 @@ import {Button} from '../ui/button';
 import {deleteData, postData} from '@/utils/api';
 import {groupBy} from '@/utils/obj';
 import Message from '../message/message';
-import {EventInterface, ServerStatus, SessionInterface, processSessionObject} from '@/utils/interfaces';
+import {EventInterface, ServerStatus, SessionInterface, processSessionObject, isCustomerSource} from '@/utils/interfaces';
 import Spacer from '../ui/custom/spacer';
 import {toast} from 'sonner';
 import {NEW_SESSION_ID} from '../chat-header/chat-header';
@@ -84,7 +84,7 @@ const SessionView = (): ReactElement => {
 	const regenerateMessageDialog = (index: number) => (sessionId: string) => {
 		const isLastMessage = index === messages.length - 1;
 		const prevMessages = messages.slice(0, index + 1);
-		const lastUserMessageIndex = prevMessages.findLastIndex((message) => message.source === 'customer' && message.kind === 'message');
+		const lastUserMessageIndex = prevMessages.findLastIndex((message) => isCustomerSource(message.source) && message.kind === 'message');
 		const lastUserMessage = prevMessages[lastUserMessageIndex];
 		const lastUserMessageOffset = lastUserMessage?.offset ?? messages.length - 1;
 
@@ -146,7 +146,7 @@ const SessionView = (): ReactElement => {
 
 		setMessages((messages) => {
 			const last = messages.at(-1);
-			if (last?.source === 'customer' && correlationsMap?.[last?.correlation_id]) {
+			if (last && isCustomerSource(last.source) && correlationsMap?.[last?.correlation_id]) {
 				last.serverStatus = correlationsMap[last.correlation_id].at(-1)?.data?.status || last.serverStatus;
 				if (last.serverStatus === 'error') last.error = correlationsMap[last.correlation_id].at(-1)?.data?.data?.exception;
 			}
@@ -389,7 +389,7 @@ const SessionView = (): ReactElement => {
 												isRegenerateHidden={!!isMissingAgent}
 												event={event}
 												sameCorrelationMessages={visibleMessages.filter((e) => e.correlation_id === event.correlation_id)}
-												isContinual={event.correlation_id === visibleMessages[i - 1]?.correlation_id || (event.source === 'customer' && visibleMessages[i - 1]?.source === 'customer')}
+												isContinual={event.correlation_id === visibleMessages[i - 1]?.correlation_id || (isCustomerSource(event.source) && visibleMessages[i - 1] && isCustomerSource(visibleMessages[i - 1].source))}
 												regenerateMessageFn={regenerateMessageDialog(i)}
 												resendMessageFn={resendMessageDialog(i)}
 												showLogsForMessage={showLogsForMessage}
