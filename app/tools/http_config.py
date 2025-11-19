@@ -165,21 +165,20 @@ class HttpConfigLoader:
         }
         
         try:
-            self.logger.info(f"正在从 {url} 获取配置信息...")
             response = await self._http_client.post_json(url, request_data)
             
             # 检查业务响应码
             if response.get("code") != 0:
                 error_code = response.get("code")
-                error_message = response.get("message", "未知业务错误")
-                self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
+                error_message = response.get("message", "unknown business error")
+                self.logger.error(f"❌ business request failed: code={error_code}, msg={error_message}")
                 raise AgentConfigError(error_message, error_code)
             
-            self.logger.info(f"✅ {response.get('code')}, data: {response.get('data')}")
+            self.logger.info(f"✅ success: code={response.get('code')}, msg={response.get('msg')}, \ndata={json.dumps(response.get('data'), indent=2)}")
             return response.get("data")
             
         except HttpRequestError:
             raise
         except Exception as e:
-            self.logger.error(f"获取配置信息时发生未知错误: {e}")
+            self.logger.error(f"❌ unknown error: {e}")
             raise

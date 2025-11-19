@@ -2574,10 +2574,6 @@ class Server:
                 # This is critical for retriever to get the latest customer message
                 from parlant.core.engines.alpha.loaded_context import Interaction
                 
-                c[Logger].info(
-                    f"🔍[KB] Hook triggered: agent={agent_id}, retriever={retriever_id}"
-                )
-                
                 entity_queries = c[EntityQueries]
                 latest_history = await entity_queries.find_events(ctx.session.id)
                 ctx.interaction = Interaction(history=latest_history)
@@ -2604,10 +2600,6 @@ class Server:
                         },
                         interaction=ctx.interaction,
                     )
-                )
-
-                c[Logger].info(
-                    f"🔍[KB] Starting: agent={agent_id}, retriever={retriever_id}, session={ctx.session.id}"
                 )
 
                 tasks_for_this_retriever[ctx.correlator.correlation_id] = (

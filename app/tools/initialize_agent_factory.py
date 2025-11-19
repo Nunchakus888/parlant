@@ -60,8 +60,8 @@ class CustomAgentFactory(AgentFactory):
             raise RuntimeError("Server 对象不可用，无法创建智能体")
 
         http_loader = HttpConfigLoader(self._logger)
-        config = await http_loader.load_config_from_http(config_request)
-        # config = self._load_config()
+        # config = await http_loader.load_config_from_http(config_request)
+        config = self._load_config()
 
         basic_settings = config.get("basic_settings", {})
 
@@ -161,10 +161,6 @@ class CustomAgentFactory(AgentFactory):
             await agent.attach_retriever(
                 knowledge_retriever.retrieve,
                 # id="knowledge_retriever"
-            )
-            
-            self._logger.info(
-                f"🔍[KB] Attached: chatbot={chatbot_id}, url={retrieve_url}"
             )
             
         except Exception as e:
