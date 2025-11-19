@@ -62,7 +62,7 @@ class KnowledgeRetriever:
                 "keywords": keywords
             }
             
-            self.logger.info(f"🔍[KB] Retrieving: payload={payload}")
+            self.logger.info(f"🔍[KB] Retrieving: chatbot={self.chatbot_id}, query='{keywords}'")
             
             # 发送HTTP请求到知识库API
             async with httpx.AsyncClient(timeout=self.timeout) as client:

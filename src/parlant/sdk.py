@@ -544,10 +544,6 @@ class _CachedEvaluator:
                 evaluation_id=None,  # 缓存的评估没有evaluation_id
             )
 
-        self._logger.trace(
-            f"Evaluating guideline: Condition: {g.condition or 'None'}, Action: {g.action or 'None'}"
-        )
-
         evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
             payload_descriptors=[
                 PayloadDescriptor(
@@ -2553,6 +2549,10 @@ class Server:
                 payload: Any,
                 exc: Optional[Exception],
             ) -> EngineHookResult:
+                # ⭐ Only process requests for the agent this hook was created for
+                if ctx.agent.id != agent_id:
+                    return EngineHookResult.CALL_NEXT
+                
                 # First do some garbage collection if needed.
                 # This might be needed if tasks were not awaited
                 # because of exceptions during engine processing.
@@ -2617,6 +2617,10 @@ class Server:
                 payload: Any,
                 exc: Optional[Exception],
             ) -> EngineHookResult:
+                # ⭐ Only process requests for the agent this hook was created for
+                if ctx.agent.id != agent_id:
+                    return EngineHookResult.CALL_NEXT
+                
                 if timeout_and_task := tasks_for_this_retriever.pop(
                     ctx.correlator.correlation_id, None
                 ):

@@ -1502,6 +1502,7 @@ class SessionDocumentStore(SessionStore):
                 filters=cast(Where, filters),
                 skip=skip,
                 limit=limit,
+                sort=[("updated_utc", -1)],  # Sort by updated_utc in descending order
             )
 
             return [self._deserialize_session(d) for d in documents]
