@@ -174,11 +174,11 @@ class HttpConfigLoader:
                 self.logger.error(f"❌ business request failed: code={error_code}, msg={error_message}")
                 raise AgentConfigError(error_message, error_code)
             
-            self.logger.info(f"✅ success: code={response.get('code')}, msg={response.get('msg')}, \ndata={json.dumps(response.get('data'), indent=2)}")
+            self.logger.info(f"✅ AgentConfig loaded successfully: {json.dumps(response.get('data'), indent=2)}")
             return response.get("data")
             
         except HttpRequestError:
             raise
         except Exception as e:
-            self.logger.error(f"❌ unknown error: {e}")
+            self.logger.error(f"❌ AgentConfig loading failed: {e}")
             raise
