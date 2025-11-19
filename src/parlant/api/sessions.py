@@ -639,9 +639,9 @@ class ChatRequestDTO(
         examples=["chatbot_123xyz"],
     )
     timeout: Optional[int] = Field(
-        default=57,
+        default=180,
         description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
-        examples=[57, 120],
+        examples=[57, 180],
     )
     source: Optional[EventSourceDTO] = Field(
         default=EventSourceDTO.CUSTOMER,
@@ -2408,7 +2408,6 @@ def create_router(
 
         try:
             timeout = params.timeout or 300
-            logger.info(f"⏳ Waiting for AI response or cancellation signal, correlation_id: {processing_correlation_id}, timeout: {timeout}s")
             
             # Single listener for both AI response and cancellation signal
             # More efficient: 1 database query per poll instead of 2
@@ -2725,7 +2724,8 @@ def create_router(
         # logger user message
         logger.info(f"⏰ Total chat request duration: {(request_end - request_start):.3f}s")
         logger.info(f"💬 User message: {params.message}")
-        logger.info(f"🎉 Response: {response.model_dump()}")
+        # Use mode='json' to ensure all fields (e.g. datetime) are JSON-serializable
+        logger.info(f"🎉 Response: {json.dumps(response.model_dump(mode='json'), ensure_ascii=False)}")
         return response
 
     @router.post(

@@ -2467,17 +2467,38 @@ class Server:
                         ])
                     )
                     
-                    # 将 evaluation_generations 写入 session 的 inspection
-                    # 注意：每个 generation 包含完整的追溯信息（model, schema, duration, tokens）
+                    # 创建 evaluation PreparationIteration 并累积（仅累积，不写数据库）
+                    # 最终会在正常处理完成时，与其他消耗合并为一条 inspection 记录
+                    from parlant.core.sessions import (
+                        PreparationIteration, 
+                        PreparationIterationGenerations,
+                        GuidelineMatchingInspection
+                    )
+                    
+                    evaluation_prep = PreparationIteration(
+                        guideline_matches=[],
+                        tool_calls=[],
+                        terms=[],
+                        context_variables=[],
+                        generations=PreparationIterationGenerations(
+                            guideline_matching=GuidelineMatchingInspection(
+                                total_duration=0.0,
+                                batches=[],
+                            ),
+                            tool_calls=[],
+                        ),
+                        evaluation=all_evaluation_generations,
+                    )
+                    
                     await self._container[SessionStore].create_inspection(
                         session_id=session_id,
                         correlation_id=correlation_id,
                         message_generations=[],
-                        preparation_iterations=[],
-                        response_analysis_generations=all_evaluation_generations,
+                        preparation_iterations=[evaluation_prep],
+                        accumulate_only=True,  # 仅累积，不写数据库
                     )
                     self._container[Logger].info(
-                        f"✅ Evaluation inspection saved to session {session_id}: "
+                        f"💾 [inspection] Accumulated evaluation tokens for session {session_id}: "
                         f"{len(all_evaluation_generations)} generations, {total_tokens} tokens, "
                         f"correlation_id={correlation_id}"
                     )

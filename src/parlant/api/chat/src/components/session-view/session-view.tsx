@@ -297,7 +297,7 @@ const SessionView = (): ReactElement => {
 				return;
 			}
 			
-			const response: any = await postData('sessions/chat', chatRequest);
+			const response: any = await postData('sessions/chat_async', chatRequest);
 			console.log('✅ Chat API response:', response);
 			
 			// Check for error response

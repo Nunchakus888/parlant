@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import dataclass
 from functools import cached_property
 from itertools import chain
@@ -155,7 +156,13 @@ class GuidelineMatcher:
     ) -> None:
         self._logger = logger
         self.strategy_resolver = strategy_resolver
+        # 使用 session_id 作为 key，避免多 session 并发冲突
+        self._partial_generations_by_session: dict[str, list[GenerationInfo]] = {}
 
+    def pop_partial_generations(self, session_id: str) -> list[GenerationInfo]:
+        """获取并清除指定 session 的部分完成的 generation_info"""
+        return self._partial_generations_by_session.pop(session_id, [])
+    
     @policy(
         [
             retry(
@@ -233,11 +240,43 @@ class GuidelineMatcher:
 
             with self._logger.operation("Processing batches", create_scope=False):
                 batch_tasks = [
-                    self._process_guideline_matching_batch_with_retry(batch)
+                    asyncio.create_task(self._process_guideline_matching_batch_with_retry(batch))
                     for strategy_batches in batches
                     for batch in strategy_batches
                 ]
-                batch_results = await async_utils.safe_gather(*batch_tasks)
+                
+                try:
+                    batch_results = await asyncio.gather(*batch_tasks)
+                except asyncio.CancelledError:
+                    # 任务被取消，收集已完成的 batch 结果
+                    batch_results = []
+                    for task in batch_tasks:
+                        if task.done() and not task.cancelled():
+                            try:
+                                batch_results.append(task.result())
+                            except Exception:
+                                pass  # 忽略异常的 task
+                        task.cancel()  # 取消未完成的 task
+                    
+                    # 保存部分完成的 generations（按 session_id 隔离）
+                    session_id = context.session.id
+                    if session_id:
+                        self._partial_generations_by_session[session_id] = [
+                            result.generation_info for result in batch_results
+                        ]
+                        self._logger.info(
+                            f"💾 [inspection] Collected {len(batch_results)} completed batches "
+                            f"out of {len(batch_tasks)} before cancellation, "
+                            f"saved {len(self._partial_generations_by_session[session_id])} generation_info for session {session_id}"
+                        )
+                    else:
+                        self._logger.warning(
+                            f"💾 Collected {len(batch_results)} completed batches but no session_id provided, "
+                            f"partial results will be lost"
+                        )
+                    
+                    # 重新抛出 CancelledError
+                    raise
 
         t_end = time.time()
 

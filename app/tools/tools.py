@@ -390,24 +390,25 @@ class ToolManager:
     def _format_response(self, status_code: int, result: Any, duration: float) -> ApiResponse:
         """统一格式化API响应"""
         if status_code >= 400:
-            # 提取API返回的错误信息
+            # 提取API返回的错误信息（仅用于日志记录）
             if isinstance(result, dict):
                 api_error_msg = result.get('message', 'API call failed')
             elif isinstance(result, str):
-                api_error_msg = result[:200] + '...' if len(result) > 200 else result  # 截断过长的文本
+                api_error_msg = result[:200] + '...' if len(result) > 200 else result
             else:
                 api_error_msg = str(result)[:200] + '...' if len(str(result)) > 200 else str(result)
             
-            # 构建更详细的错误消息，包含请求信息
-            detailed_error_msg = f"HTTP {status_code}: {api_error_msg}"
+            # 记录详细错误日志（包含完整错误信息）
             self.logger.error(f"[API] Call failed: HTTP {status_code}, error={api_error_msg}, duration={duration:.3f}s")
+            
+            # 返回简化的错误响应（不包含冗余的HTML或大量数据）
+            # 只保留状态码和简单消息，节省上下文资源
             return ApiResponse(
                 success=False,
-                error=result,  # 保存完整的API响应作为原始错误信息
-                message=detailed_error_msg,  # 用户友好的错误说明
+                message=f"HTTP {status_code}",  # 简化消息，只保留状态码
                 status_code=status_code,
-                data=result,
                 duration=duration
+                # 移除 error 和 data 字段，避免占用大量上下文
             )
         else:
             self.logger.info(f"[API] Call succeeded: HTTP {status_code}, duration={duration:.3f}s")

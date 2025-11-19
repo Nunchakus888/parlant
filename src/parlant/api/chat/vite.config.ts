@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { copyFileSync } from 'fs';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -14,7 +15,23 @@ export default defineConfig(({ mode }) => {
       includeSource: ['app/**/*.{jsx,tsx}'],
       setupFiles: ['./setupTests.ts']
     },
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'copy-chat-test',
+        closeBundle() {
+          try {
+            copyFileSync(
+              path.resolve(__dirname, 'chat-test.html'),
+              path.resolve(__dirname, 'dist', 'chat-test.html')
+            );
+            console.log('✓ chat-test.html copied to dist/');
+          } catch (err) {
+            console.error('Failed to copy chat-test.html:', err);
+          }
+        }
+      }
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

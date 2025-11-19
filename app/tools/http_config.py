@@ -118,8 +118,7 @@ class AsyncHttpClient:
                     if status >= 400:
                         error_msg = data.get("message", f"HTTP {status}")
                         raise HttpRequestError(error_msg, status_code=status)
-                    
-                    self.logger.debug(f"✅ Response: {status}")
+
                     return data
                     
         except aiohttp.ClientError as e:
@@ -176,7 +175,7 @@ class HttpConfigLoader:
                 self.logger.error(f"业务请求失败: code={error_code}, message={error_message}")
                 raise AgentConfigError(error_message, error_code)
             
-            self.logger.info(f"✅ Response data: {json.dumps(response, indent=2)}")
+            self.logger.info(f"✅ {response.get('code')}, data: {response.get('data')}")
             return response.get("data")
             
         except HttpRequestError:

@@ -269,13 +269,14 @@ class PreparationIteration:
     terms: Sequence[Term]
     context_variables: Sequence[ContextVariable]
     generations: PreparationIterationGenerations
+    evaluation: Sequence["GenerationInfo"] | None = None  # evaluation 的 token 消耗
+    iteration_type: str = "normal"  # "normal", "cancelled"
 
 
 @dataclass(frozen=True)
 class Inspection:
     message_generations: Sequence[MessageGenerationInspection]
     preparation_iterations: Sequence[PreparationIteration]
-    evaluation_generations:  Sequence[GenerationInfo] | None = None
     usage_info: UsageInfo | None = None
     creation_utc: Optional[datetime] = None
     
@@ -284,7 +285,6 @@ class Inspection:
         cls,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
-        evaluation_generations: Sequence[GenerationInfo] | None = None,
         creation_utc: Optional[datetime] = None,
     ) -> "Inspection":
         """创建Inspection并自动计算usage_info"""
@@ -301,10 +301,9 @@ class Inspection:
             all_generations.extend(prep_iter.generations.guideline_matching.batches)
             # 工具调用的generation_info
             all_generations.extend(prep_iter.generations.tool_calls)
-        
-        # 收集评估生成的generation_info
-        if evaluation_generations:
-            all_generations.extend(evaluation_generations)
+            # evaluation 的generation_info
+            if prep_iter.evaluation:
+                all_generations.extend(prep_iter.evaluation)
         
         # 计算基本token统计
         total_input_tokens = sum(gen.usage.input_tokens for gen in all_generations)
@@ -370,7 +369,6 @@ class Inspection:
         return cls(
             message_generations=message_generations,
             preparation_iterations=preparation_iterations,
-            evaluation_generations=evaluation_generations,
             usage_info=usage_info,
             creation_utc=creation_utc or datetime.now(timezone.utc),
         )
@@ -548,7 +546,7 @@ class SessionStore(ABC):
         correlation_id: str,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
-        response_analysis_generations: Sequence[GenerationInfo] | None = None,
+        accumulate_only: bool = False,
     ) -> Inspection: ...
 
     @abstractmethod
@@ -680,6 +678,8 @@ class _PreparationIterationDocument(TypedDict):
     terms: Sequence[Term]
     context_variables: Sequence[ContextVariable]
     generations: _PreparationIterationGenerationsDocument
+    evaluation: NotRequired[Sequence[_GenerationInfoDocument]]
+    iteration_type: NotRequired[str]  # "normal", "cancelled"
 
 
 class _InspectionDocument_v0_1_0(TypedDict, total=False):
@@ -716,7 +716,6 @@ class _InspectionDocument(TypedDict, total=False):
     correlation_id: str
     message_generations: Sequence[_MessageGenerationInspectionDocument]
     preparation_iterations: Sequence[_PreparationIterationDocument]
-    evaluation_generations: Sequence[_GenerationInfoDocument]
     usage_info: UsageInfo
     creation_utc: str
 
@@ -762,6 +761,10 @@ class SessionDocumentStore(SessionStore):
         self._session_locks: dict[SessionId, ReaderWriterLock] = {}
         self._locks_lock = asyncio.Lock()  # 保护 _session_locks 字典的轻量级锁
         self._global_lock = ReaderWriterLock()  # 用于全局操作（create_session, list_sessions）
+        
+        # 累积器：存储中间过程的 preparation_iterations
+        # 包括: 1) evaluation (type="evaluation") 2) 被取消的任务 (type="cancelled")
+        self._accumulated_preparation_iterations: dict[SessionId, list[PreparationIteration]] = {}
     
     async def _get_session_lock(self, session_id: SessionId) -> ReaderWriterLock:
         """获取指定 session 的锁（懒加载）"""
@@ -1245,12 +1248,11 @@ class SessionDocumentStore(SessionStore):
                         ),
                         tool_calls=[serialize_generation_info(g) for g in i.generations.tool_calls],
                     ),
+                    "evaluation": [serialize_generation_info(g) for g in i.evaluation] if i.evaluation else [],
+                    "iteration_type": i.iteration_type,
                 }
                 for i in inspection.preparation_iterations
             ],
-            evaluation_generations=[
-                serialize_generation_info(g) for g in inspection.evaluation_generations
-            ] if inspection.evaluation_generations else [],
             usage_info=serialize_usage_info(inspection.usage_info) if inspection.usage_info else None,
             creation_utc=(inspection.creation_utc or datetime.now(timezone.utc)).isoformat(),
         )
@@ -1308,12 +1310,13 @@ class SessionDocumentStore(SessionStore):
                             deserialize_generation_info(g) for g in i["generations"]["tool_calls"]
                         ],
                     ),
+                    evaluation=[
+                        deserialize_generation_info(g) for g in i.get("evaluation", [])
+                    ] if i.get("evaluation") else None,
+                    iteration_type=i.get("iteration_type", "normal"),
                 )
                 for i in inspection_document["preparation_iterations"]
             ],
-            evaluation_generations=[
-                deserialize_generation_info(g) for g in inspection_document.get("evaluation_generations", [])
-            ] if inspection_document.get("evaluation_generations") else None,
             usage_info=deserialize_usage_info(usage_doc) if (usage_doc := inspection_document.get("usage_info")) else None,
             creation_utc=datetime.fromisoformat(inspection_document["creation_utc"]) if inspection_document.get("creation_utc") else datetime.now(timezone.utc),
         )
@@ -1648,27 +1651,65 @@ class SessionDocumentStore(SessionStore):
         correlation_id: str,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
-        response_analysis_generations: Sequence[GenerationInfo] | None = None,
+        accumulate_only: bool = False,
     ) -> Inspection:
         async with self._global_lock.writer_lock:
             if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
                 raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
-            inspection = Inspection.create_with_usage_info(
-                message_generations=message_generations,
-                preparation_iterations=preparation_iterations,
-                evaluation_generations=response_analysis_generations,
-            )
-
-            await self._inspection_collection.insert_one(
-                document=self._serialize_inspection(
-                    inspection,
-                    session_id,
-                    correlation_id,
+            if accumulate_only:
+                # 仅累积模式：保存完整的 PreparationIteration 到内存，不写入数据库
+                # 用于: 1) evaluation 阶段 2) 被取消的任务
+                if session_id not in self._accumulated_preparation_iterations:
+                    self._accumulated_preparation_iterations[session_id] = []
+                
+                # 累积 preparation_iterations，并统一标记类型
+                if preparation_iterations:
+                    marked_iterations = []
+                    for prep in preparation_iterations:
+                        # 判断类型：有 evaluation 数据的保持 "normal"，其他标记为 "cancelled"
+                        iteration_type = "normal" if prep.evaluation else "cancelled"
+                        
+                        marked_prep = PreparationIteration(
+                            guideline_matches=prep.guideline_matches,
+                            tool_calls=prep.tool_calls,
+                            terms=prep.terms,
+                            context_variables=prep.context_variables,
+                            generations=prep.generations,
+                            evaluation=prep.evaluation,
+                            iteration_type=iteration_type,
+                        )
+                        marked_iterations.append(marked_prep)
+                    
+                    self._accumulated_preparation_iterations[session_id].extend(marked_iterations)
+                
+                # 返回空的 inspection（不写数据库）
+                return Inspection.create_with_usage_info(
+                    message_generations=[],
+                    preparation_iterations=[],
                 )
-            )
+            else:
+                # 正常完成模式：合并所有累积的组件后写入数据库
+                # 合并 preparation_iterations (evaluation[normal] + cancelled + current[normal])
+                accumulated_prep = self._accumulated_preparation_iterations.pop(session_id, [])
+                all_preparation_iterations = list(accumulated_prep) + list(preparation_iterations)
+                
+                # 创建最终的 inspection（自动计算 usage_info）
+                inspection = Inspection.create_with_usage_info(
+                    message_generations=message_generations,
+                    preparation_iterations=all_preparation_iterations,
+                )
 
-        return inspection
+                # 写入数据库：确保一个会话交互只有一条 inspection 记录
+                await self._inspection_collection.insert_one(
+                    document=self._serialize_inspection(
+                        inspection,
+                        session_id,
+                        correlation_id,
+                    )
+                )
+
+                return inspection
 
     @override
     async def read_inspection(

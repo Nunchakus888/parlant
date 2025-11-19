@@ -539,14 +539,14 @@ class EntityCommands:
         correlation_id: str,
         message_generations: Sequence[MessageGenerationInspection],
         preparation_iterations: Sequence[PreparationIteration],
-        response_analysis_generations: Sequence[GenerationInfo] | None = None,
+        accumulate_only: bool = False,
     ) -> None:
         await self._session_store.create_inspection(
             session_id=session_id,
             correlation_id=correlation_id,
             preparation_iterations=preparation_iterations,
             message_generations=message_generations,
-            response_analysis_generations=response_analysis_generations,
+            accumulate_only=accumulate_only,
         )
 
     async def update_session(

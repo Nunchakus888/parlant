@@ -73,6 +73,7 @@ from parlant.core.sessions import (
     PreparationIteration,
     PreparationIterationGenerations,
     Session,
+    SessionId,
     SessionUpdateParams,
     Term as StoredTerm,
     ToolEventData,
@@ -150,6 +151,10 @@ class AlphaEngine(Engine):
         self._perceived_performance_policy = perceived_performance_policy
 
         self._hooks = hooks
+        
+        # 缓存进行中的 iteration 数据，用于任务取消时保存
+        # key: session_id, value: _PreparationIterationResult
+        self._in_progress_iterations: dict[SessionId, _PreparationIterationResult | None] = {}
 
     @override
     async def process(
@@ -322,6 +327,9 @@ class AlphaEngine(Engine):
                 )
 
                 await self._hooks.call_on_messages_emitted(context)
+                
+                # 清除成功完成任务的缓存
+                self._in_progress_iterations.pop(context.session.id, None)
                 # Start post-processing in background, don't wait for completion
                 # asyncio.create_task(self._post_process(
                 #     context=context,
@@ -335,6 +343,35 @@ class AlphaEngine(Engine):
             #   2. New information arrived and the currently loaded
             #      processing context is likely to be obsolete
             self._logger.warning("Processing cancelled")
+            
+            # 累积被取消任务的 token 消耗（仅累积，不写数据库）
+            # 包括：1) 已完成的 iterations 2) 进行中但未完成的 iteration
+            try:
+                all_iterations = list(preparation_iteration_inspections)
+                
+                # 检查是否有进行中的 iteration（还未完成但已有部分数据）
+                in_progress = self._in_progress_iterations.pop(context.session.id, None)
+                if in_progress and in_progress.inspection:
+                    all_iterations.append(in_progress.inspection)
+                    self._logger.info(
+                        f"💾 [inspection] Found in-progress iteration with partial data, adding to accumulation"
+                    )
+                
+                if all_iterations:
+                    await self._entity_commands.create_inspection(
+                        session_id=context.session.id,
+                        correlation_id=self._correlator.correlation_id,
+                        preparation_iterations=all_iterations,
+                        message_generations=[],
+                        accumulate_only=True,  # 仅累积，SessionStore 会自动标记为 "cancelled"
+                    )
+                    self._logger.info(
+                        f"💾 [inspection] Accumulated cancelled task tokens: "
+                        f"{len(all_iterations)} preparation iterations"
+                    )
+            except Exception as e:
+                self._logger.warning(f"Failed to accumulate cancelled task tokens: {e}")
+            
             await self._emit_cancellation_event(context)
             await self._emit_ready_event(context)
             raise
@@ -352,12 +389,13 @@ class AlphaEngine(Engine):
         """Post-processing operations that run in background after ready event is sent."""
         try:
 
-            # Save results for later inspection.
+            # Save results for later inspection (with merged accumulated tokens).
             await self._entity_commands.create_inspection(
                 session_id=context.session.id,
                 correlation_id=self._correlator.correlation_id,
                 preparation_iterations=preparation_iteration_inspections,
                 message_generations=message_generation_inspections,
+                accumulate_only=False,  # Write to DB, merging all accumulated tokens
             )
 
             await self._add_agent_state(
@@ -500,6 +538,9 @@ class AlphaEngine(Engine):
                     )
                 ),
             )
+            
+            # 缓存进行中的 iteration，用于取消时保存
+            self._in_progress_iterations[context.session.id] = result
 
             # If there's no new information to consider (which would have come from
             # the tools), then we can consider ourselves prepared to respond.
@@ -558,6 +599,7 @@ class AlphaEngine(Engine):
         preamble_task: asyncio.Task[bool],
     ) -> _PreparationIterationResult:
         matching_finished = False
+        guideline_and_journey_matching_result: _GuidelineAndJourneyMatchingResult | None = None
 
         async def extended_thinking_status_emission() -> None:
             nonlocal matching_finished
@@ -584,18 +626,53 @@ class AlphaEngine(Engine):
             # we were in before matching guidelines.
             tool_preexecution_state = await self._capture_tool_preexecution_state(context)
 
-            # Match relevant guidelines, retrieving them in a
-            # structured format such that we can distinguish
-            # between ordinary and tool-enabled ones.
-            guideline_and_journey_matching_result = (
-                await self._load_matched_guidelines_and_journeys(context)
-            )
+            try:
+                # Match relevant guidelines, retrieving them in a
+                # structured format such that we can distinguish
+                # between ordinary and tool-enabled ones.
+                guideline_and_journey_matching_result = (
+                    await self._load_matched_guidelines_and_journeys(context)
+                )
 
-            self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
+                self._logger.debug(f"guideline_and_journey_matching_result: \n{self._format_guideline_and_journey_matching_result(guideline_and_journey_matching_result)}")
 
-            matching_finished = True
+                matching_finished = True
 
-            context.state.journeys = guideline_and_journey_matching_result.journeys
+                context.state.journeys = guideline_and_journey_matching_result.journeys
+                
+                # 正常完成，清理可能残留的部分数据（如果之前有取消但没来得及处理）
+                self._guideline_matcher.pop_partial_generations(context.session.id)
+            except asyncio.CancelledError:
+                # Guideline matching 被取消，尝试获取已完成的 batch generations
+                partial_generations = self._guideline_matcher.pop_partial_generations(context.session.id)
+                if partial_generations:
+                    partial_inspection = PreparationIteration(
+                        guideline_matches=[],
+                        tool_calls=[],
+                        terms=[],
+                        context_variables=[],
+                        generations=PreparationIterationGenerations(
+                            guideline_matching=GuidelineMatchingInspection(
+                                total_duration=0.0,  # 未知，因为 matching 未完成
+                                batches=partial_generations,
+                            ),
+                            tool_calls=[],
+                        ),
+                    )
+                    self._in_progress_iterations[context.session.id] = _PreparationIterationResult(
+                        state=IterationState(
+                            matched_guidelines=[],
+                            resolved_guidelines=[],
+                            tool_insights=ToolInsights(),
+                            executed_tools=[],
+                        ),
+                        resolution=_PreparationIterationResolution.COMPLETED,
+                        inspection=partial_inspection,
+                    )
+                    self._logger.info(
+                        f"💾 [inspection] Cached {len(partial_generations)} generation_info from cancelled guideline matching"
+                    )
+                raise
         finally:
             await extended_thinking_status_task
 
@@ -989,11 +1066,16 @@ class AlphaEngine(Engine):
 
         # Save results for inspection immediately after message generation
         # This ensures inspection is available when API response is prepared
+        # Note: This will merge accumulated tokens (evaluation + cancelled tasks) automatically
         await self._entity_commands.create_inspection(
             session_id=context.session.id,
             correlation_id=self._correlator.correlation_id,
             preparation_iterations=preparation_iteration_inspections,
             message_generations=message_generation_inspections,
+            accumulate_only=False,  # Write to DB, merging all accumulated tokens
+        )
+        self._logger.info(
+            f"✅ [inspection] Saved inspection with merged tokens (evaluation + cancelled + current)"
         )
 
         return message_generation_inspections

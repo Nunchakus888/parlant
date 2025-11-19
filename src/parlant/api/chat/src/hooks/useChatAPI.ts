@@ -21,7 +21,7 @@ export const useChatAPI = (): UseChatAPIReturn => {
 		setError(null);
 
 		try {
-			const response = await postData('sessions/chat', request);
+			const response = await postData('sessions/chat_async', request);
 			
 			// Check if response indicates an error
 			if (response.status !== 200) {
