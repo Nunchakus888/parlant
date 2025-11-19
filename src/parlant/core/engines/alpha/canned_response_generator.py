@@ -1424,17 +1424,14 @@ Produce a valid JSON object according to the following spec. Use the values prov
     "guidelines": [{guidelines_list_text}],
     "insights": [<Up to 3 original insights to adhere to>],
     "response_preamble_that_was_already_sent": "{agent_preamble}",
-    "response_body": "<CRITICAL: MUST be in target_response_language>"
+    "response_body": "<Plain text ONLY - NO markdown (**, *, _, #, -, [], () forbidden). Use 'text: url' for links. MUST be in target_response_language>"
 }}
 ###
 
-LANGUAGE DETECTION VERIFICATION:
-Before outputting, verify:
-- Removed ALL punctuation before detecting?
-- Showed cleaned text in reasoning?
-- Valid ISO 639-1 code (or 'mixed')?
+VERIFICATION:
+- Valid ISO 639-1 code?
 - Response in target_response_language?
-- Mixed/unclear → used '{fallback_language}'?
+- Plain text only (no markdown)?
 """
 
     def _build_selection_prompt(
