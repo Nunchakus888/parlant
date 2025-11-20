@@ -103,6 +103,7 @@ class CannedResponseDraftSchema(DefaultBaseModel):
     insights: Optional[list[str]] = None
     response_preamble_that_was_already_sent: Optional[str] = None
     response_body: Optional[str] = None
+    business_context_insufficient: Optional[bool] = None  # True when business-related question but insufficient context (no guidelines matched)
 
 
 class CannedResponseSelectionSchema(DefaultBaseModel):
@@ -156,6 +157,7 @@ class _CannedResponseSelectionResult:
     draft: str | None
     rendered_canned_responses: Sequence[tuple[CannedResponseId, str]]
     chosen_canned_responses: list[tuple[CannedResponseId, str]]
+    business_context_insufficient: Optional[bool] = None  # Indicates if business context is insufficient (no guidelines matched)
 
 
 @dataclass
@@ -798,6 +800,14 @@ You will now be given the current state of the interaction to which you must gen
             if generation_result is not None:
                 message = generation_result.message.strip()
                 
+                # Add prefix if business context is insufficient (no guidelines matched)
+                if generation_result.business_context_insufficient:
+                    message = f"un000001: {message}"
+                    self._logger.info(
+                        "[un000001] Added insufficient business context prefix (no guidelines matched, "
+                        "business-related question without sufficient context)"
+                    )
+                
                 # Check if streaming is enabled via policy
                 should_stream = await self._perceived_performance_policy.should_stream_message_segments(
                     loaded_context
@@ -1268,6 +1278,60 @@ EXAMPLES
         builder.add_glossary(terms)
         builder.add_context_variables(context_variables)
         builder.add_capabilities_for_message_generation(capabilities)
+        
+        # Check if any guidelines are matched
+        has_guidelines = bool(
+            any(
+                internal_representation(m.guideline).action
+                for m in chain(ordinary_guideline_matches, tool_enabled_guideline_matches)
+            )
+        )
+        
+        # If no guidelines matched, add business context sufficiency check
+        if not has_guidelines:
+            builder.add_section(
+                name="canned-response-generator-context-sufficiency-check",
+                template="""
+BUSINESS CONTEXT SUFFICIENCY EVALUATION
+========================================
+Since no behavioral guidelines matched this interaction, you must evaluate whether you have sufficient business context to answer the user's question.
+
+This evaluation applies ONLY to business-related questions about:
+- Products, services, features described in the agent background above
+- Information from knowledge base (check staged tool events above)
+- Company policies, procedures
+- Business-specific terms (check glossary above)
+
+Evaluation Steps:
+-----------------
+1. **Determine if the question is business-related:**
+   - YES: Questions about products, services, policies, features, procedures, business operations
+   - NO: Greetings, small talk, off-topic questions, general chitchat
+
+2. **If business-related, check if you can answer using the provided context:**
+   - Agent background/description (see above)
+   - Staged tool events - knowledge base results (see above)
+   - Glossary terms (see above)
+   - Context variables (see above)
+
+3. **Set the 'business_context_insufficient' field:**
+   - true: Question IS business-related BUT you LACK sufficient information to answer properly
+   - false: Question is NOT business-related, OR you HAVE sufficient information to answer
+
+Examples:
+---------
+- User: "What's your return policy?" + No policy info in any context above → business_context_insufficient: true
+- User: "Hello! How are you?" → business_context_insufficient: false (not business-related)
+- User: "Tell me about Product X" + Product X details found in staged events → business_context_insufficient: false (sufficient info)
+- User: "How much does Service Y cost?" + No pricing info in context → business_context_insufficient: true
+- User: "What's the weather today?" → business_context_insufficient: false (not business-related)
+
+IMPORTANT: Regardless of sufficiency status, always generate a polite and helpful response in 'response_body'.
+If context is insufficient, explain that you need more information or don't have that specific detail available.
+""",
+                props={},
+            )
+        
         builder.add_guidelines_for_message_generation(
             ordinary_guideline_matches,
             tool_enabled_guideline_matches,
@@ -1412,8 +1476,18 @@ Produce a valid JSON object according to the following spec. Use the values prov
             [f'"{g.guideline}"' for g in guidelines if internal_representation(g.guideline).action]
         )
 
+        # Check if guidelines are present
+        has_guidelines = bool(
+            any(internal_representation(g.guideline).action for g in guidelines)
+        )
+
         # Get fallback language from agent metadata
         fallback_language = str(agent.metadata.get("k_language", "English"))
+
+        # Conditionally add business_context_insufficient field if no guidelines matched
+        business_context_field = ""
+        if not has_guidelines:
+            business_context_field = ',\n    "business_context_insufficient": <true if question is business-related BUT you lack sufficient context to answer, false otherwise>'
 
         return f"""
 {{
@@ -1422,7 +1496,7 @@ Produce a valid JSON object according to the following spec. Use the values prov
     "language_detection_reasoning": "<Explain: 1) Remove punctuation from last_message_of_user 2) Identify the language of the WORDS (not punctuation) 3) State the detected language>",
     "target_response_language": "<MUST be the FULL language name matching detected_user_language code (e.g., en→English, zh→Chinese, es→Spanish). If 'mixed' or unclear → use '{fallback_language}'>",
     "guidelines": [{guidelines_list_text}],
-    "insights": [<Up to 3 original insights to adhere to>],
+    "insights": [<Up to 3 original insights to adhere to>]{business_context_field},
     "response_preamble_that_was_already_sent": "{agent_preamble}",
     "response_body": "<Plain text ONLY - NO markdown (**, *, _, #, -, [], () forbidden). Use 'text: url' for links. MUST be in target_response_language>"
 }}
@@ -1558,6 +1632,7 @@ Output a JSON object with three properties:
                 draft=None,
                 rendered_canned_responses=[],
                 chosen_canned_responses=[(no_match_canrep.id, no_match_canrep.value)],
+                business_context_insufficient=None,
             )
         else:
             await context.event_emitter.emit_status_event(
@@ -1590,6 +1665,7 @@ Output a JSON object with three properties:
                 draft=None,
                 rendered_canned_responses=[],
                 chosen_canned_responses=[],
+                business_context_insufficient=draft_response.content.business_context_insufficient,
             )
 
         # Check if, according to the hooks, we should consider the draft
@@ -1603,6 +1679,7 @@ Output a JSON object with three properties:
                 draft=None,
                 rendered_canned_responses=[],
                 chosen_canned_responses=[],
+                business_context_insufficient=draft_response.content.business_context_insufficient,
             )
 
         await context.event_emitter.emit_status_event(
@@ -1672,6 +1749,7 @@ Output a JSON object with three properties:
                     draft=draft_response.content.response_body,
                     rendered_canned_responses=rendered_canreps,
                     chosen_canned_responses=[],
+                    business_context_insufficient=draft_response.content.business_context_insufficient,
                 )
 
         # Step 4.2: In non-composited mode, try to match the draft message with one of the rendered canned responses
@@ -1716,6 +1794,7 @@ Output a JSON object with three properties:
                     draft=draft_response.content.response_body,
                     rendered_canned_responses=rendered_canreps,
                     chosen_canned_responses=[(no_match_canrep.id, no_match_canrep.value)],
+                    business_context_insufficient=draft_response.content.business_context_insufficient,
                 )
             else:
                 # Return the draft message as the response
@@ -1727,6 +1806,7 @@ Output a JSON object with three properties:
                     draft=draft_response.content.response_body,
                     rendered_canned_responses=rendered_canreps,
                     chosen_canned_responses=[],
+                    business_context_insufficient=draft_response.content.business_context_insufficient,
                 )
 
         # Step 5.2: Assuming a partial match in non-strict mode
@@ -1743,6 +1823,7 @@ Output a JSON object with three properties:
                 draft=draft_response.content.response_body,
                 rendered_canned_responses=rendered_canreps,
                 chosen_canned_responses=[],
+                business_context_insufficient=draft_response.content.business_context_insufficient,
             )
 
         # Step 5.3: Assuming a high-quality match or a partial match in strict mode
@@ -1769,6 +1850,7 @@ Output a JSON object with three properties:
                 draft=draft_response.content.response_body,
                 rendered_canned_responses=rendered_canreps,
                 chosen_canned_responses=[(no_match_canrep.id, no_match_canrep.value)],
+                business_context_insufficient=draft_response.content.business_context_insufficient,
             )
 
         return {
@@ -1779,6 +1861,7 @@ Output a JSON object with three properties:
             draft=draft_response.content.response_body,
             rendered_canned_responses=rendered_canreps,
             chosen_canned_responses=[(selected_canrep_id, rendered_canned_response)],
+            business_context_insufficient=draft_response.content.business_context_insufficient,
         )
 
     async def _render_responses(
@@ -2157,6 +2240,7 @@ Output a JSON object with three properties:
                         draft=response.content.remaining_message_draft,
                         rendered_canned_responses=filtered_rendered_canreps,
                         chosen_canned_responses=[chosen_canrep],
+                        business_context_insufficient=None,  # Follow-up responses don't use this flag
                     )
                     if chosen_canrep
                     else None
