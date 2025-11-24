@@ -656,14 +656,6 @@ class ChatRequestDTO(
         if isinstance(v, (int, float)):
             return str(v)
         return v
-    
-    @field_validator('message')
-    @classmethod
-    def validate_message_not_empty(cls, v: str) -> str:
-        """Validate that message is not empty or whitespace-only to prevent blocking."""
-        if not v or not v.strip():
-            raise ValueError("Message cannot be empty or contain only whitespace")
-        return v
 
 
 ToolResultDataField: TypeAlias = Annotated[
@@ -2563,6 +2555,16 @@ def create_router(
         """Simple chat endpoint that handles session management automatically.
         If session_id is provided, it will be used, otherwise a new session will be created.
         """
+        # P0 Fix: Validate empty message to prevent blocking
+        if not params.message or not params.message.strip():
+            logger.warning(f"⚠️ Empty message rejected - customer_id: {params.customer_id}, session_id: {params.session_id}")
+            return ChatResponseDTO(
+                status=400,
+                code=-1,
+                message="EMPTY_MESSAGE_NOT_ALLOWED",
+                data=None
+            )
+        
         request_start = time.time()
         logger.info(f"🚀 Chat request started\n {json.dumps(params.model_dump(mode='json'), indent=2)}")
         
@@ -2790,6 +2792,17 @@ def create_router(
         params: ChatRequestDTO,
     ) -> ChatAsyncResponseDTO:
         """Async chat endpoint - returns immediately and posts result to callback URL."""
+        
+        # P0 Fix: Validate empty message to prevent blocking
+        if not params.message or not params.message.strip():
+            logger.warning(f"⚠️ Empty message rejected - customer_id: {params.customer_id}, session_id: {params.session_id}")
+            return ChatAsyncResponseDTO(
+                status=400,
+                code=-1,
+                message="EMPTY_MESSAGE_NOT_ALLOWED",
+                correlation_id="",
+                data=None
+            )
         
         logger.info(f"🚀 Async chat request started\n {json.dumps(params.model_dump(mode='json'), indent=2)}")
 
