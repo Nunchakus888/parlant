@@ -656,6 +656,14 @@ class ChatRequestDTO(
         if isinstance(v, (int, float)):
             return str(v)
         return v
+    
+    @field_validator('message')
+    @classmethod
+    def validate_message_not_empty(cls, v: str) -> str:
+        """Validate that message is not empty or whitespace-only to prevent blocking."""
+        if not v or not v.strip():
+            raise ValueError("Message cannot be empty or contain only whitespace")
+        return v
 
 
 ToolResultDataField: TypeAlias = Annotated[
