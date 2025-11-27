@@ -49,6 +49,7 @@ class MongoDocumentDatabase(DocumentDatabase):
         
         # 索引配置
         self._index_config = self._get_index_config()
+        self._initialized_indexes: set[str] = set()  # 避免重复初始化索引
     
     def _get_index_config(self) -> dict[str, list[dict[str, Any]]]:
         """
@@ -249,16 +250,23 @@ class MongoDocumentDatabase(DocumentDatabase):
     
     async def _ensure_indexes(self, collection_name: str, collection: AsyncCollection[Any]) -> None:
         """
-        确保集合索引已创建（幂等操作，可重复执行）
+        确保集合索引已创建（幂等操作，并发执行）
         
-        - 使用 background=True 避免阻塞数据库
-        - 索引已存在时会静默跳过
-        - 创建失败不影响应用启动
+        - 使用 asyncio.gather 并发创建所有索引
+        - 使用内存标记避免重复检查
+        - 索引已存在时静默跳过
         """
+        # 已初始化的集合跳过
+        if collection_name in self._initialized_indexes:
+            return
+
         if collection_name not in self._index_config:
+            self._initialized_indexes.add(collection_name)
             return
         
-        for spec in self._index_config[collection_name]:
+        specs = self._index_config[collection_name]
+        
+        async def create_one(spec: dict[str, Any]) -> None:
             try:
                 await collection.create_index(
                     spec["keys"],
@@ -267,17 +275,14 @@ class MongoDocumentDatabase(DocumentDatabase):
                     background=spec.get("background", True),
                 )
                 self._logger.info(f"✅ Index '{spec.get('name')}' ready on '{collection_name}'")
-                
             except Exception as e:
-                # 索引已存在是正常情况，不记录警告
                 error_msg = str(e).lower()
-                if "already exists" in error_msg or "index with name" in error_msg:
-                    self._logger.debug(f"Index '{spec.get('name')}' exists on '{collection_name}'")
-                else:
-                    # 其他错误（如权限、重复数据等）记录但不中断
-                    self._logger.warning(
-                        f"⚠️  Index '{spec.get('name')}' on '{collection_name}' failed: {e}"
-                    )
+                if "already exists" not in error_msg and "index with name" not in error_msg:
+                    self._logger.warning(f"⚠️  Index '{spec.get('name')}' on '{collection_name}' failed: {e}")
+        
+        # 并发创建所有索引
+        await asyncio.gather(*[create_one(spec) for spec in specs])
+        self._initialized_indexes.add(collection_name)
 
     async def create_collection(
         self,
@@ -315,45 +320,6 @@ class MongoDocumentDatabase(DocumentDatabase):
             codec_options=CodecOptions(document_class=schema),
         )
 
-        failed_migrations_collection_name = f"{self.database_name}_{name}_failed_migrations"
-        collection_existing_documents = result_collection.find({})
-        if failed_migrations_collection_name in await self._database.list_collection_names():
-            self._logger.info(f"deleting old `{failed_migrations_collection_name}` collection")
-            await self.delete_collection(failed_migrations_collection_name)
-
-        failed_migration_collection: Optional[DocumentCollection[TDocument]] = None
-        for doc in await collection_existing_documents.to_list():
-            try:
-                if loaded_doc := await document_loader(doc):
-                    await result_collection.replace_one(doc, loaded_doc)
-                    continue
-
-                if failed_migration_collection is None:
-                    self._logger.warning(
-                        f"creating: `{failed_migrations_collection_name}` collection to store failed migrations..."
-                    )
-                    failed_migration_collection = await self.create_collection(
-                        failed_migrations_collection_name, schema
-                    )
-
-                self._logger.warning(f'failed to load document "{doc}"')
-                await failed_migration_collection.insert_one(doc)
-                await result_collection.delete_one(doc)
-            except Exception as e:
-                if failed_migration_collection is None:
-                    self._logger.warning(
-                        f"creating: `{failed_migrations_collection_name}` collection to store failed migrations..."
-                    )
-                    failed_migration_collection = await self.create_collection(
-                        failed_migrations_collection_name, schema
-                    )
-
-                self._logger.error(
-                    f"failed to load document '{doc}' with error: {e}. Added to `{failed_migrations_collection_name}` collection."
-                )
-                await failed_migration_collection.insert_one(doc)
-
-        # 确保索引
         await self._ensure_indexes(name, result_collection)
         
         self._collections[name] = MongoDocumentCollection(self, result_collection)
