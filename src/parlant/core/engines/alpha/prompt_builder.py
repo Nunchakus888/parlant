@@ -46,6 +46,26 @@ from parlant.core.guidelines import Guideline, GuidelineId
 from parlant.core.tools import ToolId
 
 
+def escape_format_string(value: str) -> str:
+    """
+    Escape curly braces in user-provided strings to prevent str.format() injection.
+    
+    This prevents:
+    1. KeyError when user input contains {variable_name}
+    2. Attribute access attacks like {obj.__class__}
+    3. Index access like {obj[0]}
+    
+    Args:
+        value: User-provided string that may contain curly braces
+        
+    Returns:
+        String with { escaped as {{ and } escaped as }}
+    """
+    if not isinstance(value, str):
+        return str(value)
+    return value.replace("{", "{{").replace("}", "}}")
+
+
 class BuiltInSection(Enum):
     AGENT_IDENTITY = auto()
     CUSTOMER_IDENTITY = auto()
@@ -203,8 +223,9 @@ The following is a description of your background and personality: ###
 ###
 """,
                 props={
-                    "agent_name": agent.name,
-                    "agent_description": agent.description,
+                    # Escape user-provided values to prevent format string injection
+                    "agent_name": escape_format_string(agent.name),
+                    "agent_description": escape_format_string(agent.description),
                 },
                 status=SectionStatus.ACTIVE,
             )
@@ -265,7 +286,10 @@ The user you're interacting with is called {customer_name}.
         # Build communication style section if provided
         style_section = ""
         if communication_style and isinstance(communication_style, list):
-            style_items = "\n".join(f"   - {item}" for item in communication_style)
+            # Escape curly braces in user-provided communication_style to prevent
+            # str.format() from treating them as template variables
+            escaped_items = [escape_format_string(str(item)) for item in communication_style]
+            style_items = "\n".join(f"   - {item}" for item in escaped_items)
             style_section = f"""
 
 4. COMMUNICATION STYLE:
@@ -493,7 +517,10 @@ The following is information that you're given about the user and context of the
         terms: Sequence[Term],
     ) -> PromptBuilder:
         if terms:
-            terms_string = "\n".join(f"{i}) {repr(t)}" for i, t in enumerate(terms, start=1))
+            # Escape user-provided term data to prevent format string injection
+            terms_string = "\n".join(
+                f"{i}) {escape_format_string(repr(t))}" for i, t in enumerate(terms, start=1)
+            )
 
             self.add_section(
                 name=BuiltInSection.GLOSSARY,
@@ -529,6 +556,12 @@ They represent interactions with external tools that perform actions or provide 
 Prioritize their data over any other sources and use their details to complete your task: ###
 {staged_events_as_dict}
 ###
+
+CRITICAL DATA BOUNDARY RULES:
+- You may ONLY use fields that are EXPLICITLY present in the above data.
+- If a field (e.g., URL, price, product_id) is NOT in the data, you must NOT fabricate it.
+- Do NOT construct URLs by combining product names or other information - URLs must be provided verbatim.
+- If the data lacks required information to complete a task, acknowledge this limitation instead of improvising.
 """,
                 props={"staged_events_as_dict": staged_events_as_dict},
                 status=SectionStatus.ACTIVE,
@@ -685,15 +718,17 @@ you don't need to specifically double-check if you followed or broke any guideli
                 ).get("is_customer_dependent", False):
                     customer_dependent_guideline_indices.append(i)
 
-                if guideline_representations[p.guideline.id].condition:
-                    guideline = f"Guideline #{i}) When {guideline_representations[p.guideline.id].condition}, then {guideline_representations[p.guideline.id].action}"
+                # Escape user-provided guideline data to prevent format string injection
+                condition = escape_format_string(guideline_representations[p.guideline.id].condition or "")
+                action = escape_format_string(guideline_representations[p.guideline.id].action or "")
+                
+                if condition:
+                    guideline = f"Guideline #{i}) When {condition}, then {action}"
                 else:
-                    guideline = (
-                        f"Guideline #{i}) {guideline_representations[p.guideline.id].action}"
-                    )
+                    guideline = f"Guideline #{i}) {action}"
 
                 if p.rationale:
-                    guideline += f"\n      - Rationale: {p.rationale}"
+                    guideline += f"\n      - Rationale: {escape_format_string(p.rationale)}"
 
                 if p.guideline.metadata.get("agent_intention_condition"):
                     agent_intention_guidelines.append(guideline)
@@ -768,7 +803,10 @@ These guidelines have already been pre-filtered based on the interaction's conte
             for match in [
                 g for g in guideline_matches if internal_representation(g.guideline).action
             ]:
-                formatted_guidelines += f"\n- When {guideline_representations[match.guideline.id].condition}, then {guideline_representations[match.guideline.id].action}."
+                # Escape user-provided guideline data to prevent format string injection
+                condition = escape_format_string(guideline_representations[match.guideline.id].condition or "")
+                action = escape_format_string(guideline_representations[match.guideline.id].action or "")
+                formatted_guidelines += f"\n- When {condition}, then {action}."
 
             formatted_guidelines += "\n###"
         else:

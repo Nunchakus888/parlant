@@ -1444,11 +1444,9 @@ class SessionDocumentStore(SessionStore):
         self,
         session_id: SessionId,
     ) -> Session:
-        lock = await self._get_session_lock(session_id)
-        async with lock.reader_lock:
-            session_document = await self._session_collection.find_one(
-                filters={"id": {"$eq": session_id}}
-            )
+        session_document = await self._session_collection.find_one(
+            filters={"id": {"$eq": session_id}}
+        )
 
         if not session_document:
             raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
@@ -1531,17 +1529,19 @@ class SessionDocumentStore(SessionStore):
         data: JSONSerializable,
         creation_utc: Optional[datetime] = None,
     ) -> Event:
-        # 🚀 最小化写锁持有时间：所有耗时操作在锁外完成
-        # 1. 锁外检查 session 是否存在（快速失败）
+        # 数据库 insert_one 是原子操作，无需锁保护
+        # offset 使用 count 获取，可能有轻微不准确（并发写入时），但业务可接受
+
+        # 1. 检查 session 是否存在
         if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
             raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
         
-        # 2. 锁外高效计数（使用数据库的 count 操作，只返回数字，不传输所有数据）
+        # 2. 获取 offset（基于当前 event 数量）
         offset = await self._event_collection.count(
             filters={"session_id": {"$eq": session_id}}
         )
         
-        # 3. 锁外准备数据
+        # 3. 准备事件数据
         creation_utc = creation_utc or datetime.now(timezone.utc)
         event = Event(
             id=EventId(generate_id()),
@@ -1554,12 +1554,10 @@ class SessionDocumentStore(SessionStore):
             deleted=False,
         )
         
-        # 4. 锁内只做快速的写入操作（~50ms）
-        lock = await self._get_session_lock(session_id)
-        async with lock.writer_lock:
-            await self._event_collection.insert_one(
-                document=self._serialize_event(event, session_id)
-            )
+        # 4. 直接写入数据库（原子操作，无需锁）
+        await self._event_collection.insert_one(
+            document=self._serialize_event(event, session_id)
+        )
 
         return event
 
@@ -1569,15 +1567,13 @@ class SessionDocumentStore(SessionStore):
         session_id: SessionId,
         event_id: EventId,
     ) -> Event:
-        lock = await self._get_session_lock(session_id)
-        async with lock.reader_lock:
-            if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
-                raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+        if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
+            raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
-            if event_document := await self._event_collection.find_one(
-                filters={"id": {"$eq": event_id}}
-            ):
-                return self._deserialize_event(event_document)
+        if event_document := await self._event_collection.find_one(
+            filters={"id": {"$eq": event_id}}
+        ):
+            return self._deserialize_event(event_document)
 
         raise ItemNotFoundError(item_id=UniqueId(event_id), message="Event not found")
 
@@ -1586,19 +1582,14 @@ class SessionDocumentStore(SessionStore):
         self,
         event_id: EventId,
     ) -> None:
-        # 先查询 event 获取 session_id
         event_doc = await self._event_collection.find_one(filters={"id": {"$eq": event_id}})
         if not event_doc:
             raise ItemNotFoundError(item_id=UniqueId(event_id), message="Event not found")
         
-        session_id = event_doc["session_id"]
-        lock = await self._get_session_lock(session_id)
-        
-        async with lock.writer_lock:
-            result = await self._event_collection.update_one(
-                filters={"id": {"$eq": event_id}},
-                params={"deleted": True},
-            )
+        result = await self._event_collection.update_one(
+            filters={"id": {"$eq": event_id}},
+            params={"deleted": True},
+        )
 
         if result.matched_count == 0:
             raise ItemNotFoundError(item_id=UniqueId(event_id), message="Event not found")
@@ -1613,35 +1604,30 @@ class SessionDocumentStore(SessionStore):
         min_offset: Optional[int] = None,
         exclude_deleted: bool = True,
     ) -> Sequence[Event]:
-        lock = await self._get_session_lock(session_id)
-        async with lock.reader_lock:
-            if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
-                raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+        if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
+            raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
-            base_filters = {
-                "session_id": {"$eq": session_id},
-                **({"source": {"$eq": source.value}} if source else {}),
-                **({"offset": {"$gte": min_offset}} if min_offset else {}),
-                **({"correlation_id": {"$eq": correlation_id}} if correlation_id else {}),
-                **({"deleted": {"$eq": False}} if exclude_deleted else {}),
-            }
+        base_filters = {
+            "session_id": {"$eq": session_id},
+            **({"source": {"$eq": source.value}} if source else {}),
+            **({"offset": {"$gte": min_offset}} if min_offset else {}),
+            **({"correlation_id": {"$eq": correlation_id}} if correlation_id else {}),
+            **({"deleted": {"$eq": False}} if exclude_deleted else {}),
+        }
 
-            if kinds:
-                event_documents = await self._event_collection.find(
-                    filters=cast(
-                        Where,
-                        {"$or": [{**base_filters, "kind": {"$eq": k.value}} for k in kinds]},
-                    ),
-                    sort=[("offset", 1)],  # Sort by offset ascending at database level
-                )
-            else:
-                event_documents = await self._event_collection.find(
-                    filters=cast(
-                        Where,
-                        base_filters,
-                    ),
-                    sort=[("offset", 1)],  # Sort by offset ascending at database level
-                )
+        if kinds:
+            event_documents = await self._event_collection.find(
+                filters=cast(
+                    Where,
+                    {"$or": [{**base_filters, "kind": {"$eq": k.value}} for k in kinds]},
+                ),
+                sort=[("offset", 1)],
+            )
+        else:
+            event_documents = await self._event_collection.find(
+                filters=cast(Where, base_filters),
+                sort=[("offset", 1)],
+            )
 
         return [self._deserialize_event(d) for d in event_documents]
 
@@ -1654,63 +1640,57 @@ class SessionDocumentStore(SessionStore):
         preparation_iterations: Sequence[PreparationIteration],
         accumulate_only: bool = False,
     ) -> Inspection:
-        async with self._global_lock.writer_lock:
-            if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
-                raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
-
-            if accumulate_only:
-                # 仅累积模式：保存完整的 PreparationIteration 到内存，不写入数据库
-                # 用于: 1) evaluation 阶段 2) 被取消的任务
+        # 优化：最小化锁持有时间，将计算密集操作移到锁外
+        lock = await self._get_session_lock(session_id)
+        
+        if accumulate_only:
+            # 累积模式：需要锁保护内存字典操作
+            async with lock.writer_lock:
+                if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
+                    raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+                
                 if session_id not in self._accumulated_preparation_iterations:
                     self._accumulated_preparation_iterations[session_id] = []
                 
-                # 累积 preparation_iterations，并统一标记类型
                 if preparation_iterations:
-                    marked_iterations = []
-                    for prep in preparation_iterations:
-                        # 判断类型：有 evaluation 数据的保持 "normal"，其他标记为 "cancelled"
-                        iteration_type = "normal" if prep.evaluation else "cancelled"
-                        
-                        marked_prep = PreparationIteration(
+                    marked_iterations = [
+                        PreparationIteration(
                             guideline_matches=prep.guideline_matches,
                             tool_calls=prep.tool_calls,
                             terms=prep.terms,
                             context_variables=prep.context_variables,
                             generations=prep.generations,
                             evaluation=prep.evaluation,
-                            iteration_type=iteration_type,
+                            iteration_type="normal" if prep.evaluation else "cancelled",
                         )
-                        marked_iterations.append(marked_prep)
-                    
+                        for prep in preparation_iterations
+                    ]
                     self._accumulated_preparation_iterations[session_id].extend(marked_iterations)
-                
-                # 返回空的 inspection（不写数据库）
-                return Inspection.create_with_usage_info(
-                    message_generations=[],
-                    preparation_iterations=[],
-                )
-            else:
-                # 正常完成模式：合并所有累积的组件后写入数据库
-                # 合并 preparation_iterations (evaluation[normal] + cancelled + current[normal])
-                accumulated_prep = self._accumulated_preparation_iterations.pop(session_id, [])
-                all_preparation_iterations = list(accumulated_prep) + list(preparation_iterations)
-                
-                # 创建最终的 inspection（自动计算 usage_info）
-                inspection = Inspection.create_with_usage_info(
-                    message_generations=message_generations,
-                    preparation_iterations=all_preparation_iterations,
-                )
-
-                # 写入数据库：确保一个会话交互只有一条 inspection 记录
-                await self._inspection_collection.insert_one(
-                    document=self._serialize_inspection(
-                        inspection,
-                        session_id,
-                        correlation_id,
-                    )
-                )
-
-                return inspection
+            
+            return Inspection.create_with_usage_info(
+                message_generations=[],
+                preparation_iterations=[],
+            )
+        
+        # 正常完成模式：锁内只做最小化操作
+        # Step 1: 锁内获取累积数据和验证 session
+        async with lock.writer_lock:
+            if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
+                raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+            accumulated_prep = self._accumulated_preparation_iterations.pop(session_id, [])
+        
+        # Step 2: 锁外执行计算密集操作（创建 Inspection + 序列化）
+        all_preparation_iterations = list(accumulated_prep) + list(preparation_iterations)
+        inspection = Inspection.create_with_usage_info(
+            message_generations=message_generations,
+            preparation_iterations=all_preparation_iterations,
+        )
+        document = self._serialize_inspection(inspection, session_id, correlation_id)
+        
+        # Step 3: 数据库写入（原子操作，无需锁）
+        await self._inspection_collection.insert_one(document=document)
+        
+        return inspection
 
     @override
     async def read_inspection(
@@ -1718,24 +1698,23 @@ class SessionDocumentStore(SessionStore):
         session_id: SessionId,
         correlation_id: str,
     ) -> Inspection:
-        async with self._global_lock.reader_lock:
-            if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
-                raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
+        if not await self._session_collection.find_one(filters={"id": {"$eq": session_id}}):
+            raise ItemNotFoundError(item_id=UniqueId(session_id), message="Session not found")
 
-            if not await self._event_collection.find_one(
-                filters={
-                    "correlation_id": {"$eq": correlation_id},
-                    "kind": {"$eq": "message"},
-                }
-            ):
-                raise ItemNotFoundError(
-                    item_id=UniqueId(correlation_id), message="Message event not found"
-                )
+        if not await self._event_collection.find_one(
+            filters={
+                "correlation_id": {"$eq": correlation_id},
+                "kind": {"$eq": "message"},
+            }
+        ):
+            raise ItemNotFoundError(
+                item_id=UniqueId(correlation_id), message="Message event not found"
+            )
 
-            if inspection_document := await self._inspection_collection.find_one(
-                filters={"correlation_id": {"$eq": correlation_id}}
-            ):
-                return self._deserialize_message_inspection(inspection_document)
+        if inspection_document := await self._inspection_collection.find_one(
+            filters={"correlation_id": {"$eq": correlation_id}}
+        ):
+            return self._deserialize_message_inspection(inspection_document)
 
         raise ItemNotFoundError(
             item_id=UniqueId(correlation_id), message="Message inspection not found"
