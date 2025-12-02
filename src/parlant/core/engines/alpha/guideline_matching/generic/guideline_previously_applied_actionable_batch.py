@@ -92,58 +92,76 @@ class GenericPreviouslyAppliedActionableGuidelineMatchingBatch(GuidelineMatching
 
     @override
     async def process(self) -> GuidelineMatchingBatchResult:
+        from parlant.core.engines.alpha.utils import is_llm_output_format_error
+        
         with self._logger.operation(f"Batch of {len(self._guidelines)} guidelines"):
             prompt = self._build_prompt(shots=await self.shots())
 
-            try:
-                generation_attempt_temperatures = (
-                    self._optimization_policy.get_guideline_matching_batch_retry_temperatures(
-                        hints={"type": self.__class__.__name__}
-                    )
+            generation_attempt_temperatures = (
+                self._optimization_policy.get_guideline_matching_batch_retry_temperatures(
+                    hints={"type": self.__class__.__name__}
                 )
+            )
+            max_attempts = len(generation_attempt_temperatures)
+            last_generation_exception: Exception | None = None
 
-                last_generation_exception: Exception | None = None
-
-                for generation_attempt in range(3):
+            for generation_attempt in range(max_attempts):
+                try:
                     inference = await self._schematic_generator.generate(
                         prompt=prompt,
                         hints={"temperature": generation_attempt_temperatures[generation_attempt]},
                     )
 
-                if not inference.content.checks:
-                    self._logger.warning("Completion:\nNo checks generated! This shouldn't happen.")
-                else:
-                    self._logger.trace(
-                        f"Completion:\n{inference.content.model_dump_json(indent=2)}"
+                    if not inference.content.checks:
+                        self._logger.warning("Completion:\nNo checks generated! This shouldn't happen.")
+                    else:
+                        self._logger.trace(
+                            f"Completion:\n{inference.content.model_dump_json(indent=2)}"
+                        )
+
+                    matches = []
+
+                    for match in inference.content.checks:
+                        if match.should_reapply:
+                            self._logger.debug(f"Activated:\n{match.model_dump_json(indent=2)}")
+
+                            matches.append(
+                                GuidelineMatch(
+                                    guideline=self._guidelines[match.guideline_id],
+                                    score=10 if match.should_reapply else 1,
+                                    rationale="",
+                                )
+                            )
+                        else:
+                            self._logger.debug(f"Skipped:\n{match.model_dump_json(indent=2)}")
+
+                    return GuidelineMatchingBatchResult(
+                        matches=matches,
+                        generation_info=inference.info,
                     )
 
-                matches = []
-
-                for match in inference.content.checks:
-                    if match.should_reapply:
-                        self._logger.debug(f"Activated:\n{match.model_dump_json(indent=2)}")
-
-                        matches.append(
-                            GuidelineMatch(
-                                guideline=self._guidelines[match.guideline_id],
-                                score=10 if match.should_reapply else 1,
-                                rationale="",
-                            )
+                except Exception as exc:
+                    last_generation_exception = exc
+                    
+                    # Check if this exception should trigger a retry
+                    should_retry = is_llm_output_format_error(
+                        exc,
+                        llm_output_schema_name="GenericPreviouslyAppliedActionableGuidelineMatchesSchema"
+                    )
+                    
+                    if should_retry and generation_attempt < max_attempts - 1:
+                        self._logger.warning(
+                            f"Attempt {generation_attempt} failed (retryable): {traceback.format_exception(exc)}"
                         )
                     else:
-                        self._logger.debug(f"Skipped:\n{match.model_dump_json(indent=2)}")
-
-                return GuidelineMatchingBatchResult(
-                    matches=matches,
-                    generation_info=inference.info,
-                )
-
-            except Exception as exc:
-                self._logger.warning(
-                    f"Attempt {generation_attempt} failed: {traceback.format_exception(exc)}"
-                )
-
-                last_generation_exception = exc
+                        self._logger.error(
+                            f"Attempt {generation_attempt} failed "
+                            f"({'non-retryable' if not should_retry else 'final attempt'}): "
+                            f"{traceback.format_exception(exc)}"
+                        )
+                        # Don't retry non-retryable errors
+                        if not should_retry:
+                            break
 
         raise GuidelineMatchingBatchError() from last_generation_exception
 

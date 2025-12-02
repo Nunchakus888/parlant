@@ -18,6 +18,23 @@ from typing import Optional, cast
 from parlant.core.guidelines import Guideline, GuidelineId
 from parlant.core.journeys import JourneyEdgeId, JourneyNodeId
 
+def escape_format_string(value: str) -> str:
+    """
+    Escape curly braces in user-provided strings to prevent str.format() injection.
+    
+    This prevents:
+    1. KeyError when user input contains {variable_name}
+    2. Attribute access attacks like {obj.__class__}
+    3. Index access like {obj[0]}
+    
+    Args:
+        value: User-provided string that may contain curly braces
+        
+    Returns:
+        String with { escaped as {{ and } escaped as }}
+    """
+    return value.replace("{", "{{").replace("}", "}}")
+
 
 @dataclass
 class GuidelineInternalRepresentation:
@@ -34,7 +51,11 @@ def internal_representation(g: Guideline) -> GuidelineInternalRepresentation:
     if internal_action := g.metadata.get("internal_action"):
         action = cast(str, internal_action) or action
 
-    return GuidelineInternalRepresentation(condition, action)
+    # Escape curly braces to prevent str.format() errors when building prompts
+    return GuidelineInternalRepresentation(
+        condition=escape_format_string(condition or ""),
+        action=escape_format_string(action or ""),
+    )
 
 
 def format_journey_node_guideline_id(

@@ -161,13 +161,20 @@ class SingleToolBatch(ToolCallBatch):
     def _should_retry_on_exception(self, exc: Exception) -> bool:
         """Determine if an exception should trigger a retry.
         
-        Returns False for:
-        - Exceptions containing "not found" or "missing": Missing data/config (retrying won't help)
-        
         Returns True for:
-        - ValidationError: Schema validation errors (retrying may help with field name typos)
-        - Other exceptions (likely transient errors).
+        - LLM output format errors (JSONDecodeError, ValueError from jsonfinder,
+          ValidationError for SingleToolBatchSchema): Random LLM errors, retry may succeed
+        - Network errors, timeouts, and other transient errors
+        
+        Returns False for:
+        - Other ValidationErrors (business logic validation)
+        - API errors containing "not found", "forbidden", "unauthorized"
         """
+        from parlant.core.engines.alpha.utils import is_llm_output_format_error
+        
+        # LLM output format errors are retryable (random errors, retry may succeed)
+        if is_llm_output_format_error(exc, llm_output_schema_name="SingleToolBatchSchema"):
+            return True
         
         # Check error message for non-retryable patterns
         error_msg = str(exc).lower()
