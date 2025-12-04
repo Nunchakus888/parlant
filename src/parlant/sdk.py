@@ -3080,10 +3080,12 @@ class Server:
                         )
                     )
 
+                import os
+                database_name = os.getenv("MONGO_DATABASE_NAME", "omni_agent")
                 db = await self._exit_stack.enter_async_context(
                     MongoDocumentDatabase(
                         mongo_client=cast(AsyncMongoClient[Any], mongo_client),
-                        database_name=f"omni_agent_{name}",
+                        database_name=f"{database_name}_{name}",
                         logger=c()[Logger],
                     )
                 )

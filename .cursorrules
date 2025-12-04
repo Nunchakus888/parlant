@@ -1,0 +1,44 @@
+# Coding Standards
+
+## Core Principles
+
+### 1. DRY (Don't Repeat Yourself)
+- Extract common logic into reusable functions/classes
+- Create abstractions for repeated patterns
+- No copy-paste code
+
+### 2. SOLID Principles
+- **Single Responsibility**: One class, one purpose
+- **Open/Closed**: Open for extension, closed for modification
+- **Liskov Substitution**: Subclasses must be substitutable for base classes
+- **Interface Segregation**: Specific interfaces over general ones
+- **Dependency Inversion**: Depend on abstractions, not concretions
+
+### 3. KISS (Keep It Simple, Stupid)
+- Simple solutions over complex ones
+- Avoid over-engineering
+- Readable code beats clever code
+
+### 4. Law of Demeter
+- Minimize knowledge between modules
+- Only call methods of immediate friends
+- Avoid chaining: `object.getA().getB().getC()`
+
+### 5. Separation of Concerns
+- Separate business logic from presentation
+- Use layered architecture
+- Each module addresses one concern
+
+### 6. High Cohesion, Loose Coupling
+- Group related functionality together
+- Minimize dependencies between modules
+- Use interfaces to decouple implementations
+
+## Best Practices
+- Clear naming conventions
+- Small, focused functions (< 30 lines)
+- Meaningful error messages
+- Write testable code
+- Document complex logic only
+- Optimize based on profiling, not assumptions
+

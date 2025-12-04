@@ -66,10 +66,27 @@
         },
         "body": "{\"body\":{\n      \"assigneeId\": \"{assigneeId}\",\n      \"type\": \"{type}\",\n      \"dialogId\": \"kacr83_UV5L6NXx8pOm02\"\n    }\n}"
       }
+    },
+    {
+      "name": "yc_pricing",
+      "description": "查询 YCloud 官方价格表",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "endpoint": {
+        "url": "https://www.ycloud.com/api/price/search",
+        "method": "GET",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{}"
+      }
     }
   ],
   "basic_settings": {
-    "name": "Linxi-YCloud-CS",
+    "name": "Linxi-YCloud-CS-test-4-evalutaion-cache",
     "description": "Provide excellent customer service by addressing customer inquiries, resolving issues, and ensuring customer satisfaction. Be empathetic, patient, and solution-oriented while maintaining a professional and helpful tone.",
     "background": "YCloud是Meta的Premier级别合作伙伴，提供基于WhatsApp API构建的一体化SAAS 服务。YCloud通过WhatsApp帮助客户（企业）发送营销、客服支持、 验证码OTP 以及通知类消息",
     "language": "Chinese",
@@ -78,10 +95,19 @@
   },
   "action_books": [
     {
-      "condition": "当用户咨询为什么在 YCloud发送消息失败",
-      "action": "1. 向客户表示抱歉\n2. 请用户提供消息的具体发送状态\n   1. 如果消息状态是Failed，则[retrieve_knowledge](retrieve_knowledge)，根据具体错误码告诉用户具体错误原因\n   2. 如果消息状态是Processing，则告知用户“Meta已经下发了，但是终端没确认送达。比如网络问题，或者app完全关闭了“\n   3. 如果是其他消息状态，或用户无法提供消息状态，则告知用户稍后会有人工来为他服务，并[Hand off to agent: Arlene Marlowe](Transfer%20to%20a%20human%20agent%20using%20the%20hand_off%20tool%20and%20assign%20it%20to%20the%20agent%20type%20and%20assignee%20is%2061ea57430501700008f5c81b)",
+      "condition": "当用户咨询为什么在为什么消息发送失败",
+      "action": "1. 向客户表示抱歉\n2.  ",
       "tools": [
         "retrieve_knowledge",
+        "hand_off"
+      ]
+    },
+    {
+      "condition": "当用户咨询WhatsApp消息价格",
+      "action": "如果用户问的是 Y",
+      "tools": [
+        "yc_pricing",
+        "close_conversation",
         "hand_off"
       ]
     }

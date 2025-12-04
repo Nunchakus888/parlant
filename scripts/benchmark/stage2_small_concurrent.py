@@ -14,6 +14,8 @@ from datetime import datetime
 from statistics import mean
 import sys
 
+from parlant.core.common import md5_checksum
+
 BASE_URL = "http://localhost:8800"
 
 def get_app_metrics():
@@ -108,9 +110,10 @@ async def concurrent_test(concurrency: int, total_requests: int):
         payload = {
             "message": "hello",
             "customer_id": f"customer_{unique_suffix}",
-            "session_id": f"session_{unique_suffix}",
+            "session_id": f"session_load_test_{req_id % 30}",
             "tenant_id": f"test_tenant_concurrency",
-            "chatbot_id": f"test_bot_{req_id % 5}",  # 使用5个不同的bot_id
+            "chatbot_id": f"test_bot_load_test",
+            "md5_checksum": "test_load_test",
             "timeout": 57
         }
         
@@ -425,7 +428,7 @@ async def main():
     print()
     
     # 预估测试时间 - 降低并发避免瓶颈
-    test_levels = [50, 75, 100]  # 降低并发级别，避免速率限制
+    test_levels = [100]  # 降低并发级别，避免速率限制
     total_requests = sum(level * 1.2 for level in test_levels)
     
     # 基于历史数据：平均响应时间约18秒，考虑并发因素

@@ -1,0 +1,203 @@
+{
+  "_id": "ObjectId(\"68f6ee36d6259f16c2e8625a\")",
+  "id": "Y7Z74OyAhU",
+  "version": "0.6.0",
+  "session_id": "Fa7nCvbVKfBPqrrE9iPuJ",
+  "correlation_id": "RM1kwwouE74::process",
+  "message_generations": [
+    {
+      "generations": [
+        {
+          "schema_name": "CannedResponseDraftSchema",
+          "model": "google/gemini-2.5-flash",
+          "duration": 1.6211862564086914,
+          "usage": {
+            "input_tokens": 4093,
+            "output_tokens": 274,
+            "total_tokens": 4367,
+            "extra": "null",
+            "prompt_tokens_details": {
+              "audio_tokens": "null",
+              "cached_tokens": 0
+            },
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": "null",
+              "audio_tokens": "null",
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": "null"
+            }
+          }
+        }
+      ],
+      "generation_names": [
+        "draft"
+      ],
+      "messages": [
+        "Thank you for providing your phone number. It appears you have multiple active orders associated with this number. To check the time slot for a specific delivery, please provide the tracking code for that order."
+      ]
+    }
+  ],
+  "preparation_iterations": [
+    {
+      "guideline_matches": [
+        {
+          "guideline_id": "7mHjL9MDd8",
+          "condition": "Use this actionbook when user inquire about their order timeslot. Example they might ask Can I choose a specific time slot?,I want morning/afternoon delivery — is that possible?,Is time slot selection available?,I’m only available at a certain time — can you deliver then?,Can I select my preferred time?",
+          "action": "1. Say hello to them\n2. retrieve_order_id \n3. check_time_slot \n4. If is response code 298 then tell them is East Malaysia timeslot, if is 299 then tell me is West Malaysia timeslot.",
+          "score": 10,
+          "rationale": "The user's initial message was an inquiry about selecting a preferred time, and the subsequent messages are providing the requested information (phone number) to address that initial inquiry. Therefore, the current interaction is still directly related to the user's original question about time slots."
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool_id": "built-in:retrieve_order_id",
+          "arguments": {
+            "phone_number": "60164416331"
+          },
+          "result": {
+            "data": {
+              "success": true,
+              "data": {
+                "isSuccess": true,
+                "message": "Multiple active orders",
+                "data": [
+                  "TCSP223607395BJ-BKI",
+                  "TCSP223605323NQ-BKI",
+                  "TCSP223603693SY-BKI",
+                  "TCSP223601255FN-BKI",
+                  "TCSP223599723CD-WSL",
+                  "TCSP223597539KJ-WSL",
+                  "TCSP223595899NJ-WSL",
+                  "TCSP223593733PX-WSL",
+                  "TCS223591458YG-BKI",
+                  "TCS223589563ER-BKI",
+                  "TCS223587525BY-BKI",
+                  "TCS223585468SM-BKI",
+                  "TCS223583727SF-WSL",
+                  "TCS223581278WV-WSL",
+                  "TCS223579282ZD-WSL",
+                  "TCS223577956XS-WSL",
+                  "TCSP223576534FH-PPR",
+                  "TCSP223575279RB-WSL",
+                  "TCS223574877RB-PPR",
+                  "TCS223573363JA-WSL",
+                  "TCS223496886XT-WSL",
+                  "TCS223494578SM-WSL",
+                  "TCS223492597YK-WSL",
+                  "TCS223490696JL-WSL",
+                  "TCS223488723GR-WSL",
+                  "TCS223486458PT-WSL",
+                  "TCS223484234CZ-WSL",
+                  "TCS223482723KN-WSL",
+                  "TCS223480694RP-WSL",
+                  "TCS223396825NM-WSL",
+                  "TCS223389977EL-WSL",
+                  "TCS223386582DG-WSL"
+                ]
+              },
+              "error": "null",
+              "message": "null",
+              "status_code": 201,
+              "duration": 0.2007458209991455
+            },
+            "metadata": {},
+            "control": {},
+            "canned_responses": [],
+            "canned_response_fields": {}
+          }
+        }
+      ],
+      "terms": [],
+      "context_variables": [],
+      "generations": {
+        "guideline_match": {
+          "total_duration": 1.6368403434753418,
+          "batches": [
+            {
+              "schema_name": "GenericActionableGuidelineMatchesSchema",
+              "model": "google/gemini-2.5-flash",
+              "duration": 1.6350810527801514,
+              "usage": {
+                "input_tokens": 3470,
+                "output_tokens": 182,
+                "total_tokens": 3652,
+                "extra": "null",
+                "prompt_tokens_details": {
+                  "audio_tokens": "null",
+                  "cached_tokens": 0
+                },
+                "completion_tokens_details": {
+                  "accepted_prediction_tokens": "null",
+                  "audio_tokens": "null",
+                  "reasoning_tokens": 0,
+                  "rejected_prediction_tokens": "null"
+                }
+              }
+            }
+          ]
+        },
+        "tool_calls": [
+          {
+            "schema_name": "SingleToolBatchSchema",
+            "model": "google/gemini-2.5-flash",
+            "duration": 2.7568061351776123,
+            "usage": {
+              "input_tokens": 6388,
+              "output_tokens": 491,
+              "total_tokens": 6879,
+              "extra": "null",
+              "prompt_tokens_details": {
+                "audio_tokens": "null",
+                "cached_tokens": 0
+              },
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": "null",
+                "audio_tokens": "null",
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": "null"
+              }
+            }
+          },
+          {
+            "schema_name": "SingleToolBatchSchema",
+            "model": "google/gemini-2.5-flash",
+            "duration": 3.5679104328155518,
+            "usage": {
+              "input_tokens": 6469,
+              "output_tokens": 799,
+              "total_tokens": 7268,
+              "extra": "null",
+              "prompt_tokens_details": {
+                "audio_tokens": "null",
+                "cached_tokens": 0
+              },
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": "null",
+                "audio_tokens": "null",
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": "null"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usage_info": {
+    "input_tokens": 20420,
+    "output_tokens": 1746,
+    "total_tokens": 22166,
+    "extra": "null",
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "creation_utc": "2025-10-21T02:21:42.199093+00:00"
+}

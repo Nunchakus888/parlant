@@ -26,3 +26,7 @@ test_results/
 scripts/benchmark/*.json
 scripts/benchmark/*.txt
 .git_backup_*/
+
+
+app/case/
+docs/

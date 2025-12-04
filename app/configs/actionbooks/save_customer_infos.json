@@ -1,0 +1,75 @@
+{
+  "tools": [
+    {
+      "name": "save_customer_information",
+      "description": "save the customer's information when they provide one or more fields",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "wujuan": {
+            "description": "客户的年龄",
+            "type": "string"
+          },
+          "nick_name": {
+            "description": "The name of the customer",
+            "type": "string"
+          },
+          "wj_phone": {
+            "description": "客户提供的手机号",
+            "type": "string"
+          },
+          "email": {
+            "description": "The email of the customer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "nick_name",
+          "wj_phone",
+          "wujuan"
+        ]
+      },
+      "endpoint": {
+        "url": "http://yunpian-attila-security.test.svc.cluster.local.:8080/contactsService/upsert",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "phoneNumber": "+8615700065577",
+          "nick_name": "{nick_name}",
+          "customAttrs": [
+            {
+              "value": "{wj_phone}",
+              "key": "wj_phone"
+            },
+            {
+              "value": "{wujuan}",
+              "key": "wujuan"
+            }
+          ],
+          "tenantId": "62da0e8a5ce6040008ef476f",
+          "email": "{email}"
+        }
+      }
+    }
+  ],
+  "basic_settings": {
+    "name": "留资机器人验证",
+    "description": "Initiate conversations with potential customers and qualify their interest. Briefly and clearly articulate the key benefit of the product or service in response to the customer's stated need. Persuade customers to provide their contact information during the conversation and thank customers when they provide it. Never hallucinate information.",
+    "background": "",
+    "language": "English",
+    "tone": "professional",
+    "chatbot_id": "68e74f3a3d219c51093a122c"
+  },
+  "action_books": [
+    {
+      "condition": "1. Wants to schedule a demo 2. Requests detailed product/service information 3. Needs salesperson or account manager 4. Reveals purchase intention 5. Compares products between brands 6. Wants to sign up or get free trial 7. Asks for E-books or whitepapers 8. Inquires about pricing 10. Provide any contact information",
+      "action": "If customer has not provided all required information fields, politely guide them to provide all required information as specified in the tool parameters. Once all required fields are collected, save the customer's information using the save_customer_information tool",
+      "tools": [
+        "save_customer_information"
+      ]
+    }
+  ]
+}

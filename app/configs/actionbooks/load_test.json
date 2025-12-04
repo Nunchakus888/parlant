@@ -1,0 +1,122 @@
+{
+  "tools": [
+    {
+      "name": "retrieve_knowledge",
+      "description": "Retrieve relevant information from the knowledge base",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "endpoint": {
+        "url": "http://yunpian-attila-security.prepare.svc.cluster.prepare.:8080/chatbot/ai-inner/retrieve-knowledge\n",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\n  \"chatbotId\": \"68ecca4565c87d5326eeb8e3\",\n  \"keywords\": \"ycloud产品介绍\"\n}"
+      }
+    },
+    {
+      "name": "close_conversation",
+      "description": "Close the current conversation by ending the dialog",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "endpoint": {
+        "url": "http://yunpian-attila-inbox.prepare.svc.cluster.prepare.:8080/inboxConversationService/close?dialogId=59311737005580288",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{}"
+      }
+    },
+    {
+      "name": "hand_off",
+      "description": "Transfer the current conversation to a human agent or team for further assistance. This tool allows you to hand off the conversation when the customer requests human support or when the conversation r",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "assignee_id": {
+            "type": "string",
+            "description": "The ID of the assignee. Required when type is 'agent' or 'team', optional for other types (owner, unassigned, lastAssignee)"
+          },
+          "type": {
+            "type": "string",
+            "description": "The type of assignee to transfer the conversation to. Options include: owner (conversation owner), agent (specific agent), unassigned (no specific assignee), team (assign to a team), or lastAssignee (previous assignee)",
+            "examples": [
+              "owner",
+              "agent",
+              "unassigned",
+              "team",
+              "lastAssignee"
+            ],
+            "default": "unassigned"
+          }
+        }
+      },
+      "endpoint": {
+        "url": "http://yunpian-attila-inbox.prepare.svc.cluster.prepare.:8080/inboxConversationService/handoff",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\n  \"assigneeId\": \"{assignee_id}\",\n  \"type\": \"{type}\",\n  \"dialogId\": \"59311737005580288\"\n}"
+      }
+    },
+    {
+      "name": "Whatsapp_send_post",
+      "description": "发送WhatsApp消息的接口",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "description": "需要接收WhatsApp消息的手机号"
+          }
+        },
+        "required": [
+          "phone"
+        ]
+      },
+      "endpoint": {
+        "url": "https://api.ycloud.com/v2/whatsapp/messages",
+        "method": "POST",
+        "headers": {
+          "X-API-Key": "8d06577d479b833c3c95483041a28b8d",
+          "Content-Type": "application/json"
+        },
+        "body": "{\n  \"from\": \"+8615718892334\",\n  \"to\": \"{phone}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"template_utility_20250818175832\",\n    \"language\": {\n      \"code\": \"zh_CN\"\n    },\n    \"components\": []\n  }\n}"
+      }
+    }
+  ],
+  "basic_settings": {
+    "name": "客服机器人啊",
+    "description": "Provide excellent customer service by addressing customer inquiries, resolving issues, and ensuring customer satisfaction. Be empathetic, patient, and solution-oriented while maintaining a professional and helpful tone.",
+    "background": "YCloud是一家领先的WhatsApp商业服务提供商，致力于帮助企业借助全球最受欢迎的社交应用WhatsApp来发展业务。以下是对YCloud公司的详细介绍：\n- **公司背景**：YCloud是企朋国际有限公司的全资子公司，其前身云片是一家自2013年成立的全球智能云通讯服务商。云片通过整合全球500多家运营商的优质通道资源，满足企业在全球范围内的移动通讯及营销需求，在杭州、北京、深圳、上海、香港、新加坡及美国等地都设有分支机构。\n- **核心地位**：YCloud是Meta官方认证的Premier等级的WhatsApp商业解决方案服务商，集客服管理、销售、营销CRM于一体，提供一站式的WhatsApp商业解决方案，帮助企业在WhatsApp上开展营销、加速销售或提供更好的客户支持。\n- **全球覆盖**：公司总部位于新加坡，是一家覆盖100多个国家和地区的全球企业，提供多语言服务和支持，能够为不同地区的企业提供灵活的解决方案和个性化服务。\n- **技术优势**：YCloud拥有强大的技术架构，其客户数据管理平台可提供实时动态数据，帮助企业更好地了解客户，并基于客户的独特属性创建个性化体验。同时，公司严格遵守隐私政策和法规，如GDPR，利用AES和RSA等数据加密技术确保数据安全。\n- **客户群体**：目前，全球已有累计20万家企业客户和开发者通过YCloud API实现了场景化沟通，其中包括Airbnb、欧莱雅集团、Uber、大疆、字节跳动、SHEIN等众多知名客户",
+    "language": "English",
+    "tone": "professional",
+    "chatbot_id": "68ecca4565c87d5326eeb8e3"
+  },
+  "action_books": [
+    {
+      "condition": "1. 用户咨询具体政策、产品或服务细节\n2. 用户想要接收到WhatsApp消息",
+      "action": "1. 使用 [retrieve_knowledge](retrieve_knowledge)检索官方资料，回答用户咨询的产品细节信息\n2. 当客户想要接收WhatsApp消息时，需要用户提供手机号，根据需要接收WhatsApp消息的手机号调用[Whatsapp_send_post](Whatsapp_send_post)给用户发送WhatsApp消息\n3. 最后，如果客户说了感谢或再见等就调用工具[close_conversation](close_conversation)关闭当前会话",
+      "tools": [
+        "retrieve_knowledge",
+        "Whatsapp_send_post",
+        "close_conversation"
+      ]
+    },
+    {
+      "condition": "顾客明确表达想转人工",
+      "action": "感谢顾客关注，请其稍等，随后调用[Hand off to agent: wu juan](Transfer%20to%20a%20human%20agent%20using%20the%20hand_off%20tool%20and%20assign%20it%20to%20the%20agent%20type%20and%20assignee%20is%2062da183658b93c00095ffc51)转接客服同事。",
+      "tools": [
+        "hand_off"
+      ]
+    }
+  ]
+}

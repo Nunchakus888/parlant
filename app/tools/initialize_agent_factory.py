@@ -170,7 +170,7 @@ class CustomAgentFactory(AgentFactory):
     async def _setup_tools(self, agent: p.Agent, tools_config: List[Dict[str, Any]]) -> Dict[str, Any]:
         """setup tools and return the tool mapping"""
         if not tools_config:
-            self._logger.warning("no tools config, skip setup")
+            self._logger.debug("no tools config, skip setup")
             return {}
         
         tool_manager = ToolManager(

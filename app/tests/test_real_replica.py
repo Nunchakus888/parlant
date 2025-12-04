@@ -57,7 +57,17 @@ def test_replica_set_scenarios():
         
         try:
             encoded_url = encode_mongodb_url(scenario['url'])
-            client = MongoClient(encoded_url, serverSelectionTimeoutMS=15000)
+            # 配置完整的MongoDB超时参数
+            client = MongoClient(
+                encoded_url,
+                serverSelectionTimeoutMS=30000,  # 30秒服务器选择超时
+                connectTimeoutMS=20000,          # 20秒连接超时
+                socketTimeoutMS=30000,           # 30秒socket超时（关键！）
+                maxPoolSize=100,                 # 连接池大小
+                minPoolSize=1,
+                maxIdleTimeMS=60000,             # 60秒空闲连接回收
+                heartbeatFrequencyMS=10000,      # 10秒心跳检查
+            )
             
             # 测试连接
             client.admin.command('ping')
