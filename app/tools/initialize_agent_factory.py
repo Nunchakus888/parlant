@@ -209,7 +209,7 @@ class CustomAgentFactory(AgentFactory):
                 tool_names = action_book.get("tools", [])
                 
                 if not condition and not action:
-                    self._logger.warning(f"skip invalid guideline: condition={condition}, action={action}")
+                    self._logger.debug(f"skip invalid guideline: condition={condition}, action={action}")
                     continue
                 
                 action = decode_markdown_links(action, self._logger)

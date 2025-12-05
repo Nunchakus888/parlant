@@ -16,7 +16,7 @@ from datetime import datetime
 from enum import Enum
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 from pydantic import Field, field_validator
-from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, cast
+from typing import Annotated, Any, Awaitable, Callable, Mapping, Optional, Sequence, Set, TypeAlias, Union, cast
 import asyncio
 import json
 import time
@@ -53,6 +53,7 @@ from parlant.core.sessions import (
     SessionUpdateParams,
 )
 from parlant.core.canned_responses import CannedResponseId
+from parlant.core.session_evaluation import SessionEvaluator, SessionEvaluationResult, AgentContext
 
 API_GROUP = "sessions"
 
@@ -414,13 +415,21 @@ class ChatAsyDataDTOWithEvents(DefaultBaseModel):
     message: str = Field(description="Message")
 
 
-# RESTful API Response Wrapper for Chat endpoint
-class ChatResponseDTO(DefaultBaseModel):
-    """RESTful response wrapper for chat endpoint."""
-    
+# ============================================================================
+# Base Response DTO (Abstract)
+# ============================================================================
+
+class BaseResponseDTO(DefaultBaseModel):
+    """Base response structure for RESTful APIs."""
     status: int = Field(description="HTTP status code")
-    code: int = Field(description="Business status code")
+    code: int = Field(description="Business status code: 0=success, negative=error")
     message: str = Field(description="Response message")
+    duration: float = Field(default=0.0, description="API response duration in seconds")
+
+
+# RESTful API Response Wrapper for Chat endpoint
+class ChatResponseDTO(BaseResponseDTO):
+    """RESTful response wrapper for chat endpoint."""
     data: CapabilityChatDataDTO | None = Field(default=None, description="Chat event data")
 
 
@@ -502,25 +511,10 @@ async_chat_request_example: ExampleJson = {
 }
 
 # Async Chat Response DTO
-class ChatAsyncResponseDTO(DefaultBaseModel):
-    """
-    Unified response for async chat endpoint.
-    
-    Used for both:
-    - Immediate response (data=None, message=PROCESSING)
-    - Callback notification with different states:
-      * message=SUCCESS - AI processing completed successfully (data included)
-      * message=CANCELLED - Request superseded by newer request for same session_id (data=None)
-      * message=TIMEOUT_ERROR - Genuine timeout waiting for AI response (data=None)
-      * message=PROCESSING_ERROR - Error during processing (data=None)
-      * message=NO_EVENTS_FOUND - No events found after processing (data=None)
-    """
-    
-    status: int = Field(description="HTTP status code")
-    code: int = Field(description="Business status code: -2=timeout, -1=processing_error, 0=success, 1=cancelled")
-    message: str = Field(description="Response message status")
+class ChatAsyncResponseDTO(BaseResponseDTO):
+    """Unified response for async chat endpoint. Inherits status, code, message, duration from BaseResponseDTO."""
     correlation_id: str = Field(description="Correlation ID for tracking the async task")
-    data: ChatAsyDataDTOWithEvents | None = Field(default=None, description="Chat result data (None for immediate response, populated in callback)")
+    data: ChatAsyDataDTOWithEvents | None = Field(default=None, description="Chat result data")
 
 
 chat_async_response_immediate_example = {
@@ -582,72 +576,17 @@ class SessionUpdateParamsDTO(
     title: SessionTitleField | None = None
     mode: SessionModeField | None = None
 
-class ChatRequestDTO(
-    DefaultBaseModel,
-    json_schema_extra={"example": async_chat_request_example},
-):
-    """Parameters for simplified chat endpoint."""
+
+# ============================================================================
+# Agent Config Mixin (Shared fields for agent-related requests)
+# ============================================================================
+
+class AgentConfigMixin(DefaultBaseModel):
+    """Mixin with common agent config fields for request DTOs."""
     
-    message: Annotated[
-        str,
-        Field(
-            description="The message to send to the AI agent",
-            examples=["Hello, I need help", "What can you do?"],
-        ),
-    ]
-    customer_id: CustomerId = Field(
-      default=None,
-      description="unique identifier for the customer, if not provided, a new customer will be created."
-    )
-    session_id: str = Field(
-        description="Unique identifier for the session (REQUIRED, accepts string or number)",
-        examples=["sess_123xyz", "12345"],
-    )
-    session_title: Optional[str] = Field(
-        default=None,
-        description="Title for new sessions. Defaults to 'Chat Session'.",
-        examples=["Product Support", "General Inquiry"],
-    )
-    autofill_params: Optional[dict] = Field(
-        default={},
-        description="Parameters to automatically fill for the data-connector when they are required by the connector but not provided by the user, and the system has access to them.",
-        examples=[{"dialogId": "123", "tenantId": "1bgrs2d1sxef47d23a91x4s6z7y9gt8"}],
-    )
-    preview_action_book_ids: Optional[list[str]] = Field(
-        default=[],
-        description="IDs of the actionbooks to preview. If not provided, no actionbooks will be previewed.",
-        examples=["act_123xyz", "act_456xyz"],
-    )
-    is_preview: Optional[bool] = Field(
-        default=False,
-        description="Whether to preview the actionbooks. If not provided, return all actionbooks.",
-        examples=[True, False],
-    )
-    md5_checksum: Optional[str] = Field(
-        default=None,
-        description="MD5 checksum of the agent configs. if it changes, the agent will be reload the configs.",
-        examples=["1234567890"],
-    )
-    tenant_id: str = Field(
-        default="",
-        description="Tenant ID. Required.",
-        examples=["tenant_123xyz"],
-    )
-    chatbot_id: str = Field(
-        default="",
-        description="Chatbot ID. Required.",
-        examples=["chatbot_123xyz"],
-    )
-    timeout: Optional[int] = Field(
-        default=180,
-        description="Timeout in seconds for waiting for AI response. Defaults to 60 seconds.",
-        examples=[57, 180],
-    )
-    source: Optional[EventSourceDTO] = Field(
-        default=EventSourceDTO.CUSTOMER,
-        description="Source of the request. Defaults to 'customer'.",
-        examples=["customer", "ai_agent", "system", "back_ui", "preview_ui", "development"],
-    )
+    tenant_id: str = Field(default="", description="Tenant ID", examples=["tenant_123xyz"])
+    chatbot_id: str = Field(default="", description="Chatbot ID", examples=["chatbot_123xyz"])
+    session_id: str = Field(description="Session ID", examples=["sess_123xyz", "12345"])
     
     @field_validator('session_id', mode='before')
     @classmethod
@@ -656,6 +595,20 @@ class ChatRequestDTO(
         if isinstance(v, (int, float)):
             return str(v)
         return v
+
+
+class ChatRequestDTO(AgentConfigMixin, json_schema_extra={"example": async_chat_request_example}):
+    """Parameters for simplified chat endpoint. Inherits tenant_id, chatbot_id, session_id from AgentConfigMixin."""
+    
+    message: Annotated[str, Field(description="The message to send to the AI agent", examples=["Hello, I need help"])]
+    customer_id: CustomerId = Field(default=None, description="Customer ID, auto-created if not provided")
+    session_title: Optional[str] = Field(default=None, description="Title for new sessions")
+    autofill_params: Optional[dict] = Field(default={}, description="Auto-fill params for data-connector")
+    preview_action_book_ids: Optional[list[str]] = Field(default=[], description="Actionbook IDs to preview")
+    is_preview: Optional[bool] = Field(default=False, description="Whether to preview actionbooks")
+    md5_checksum: Optional[str] = Field(default=None, description="MD5 checksum for config change detection")
+    timeout: Optional[int] = Field(default=180, description="Timeout in seconds for AI response")
+    source: Optional[EventSourceDTO] = Field(default=EventSourceDTO.CUSTOMER, description="Request source")
 
 
 ToolResultDataField: TypeAlias = Annotated[
@@ -1606,6 +1559,155 @@ def _participant_dto_to_participant(dto: ParticipantDTO) -> Participant:
     )
 
 
+# ============================================================================
+# Session Evaluation DTOs
+# ============================================================================
+
+evaluation_dimension_score_example = {
+    "score": 8,
+    "rationale": "The agent provided accurate and helpful responses throughout the conversation."
+}
+
+
+class DimensionScoreDTO(
+    DefaultBaseModel,
+    json_schema_extra={"example": evaluation_dimension_score_example},
+):
+    """Score for a single evaluation dimension."""
+    
+    score: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=10,
+            description="Score from 1-10, where 1 is poor and 10 is excellent",
+            examples=[8],
+        ),
+    ]
+    rationale: Annotated[
+        str,
+        Field(
+            description="Brief explanation for this score",
+            examples=["The agent provided accurate and helpful responses."],
+        ),
+    ]
+
+
+session_evaluation_example = {
+    "task_completion": {"score": 8, "rationale": "User goal achieved"},
+    "response_quality": {"score": 9, "rationale": "Accurate and relevant"},
+    "user_experience": {"score": 8, "rationale": "Professional communication"},
+    "efficiency": {"score": 7, "rationale": "Resolved in 3 turns"},
+    "boundary_handling": {"score": 9, "rationale": "Appropriate escalation"},
+    "summary": "Agent performed well across all dimensions.",
+    "score": 8.2,
+}
+
+
+class SessionEvaluationDTO(DefaultBaseModel, json_schema_extra={"example": session_evaluation_example}):
+    """Five-dimension evaluation (CSAT/NPS/CES aligned)."""
+    
+    task_completion: DimensionScoreDTO = Field(..., description="Goal achieved (30%)")
+    response_quality: DimensionScoreDTO = Field(..., description="Accurate & relevant (25%)")
+    user_experience: DimensionScoreDTO = Field(..., description="Satisfaction (20%)")
+    efficiency: DimensionScoreDTO = Field(..., description="Resolution speed (15%)")
+    boundary_handling: DimensionScoreDTO = Field(..., description="Proper escalation (10%)")
+    summary: Annotated[str, Field(description="Brief summary")]
+    score: Annotated[float, Field(description="Weighted average")]
+
+
+# ============================================================================
+# Session Evaluation Data & Response DTOs
+# ============================================================================
+
+session_evaluation_data_example = {
+    "session_id": "sess_123xyz",
+    "score": 8.2,
+    "summary": "Agent performed well across all dimensions.",
+    "total_tokens": 1850,
+    "details": session_evaluation_example,
+}
+
+
+class SessionEvaluationDataDTO(DefaultBaseModel, json_schema_extra={"example": session_evaluation_data_example}):
+    """Evaluation data with key metrics at top level for easy access/storage."""
+    session_id: Annotated[str, Field(description="Session ID evaluated")]
+    score: Annotated[float, Field(description="Weighted score (1-10)")]
+    summary: Annotated[str, Field(description="Brief evaluation summary")]
+    total_tokens: Annotated[int, Field(ge=0, description="LLM tokens consumed")]
+    details: SessionEvaluationDTO = Field(..., description="Detailed dimension scores")
+
+
+session_evaluation_response_example = {
+    "status": 200,
+    "code": 0,
+    "message": "SUCCESS",
+    "data": session_evaluation_data_example,
+}
+
+
+class SessionEvaluationResponseDTO(BaseResponseDTO, json_schema_extra={"example": session_evaluation_response_example}):
+    """RESTful response wrapper for session evaluation."""
+    data: SessionEvaluationDataDTO | None = Field(default=None, description="Evaluation result data")
+
+
+session_evaluate_request_example = {"tenant_id": "tenant_123", "chatbot_id": "chatbot_456", "session_id": "sess_123xyz"}
+
+
+class SessionEvaluateRequestDTO(AgentConfigMixin, json_schema_extra={"example": session_evaluate_request_example}):
+    """Request parameters for session evaluation. Inherits tenant_id, chatbot_id, session_id from AgentConfigMixin."""
+    pass  # All required fields inherited from AgentConfigMixin
+
+
+def calc_duration(start_time: float) -> float:
+    """Calculate duration in seconds (rounded to 3 decimal places)."""
+    return round(time.time() - start_time, 3)
+
+
+def _evaluation_error_response(
+    status_code: int,
+    code: int,
+    message: str,
+    start_time: float,
+) -> SessionEvaluationResponseDTO:
+    """Create error response for session evaluation using BaseResponseDTO structure."""
+    return SessionEvaluationResponseDTO(
+        status=status_code,
+        code=code,
+        message=message,
+        duration=calc_duration(start_time),
+        data=None,
+    )
+
+
+def _evaluation_result_to_response(result: SessionEvaluationResult, start_time: float) -> SessionEvaluationResponseDTO:
+    """Convert SessionEvaluationResult to response DTO."""
+    e = result.evaluation
+    
+    details = SessionEvaluationDTO(
+        task_completion=DimensionScoreDTO(score=e.task_completion.score, rationale=e.task_completion.rationale),
+        response_quality=DimensionScoreDTO(score=e.response_quality.score, rationale=e.response_quality.rationale),
+        user_experience=DimensionScoreDTO(score=e.user_experience.score, rationale=e.user_experience.rationale),
+        efficiency=DimensionScoreDTO(score=e.efficiency.score, rationale=e.efficiency.rationale),
+        boundary_handling=DimensionScoreDTO(score=e.boundary_handling.score, rationale=e.boundary_handling.rationale),
+        summary=e.summary,
+        score=e.score,
+    )
+    return SessionEvaluationResponseDTO(
+        status=200,
+        code=0,
+        message="SUCCESS",
+        duration=calc_duration(start_time),
+        data=SessionEvaluationDataDTO(
+            session_id=result.session_id,
+            score=result.score,
+            summary=e.summary,
+            total_tokens=result.token_usage.total_tokens,
+            details=details,
+        ),
+    )
+
+
 def create_router(
     authorization_policy: AuthorizationPolicy,
     app: Application,
@@ -1940,6 +2042,116 @@ def create_router(
             tenant_id=session.tenant_id,
         )
 
+    # ========================================================================
+    # Session Evaluation Endpoint
+    # ========================================================================
+
+    @router.post(
+        "/evaluate",
+        operation_id="evaluate_session",
+        response_model=SessionEvaluationResponseDTO,
+        responses={
+            status.HTTP_200_OK: {
+                "description": "Session evaluation completed successfully",
+                "content": {"application/json": {"example": session_evaluation_response_example}},
+            },
+            status.HTTP_404_NOT_FOUND: {
+                "description": "Session not found or has no messages to evaluate",
+                "content": {"application/json": {"example": {
+                    "status": 404,
+                    "code": -1,
+                    "message": "Session has no messages to evaluate",
+                    "duration": 0.123,
+                    "data": None,
+                }}},
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY: {
+                "description": "Validation error",
+                "content": {"application/json": {"example": {
+                    "status": 422,
+                    "code": -1,
+                    "message": "Need at least 2 messages",
+                    "duration": 0.123,
+                    "data": None,
+                }}},
+            },
+            status.HTTP_500_INTERNAL_SERVER_ERROR: {
+                "description": "Failed to load agent configuration",
+                "content": {"application/json": {"example": {
+                    "status": 500,
+                    "code": -1,
+                    "message": "Failed to load agent configuration: unknown business error",
+                    "duration": 0.123,
+                    "data": None,
+                }}},
+            },
+        },
+        **apigen_config(group_name=API_GROUP, method_name="evaluate"),
+    )
+    async def evaluate_session(
+        request: Request,
+        params: SessionEvaluateRequestDTO,
+    ) -> SessionEvaluationResponseDTO:
+        """Evaluates agent performance in a session using LLM-based analysis.
+
+        Request body includes tenant_id, chatbot_id, session_id (inherited from AgentConfigMixin).
+        Returns evaluation with key metrics at top level for easy access/storage.
+        """
+        start_time = time.time()
+        logger.info(f"🍎 Evaluate session started")
+
+        session_id = params.session_id
+
+        # Verify session exists
+        await app.sessions.read(session_id=session_id)
+
+        # Get all message events
+        events = await app.sessions.find_events(
+            session_id=session_id,
+            min_offset=0,
+            source=EventSource.CUSTOMER,
+            kinds=[EventKind.MESSAGE],
+            correlation_id=None,
+        )
+        if not events:
+            return _evaluation_error_response(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code=-1,
+                message="Session not found or no messages to evaluate",
+                start_time=start_time,
+            )
+
+        # Load agent context from HTTP config
+        from app.tools.http_config import HttpConfigLoader, AgentConfigRequest
+        try:
+            http_loader = HttpConfigLoader(logger)
+            config = await http_loader.load_config_from_http(
+                AgentConfigRequest(tenant_id=params.tenant_id, chatbot_id=params.chatbot_id)
+            )
+            agent_context = AgentContext.from_config(config)
+        except Exception as e:
+            logger.error(f"Failed to load agent config: {e}")
+            return _evaluation_error_response(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                code=-1,
+                message=f"Failed to load agent configuration: {e}",
+                start_time=start_time,
+            )
+
+        # Perform evaluation
+        evaluator = SessionEvaluator(logger=logger, nlp_service=app.sessions._nlp_service)
+        try:
+            result = await evaluator.evaluate(session_id=session_id, events=events, agent_context=agent_context)
+        except ValueError as e:
+            return _evaluation_error_response(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code=-1,
+                message=str(e),
+                start_time=start_time,
+            )
+
+        return _evaluation_result_to_response(result, start_time)
+
     # @router.post(
     #     "/{session_id}/events",
     #     status_code=status.HTTP_201_CREATED,
@@ -2243,6 +2455,7 @@ def create_router(
         session_listener: SessionListener,
         logger: Logger,
         agent_creator: Callable[..., Awaitable[tuple[Agent, AgentId]]],
+        start_time: float,
     ) -> None:
         """
         Background task for async chat.
@@ -2344,6 +2557,7 @@ def create_router(
                 session_listener=session_listener,
                 callback_url=callback_url,
                 logger=logger,
+                start_time=start_time,
             )
             
         except Exception as e:
@@ -2356,7 +2570,8 @@ def create_router(
                     code=AsyncChatCode.PROCESSING_ERROR.value,
                     message=f"{AsyncChatStatus.PROCESSING_ERROR.value}: {str(e)}",
                     correlation_id=processing_correlation_id,
-                    data=None
+                    data=None,
+                    duration=calc_duration(start_time),
                 )
             )
     
@@ -2393,16 +2608,9 @@ def create_router(
         session_listener: SessionListener,
         callback_url: str,
         logger: Logger,
+        start_time: float,
     ) -> None:
-        """
-        Wait for AI processing to complete and send callback.
-        
-        Race between three outcomes:
-        1. AI completes → SUCCESS callback
-        2. Newer request arrives → CANCELLED callback (immediate)
-        3. Timeout → TIMEOUT_ERROR callback
-        """
-        
+        """Wait for AI processing and send callback with duration tracking."""
         logger.info(f"⏳ Waiting for processing completion, callback URL: {callback_url}")
 
         try:
@@ -2427,7 +2635,8 @@ def create_router(
                     code=AsyncChatCode.TIMEOUT.value,
                     message=AsyncChatStatus.TIMEOUT_ERROR.value,
                     correlation_id=processing_correlation_id,
-                    data=None
+                    data=None,
+                    duration=calc_duration(start_time),
                 )
             else:
                 # Events detected - check what kind
@@ -2470,9 +2679,10 @@ def create_router(
                             total_tokens=total_tokens,
                             session_id=session_id,
                             message=cast(MessageEventData, first_event.data)["message"],
-                        )
+                        ),
+                        duration=calc_duration(start_time),
                     )
-                    logger.info(f"✅ Task completed for correlation_id: {processing_correlation_id}")
+                    logger.info(f"✅ Task completed for correlation_id: {processing_correlation_id}, duration: {response_data.duration}ms")
                 elif user_events:
                     # Newer user message arrived → CANCELLED
                     logger.info(f"🚫 Request cancelled (superseded by newer user message) for correlation_id: {processing_correlation_id}")
@@ -2481,7 +2691,8 @@ def create_router(
                         code=AsyncChatCode.CANCELLED.value,
                         message=AsyncChatStatus.CANCELLED.value,
                         correlation_id=processing_correlation_id,
-                        data=None
+                        data=None,
+                        duration=calc_duration(start_time),
                     )
                 else:
                     # Should not happen - has_events=True but no matching events
@@ -2491,7 +2702,8 @@ def create_router(
                         code=AsyncChatCode.PROCESSING_ERROR.value,
                         message=AsyncChatStatus.NO_EVENTS_FOUND.value,
                         correlation_id=processing_correlation_id,
-                        data=None
+                        data=None,
+                        duration=calc_duration(start_time),
                     )
             
             # Post result to callback URL
@@ -2793,6 +3005,7 @@ def create_router(
     ) -> ChatAsyncResponseDTO:
         """Async chat endpoint - returns immediately and posts result to callback URL."""
         
+        start_time = time.time()
         # P0 Fix: Validate empty message to prevent blocking
         if not params.message or not params.message.strip():
             logger.warning(f"⚠️ Empty message rejected - customer_id: {params.customer_id}, session_id: {params.session_id}")
@@ -2831,6 +3044,7 @@ def create_router(
             session_listener=session_listener,
             logger=logger,
             agent_creator=_agent_creator,
+            start_time=start_time
         ))
         
         # Return immediately with correlation_id for tracking
@@ -2838,6 +3052,7 @@ def create_router(
         return ChatAsyncResponseDTO(
             status=200,
             code=AsyncChatCode.SUCCESS.value,
+            duration=calc_duration(start_time),
             message=AsyncChatStatus.PROCESSING.value,
             # return processing correlation_id for tracking, not the request correlation_id, because the request correlation_id is not available in the callback.
             correlation_id=f"{current_correlation_id}::process",
