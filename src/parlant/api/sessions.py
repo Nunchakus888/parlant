@@ -2047,7 +2047,7 @@ def create_router(
     # ========================================================================
 
     @router.post(
-        "/evaluate",
+        "/evaluation",
         operation_id="evaluate_session",
         response_model=SessionEvaluationResponseDTO,
         responses={
@@ -2086,7 +2086,7 @@ def create_router(
                 }}},
             },
         },
-        **apigen_config(group_name=API_GROUP, method_name="evaluate"),
+        **apigen_config(group_name=API_GROUP, method_name="evaluation"),
     )
     async def evaluate_session(
         request: Request,
