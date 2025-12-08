@@ -254,6 +254,8 @@ Check if agent communicated capabilities clearly:
 ---
 
 **OUTPUT FORMAT** (you MUST follow this exact JSON structure):
+All rationales: max 100 chars. Summary: max 150 chars.
+
 ```json
 {{
   "task_completion": {{"score": <1-10>, "rationale": "<explain with evidence from conversation>"}},
@@ -348,12 +350,11 @@ Provide ONLY the JSON output, no additional text."""
         
         e = result.content
         self._logger.info(
-            f"🍎 Eval {session_id}: {e.score} "
+            f"🍎 Eval {session_id}: 💯 {e.score} "
             f"[T:{e.task_completion.score} Q:{e.response_quality.score} "
             f"U:{e.user_experience.score} E:{e.efficiency.score} B:{e.boundary_handling.score}]"
         )
 
-        self._logger.info(f"🍎 Evaluation result for session {session_id}:\n{result.content.model_dump_json(indent=2)}")
         
         return SessionEvaluationResult(
             session_id=session_id,
