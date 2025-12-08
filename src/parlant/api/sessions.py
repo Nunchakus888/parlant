@@ -2105,11 +2105,11 @@ def create_router(
         # Verify session exists
         await app.sessions.read(session_id=session_id)
 
-        # Get all message events
+        # Get all message events (both customer and agent)
         events = await app.sessions.find_events(
             session_id=session_id,
             min_offset=0,
-            source=EventSource.CUSTOMER,
+            source=None,  # Get all sources to include agent messages
             kinds=[EventKind.MESSAGE],
             correlation_id=None,
         )

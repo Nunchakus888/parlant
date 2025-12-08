@@ -106,8 +106,8 @@ def analyze_messages(events: Sequence[Event]) -> MessageStats:
 
 class DimensionScore(DefaultBaseModel):
     """Score with rationale."""
-    score: int = Field(..., ge=1, le=10)
-    rationale: str = Field(..., max_length=200)
+    score: int = Field(..., ge=0, le=10)
+    rationale: str = Field(...)  # No length limit - allow any length
 
 
 class SessionEvaluationSchema(DefaultBaseModel):
@@ -118,7 +118,7 @@ class SessionEvaluationSchema(DefaultBaseModel):
     user_experience: DimensionScore = Field(..., description="Satisfied? (NPS)")
     efficiency: DimensionScore = Field(..., description="Fast resolution? (CES)")
     boundary_handling: DimensionScore = Field(..., description="Proper escalation?")
-    summary: str = Field(..., max_length=300)
+    summary: str = Field(...)
     
     @property
     def score(self) -> float:
@@ -149,14 +149,11 @@ class AgentContext:
         )
     
     def to_prompt(self) -> str:
-        parts = []
-        if self.name:
-            parts.append(f"Name: {self.name}")
-        if self.description:
-            parts.append(f"Role: {self.description}")
-        if self.background:
-            parts.append(f"Scope: {self.background}")
-        return " | ".join(parts) if parts else "General assistant"
+        """Agent context for evaluation - simple, no directive labels."""
+        name = self.name or "Assistant"
+        desc = f" - {self.description}" if self.description else ""
+        bg = f"\n{self.background}" if self.background else ""
+        return f"{name}{desc}{bg}"
 
 
 @dataclass(frozen=True)
@@ -186,61 +183,95 @@ class SessionEvaluationResult:
 class SessionEvaluator:
     """Session evaluator using five-dimension model."""
     
-    # Simple, clear prompt for accurate inference
-    PROMPT = """Rate this chatbot conversation (1-10 each dimension).
+    # Evaluation prompt - focused on objective conversation quality assessment
+    PROMPT = """You are a strict conversation evaluator. Score objectively based on concrete criteria.
 
-**Agent**: {agent_context}
+**CRITICAL RULES**:
+1. Score based ONLY on actual [U]/[A] exchanges shown below
+2. Missing [A] responses = automatic 0-3 scores across all dimensions
+3. Use the EXACT scoring criteria - do NOT adjust based on subjective feelings
+4. Each score MUST have clear evidence from the conversation
+5. Be consistent: similar conversations = similar scores
+
+**Agent Context**: {agent_context}
 
 **Stats**: {stats}
 
-**Markers** (normal responses, not errors):
-- ho000001: Human handover request (normal)
-- un000001: Knowledge boundary acknowledgment (normal)
-- Unanswered: No agent response (failure, low scores)
+**Markers** (these are NORMAL operations, not errors):
+- ho000001: Human handover request (appropriate escalation, not a failure)
+- un000001: Knowledge boundary acknowledgment (honest limitation, not a failure)
+- Unanswered: No agent response (THIS IS A FAILURE - score 1-3)
 
-**Dimensions** (weight):
+---
 
-1. **Task Completion** (30%): Did user achieve their goal?
-   - 8-10: Goal achieved or proper escalation
-   - 4-7: Partial success
-   - 1-3: Failed / unanswered
+**SCORING DIMENSIONS** (Use these EXACT criteria):
 
-2. **Response Quality** (25%): Were answers accurate and relevant?
-   - 8-10: Accurate, relevant, complete
-   - 4-7: Mostly correct
-   - 1-3: Wrong / irrelevant / unanswered
+**1. Task Completion (30% weight)**
+YOU MUST count the conversation turns and check if goal was achieved:
+- 9-10: User's explicit goal fully achieved in conversation (must see resolution)
+- 7-8: User's goal mostly achieved, or appropriately escalated with clear next steps
+- 5-6: Made progress but goal not completed, OR unclear if goal was achieved
+- 3-4: Minimal progress, user still has unresolved needs
+- 1-2: Failed to address user's need, OR no agent response (Unanswered)
 
-3. **User Experience** (20%): Would user recommend? (NPS)
-   - 8-10: Friendly, professional, satisfying
-   - 4-7: Acceptable
-   - 1-3: Frustrating / unanswered
+**2. Response Quality (25% weight)**
+Check EVERY agent response for accuracy and relevance:
+- 9-10: ALL responses accurate, relevant, and complete (no errors found)
+- 7-8: Most responses accurate (1 minor error acceptable)
+- 5-6: Some accurate responses, but noticeable gaps or errors (2-3 errors)
+- 3-4: Multiple inaccuracies or irrelevant responses (4+ errors)
+- 1-2: Wrong information, OR no agent response (Unanswered)
 
-4. **Efficiency** (15%): How fast was resolution? (CES)
-   - 8-10: Resolved in 1-2 turns
-   - 4-7: Resolved in 3-5 turns
-   - 1-3: Too many turns / not resolved
+**3. User Experience (20% weight)**
+Evaluate tone, clarity, and user satisfaction signals:
+- 9-10: User explicitly satisfied (e.g., "thanks", "perfect"), professional tone throughout
+- 7-8: Positive interaction, helpful tone, no user frustration detected
+- 5-6: Neutral interaction, acceptable but not engaging
+- 3-4: User shows frustration (e.g., repeating, asking "why?"), or impersonal tone
+- 1-2: User clearly frustrated/dissatisfied, OR no agent response (Unanswered)
 
-5. **Boundary Handling** (10%): Clear about scope and limits?
-   - 8-10: Clearly communicates what it can/cannot do
-   - 4-7: Adequate boundary communication
-   - 1-3: Unclear or misleading about capabilities
+**4. Efficiency (15% weight)**
+COUNT actual turns - this is objective:
+- 9-10: Resolved in 1-2 user turns (count [U] messages)
+- 7-8: Resolved in 3-4 user turns
+- 5-6: Resolved in 5-7 user turns
+- 3-4: Took 8+ turns but eventually resolved
+- 1-2: Not resolved after many turns, OR no agent response (Unanswered)
+
+**5. Boundary Handling (10% weight)**
+Check if agent communicated capabilities clearly:
+- 9-10: Proactively clarified capabilities/limitations when relevant
+- 7-8: Adequately communicated boundaries when asked
+- 5-6: Basic communication, could be clearer
+- 3-4: Vague or confusing about capabilities
+- 1-2: Misleading about capabilities, OR no agent response (Unanswered)
+
+---
 
 **Conversation**:
 {conversation}
 
-**Output Example**:
+---
+
+**OUTPUT FORMAT** (you MUST follow this exact JSON structure):
 ```json
 {{
-  "task_completion": {{"score": 8, "rationale": "User goal achieved with proper guidance"}},
-  "response_quality": {{"score": 9, "rationale": "Accurate and relevant responses"}},
-  "user_experience": {{"score": 8, "rationale": "Professional and friendly tone"}},
-  "efficiency": {{"score": 7, "rationale": "Resolved in 3 turns"}},
-  "boundary_handling": {{"score": 9, "rationale": "Clear about capabilities"}},
-  "summary": "Agent performed well overall with accurate responses and good communication."
+  "task_completion": {{"score": <1-10>, "rationale": "<explain with evidence from conversation>"}},
+  "response_quality": {{"score": <1-10>, "rationale": "<count errors/accuracies found>"}},
+  "user_experience": {{"score": <1-10>, "rationale": "<cite user signals from conversation>"}},
+  "efficiency": {{"score": <1-10>, "rationale": "<count turns: resolved in X turns>"}},
+  "boundary_handling": {{"score": <1-10>, "rationale": "<cite boundary communication>"}},
+  "summary": "<Overall assessment in 1-2 sentences, max 300 chars>"
 }}
 ```
 
-Follow this exact format. Score 1-10, rationale <200 chars, summary <300 chars."""
+**CONSISTENCY CHECK**: Before responding, ask yourself:
+- Did I base scores on the EXACT criteria above?
+- Did I count turns objectively for efficiency?
+- Did I cite specific evidence from the conversation?
+- Would I score a similar conversation the same way?
+
+Provide ONLY the JSON output, no additional text."""
 
     def __init__(self, logger: Logger, nlp_service: NLPService) -> None:
         self._logger = logger
@@ -276,8 +307,8 @@ Follow this exact format. Score 1-10, rationale <200 chars, summary <300 chars."
         """Evaluate session with five-dimension model."""
         stats = analyze_messages(events)
         
-        if stats.total_messages < 2:
-            raise ValueError("Need at least 2 messages")
+        if stats.total_messages < 1:
+            raise ValueError("Need at least 1 message")
         
         conversation = self._format_conversation(events)
         if not conversation.strip():
@@ -321,6 +352,8 @@ Follow this exact format. Score 1-10, rationale <200 chars, summary <300 chars."
             f"[T:{e.task_completion.score} Q:{e.response_quality.score} "
             f"U:{e.user_experience.score} E:{e.efficiency.score} B:{e.boundary_handling.score}]"
         )
+
+        self._logger.info(f"🍎 Evaluation result for session {session_id}:\n{result.content.model_dump_json(indent=2)}")
         
         return SessionEvaluationResult(
             session_id=session_id,
