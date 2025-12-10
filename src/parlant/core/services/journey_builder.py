@@ -82,15 +82,20 @@ class JourneyBuilder:
         first_nodes = [node for node in journey_graph.nodes if node.id not in nodes_with_incoming]
         
         if first_nodes:
-            first_node_state = state_map[first_nodes[0].id]
-            await journey.create_transition(
-                condition=None,
-                source=journey.initial_state,
-                target=first_node_state,
-            )
-            self._logger.trace(
-                f"  ✓ creating transition: root -> {first_nodes[0].id} (from root to first node)"
-            )
+            first_node = first_nodes[0]
+            if len(first_nodes) > 1:
+                self._logger.debug(f"Multiple entry nodes, using: {first_node.id}")
+        else:
+            # Fallback: 强制使用第一个定义的节点（可能存在环）
+            first_node = journey_graph.nodes[0]
+            self._logger.warning(f"⚠️ No entry node found, fallback to: {first_node.id}")
+        
+        await journey.create_transition(
+            condition=None,
+            source=journey.initial_state,
+            target=state_map[first_node.id],
+        )
+        self._logger.trace(f"creating transition: root -> {first_node.id}")
         
         # 3. 创建所有图中定义的转换(transitions)
         for edge in journey_graph.edges:

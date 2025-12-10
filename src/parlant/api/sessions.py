@@ -1739,19 +1739,22 @@ def create_router(
             raise ValueError("No agent factory provided")
 
 
-    async def _get_total_tokens_for_event(session_id: str, correlation_id: str) -> int:
-        """获取指定事件的总token消耗"""
-        try:
-            inspection = await app.sessions._session_store.read_inspection(
-                session_id=session_id,
-                correlation_id=correlation_id,
-            )
-            
-            total_tokens = inspection.usage_info.total_tokens if inspection.usage_info else 0
-            return total_tokens
-        except Exception as e:
-            logger.warning(f"❌ Failed to get total tokens for correlation_id {correlation_id}: {e}")
-            return 0
+    async def _get_total_tokens_for_event(session_id: str, correlation_id: str, max_retries: int = 3) -> int:
+        """获取指定事件的总token消耗，支持短暂重试以处理时序竞态"""
+        for attempt in range(max_retries):
+            try:
+                inspection = await app.sessions._session_store.read_inspection(
+                    session_id=session_id,
+                    correlation_id=correlation_id,
+                )
+                return inspection.usage_info.total_tokens if inspection.usage_info else 0
+            except Exception:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.02)
+                    logger.warning(f"❌ Failed to get total tokens for correlation_id {correlation_id}, retrying...")
+                    continue
+                logger.error(f"❌ Failed to get total tokens for correlation_id {correlation_id}, giving up...")
+                return 0
 
 
     # @router.post(
@@ -2630,6 +2633,18 @@ def create_router(
             if not has_events:
                 # Timeout - neither AI nor cancellation detected
                 logger.warning(f"⏰ Task timeout for correlation_id: {processing_correlation_id}")
+                
+                # Cancel the background processing task to free resources
+                task_tag = f"process-session({session_id})"
+                try:
+                    await app.sessions._background_task_service.cancel(
+                        tag=task_tag,
+                        reason="Async chat timeout exceeded"
+                    )
+                    logger.info(f"✅ Cancelled processing task: {task_tag}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to cancel task {task_tag}: {e}")
+                
                 response_data = ChatAsyncResponseDTO(
                     status=status.HTTP_504_GATEWAY_TIMEOUT,
                     code=AsyncChatCode.TIMEOUT.value,

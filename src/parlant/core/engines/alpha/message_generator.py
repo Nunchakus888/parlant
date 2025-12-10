@@ -515,6 +515,8 @@ If you inform of missing data that contains choices then present all of of the c
 {formatted_missing_data}
 ###
 
+CRITICAL: Your response MUST request the exact fields listed above using their descriptions. Do NOT hallucinate or assume what information is needed based on the tool name.
+
 """,
                 props={
                     "formatted_missing_data": self._format_missing_data(tool_insights.missing_data),

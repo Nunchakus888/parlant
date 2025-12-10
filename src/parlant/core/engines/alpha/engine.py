@@ -2008,69 +2008,31 @@ class AlphaEngine(Engine):
     def _format_guideline_and_journey_matching_result(
         self, result: _GuidelineAndJourneyMatchingResult
     ) -> str:
-        """格式化输出 guideline_and_journey_matching_result 对象，使其更易读"""
-        output = []
-        output.append("=" * 80)
-        output.append("GUIDELINE AND JOURNEY MATCHING RESULT")
-        output.append("=" * 80)
+        """格式化输出匹配结果（精简版）"""
+        lines = [
+            f"📊 Matching: {result.matching_result.total_duration:.2f}s | "
+            f"resolved={len(result.resolved_guidelines)} | journeys={len(result.journeys)}"
+        ]
         
-        # 匹配结果统计
-        output.append(f"\n📊 MATCHING STATISTICS:")
-        output.append(f"  • Total Duration: {result.matching_result.total_duration:.3f}s")
-        output.append(f"  • Batch Count: {result.matching_result.batch_count}")
-        output.append(f"  • Total Matches: {len(result.matching_result.matches)}")
-        output.append(f"  • Resolved Guidelines: {len(result.resolved_guidelines)}")
-        output.append(f"  • Active Journeys: {len(result.journeys)}")
+        # 只显示resolved guidelines（精简）
+        for m in result.resolved_guidelines:
+            cond = (m.guideline.content.condition or "")
+            action = (m.guideline.content.action or "")
+            journey_tag = next((t for t in m.guideline.tags if t.startswith("journey:")), None)
+            node_id = m.metadata.get("step_selection_journey_id", "")
+            
+            if node_id:
+                lines.append(f"  📍 [{m.guideline.id}] journey_node → {action}...")
+            elif journey_tag:
+                lines.append(f"  🎯 [{m.guideline.id}] journey_cond: {cond}...")
+            else:
+                lines.append(f"  📋 [{m.guideline.id}] {cond}..." + (f" → {action}..." if action else ""))
         
-        # 批次生成信息
-        if result.matching_result.batch_generations:
-            output.append(f"\n🔄 BATCH GENERATIONS:")
-            for i, gen in enumerate(result.matching_result.batch_generations):
-                output.append(f"  Batch {i+1}: {gen.model} - {gen.duration:.3f}s")
+        # 显示active journeys（精简）
+        for j in result.journeys:
+            lines.append(f"  🗺️  Journey: {j.id} '{j.title}'")
         
-        # 匹配的指导原则
-        if result.matches_guidelines:
-            output.append(f"\n✅ MATCHED GUIDELINES ({len(result.matches_guidelines)}):")
-            for i, match in enumerate(result.matches_guidelines, 1):
-                output.append(f"  {i}. [{match.score}] {match.guideline.id}")
-                output.append(f"     Condition: {match.guideline.content.condition}")
-                if match.guideline.content.action:
-                    output.append(f"     Action: {match.guideline.content.action}")
-                output.append(f"     Tags: {match.guideline.tags}")
-                output.append(f"     Rationale: {match.rationale}")
-                if match.metadata:
-                    output.append(f"     Metadata: {match.metadata}")
-                output.append("")
-        
-        # 解析的指导原则
-        if result.resolved_guidelines:
-            output.append(f"\n🔍 RESOLVED GUIDELINES ({len(result.resolved_guidelines)}):")
-            for i, match in enumerate(result.resolved_guidelines, 1):
-                output.append(f"  {i}. [{match.score}] {match.guideline.id}")
-                output.append(f"     Condition: {match.guideline.content.condition}")
-                if match.guideline.content.action:
-                    output.append(f"     Action: {match.guideline.content.action}")
-                output.append(f"     Tags: {match.guideline.tags}")
-                output.append(f"     Rationale: {match.rationale}")
-                if match.metadata:
-                    output.append(f"     Metadata: {match.metadata}")
-                output.append("")
-        
-        # 活跃的旅程
-        if result.journeys:
-            output.append(f"\n🗺️  ACTIVE JOURNEYS ({len(result.journeys)}):")
-            for i, journey in enumerate(result.journeys, 1):
-                output.append(f"  {i}. {journey.id}")
-                output.append(f"     Title: {journey.title}")
-                output.append(f"     Description: {journey.description}")
-                output.append(f"     Conditions: {len(journey.conditions)} conditions")
-                output.append(f"     Tags: {len(journey.tags)} tags")
-                output.append(f"     Tags: {journey.tags}")
-                output.append(f"     Created: {journey.creation_utc}")
-                output.append("")
-        
-        output.append("=" * 80)
-        return "\n".join(output)
+        return "\n".join(lines)
 
 
 # This is module-level and public for isolated testability purposes.

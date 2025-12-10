@@ -413,49 +413,135 @@ class GenericJourneyNodeSelectionBatch(GuidelineMatchingBatch):
         self._previous_path: Sequence[str | None] = journey_path
 
     def auto_return_match(self) -> GuidelineMatchingBatchResult | None:
-        if self._previous_path and self._previous_path[-1] in self._node_wrappers:
-            last_visited_node = self._node_wrappers[self._previous_path[-1]]
-            if (
-                last_visited_node.kind == JourneyNodeKind.TOOL
-                and len(last_visited_node.outgoing_edges) == 1
-            ):
-                generation_info = GenerationInfo(
-                    schema_name="No inference performed",
-                    model="No inference performed",
-                    duration=0.0,
-                    usage=UsageInfo(
-                        input_tokens=0,
-                        output_tokens=0,
-                        extra={},
-                    ),
-                )
-                if last_visited_node.outgoing_edges[0].target_guideline:
-                    return GuidelineMatchingBatchResult(
-                        matches=[
-                            GuidelineMatch(
-                                guideline=last_visited_node.outgoing_edges[0].target_guideline,
-                                score=10,
-                                rationale="This guideline was selected as part of a 'journey' - a sequence of actions that are performed in order. It was automatically selected as the only viable follow up for the last step that was executed",
-                                metadata={
-                                    "journey_path": [
-                                        last_visited_node.id,
-                                        last_visited_node.outgoing_edges[0].target_node_index,
-                                    ],
-                                    "step_selection_journey_id": self._examined_journey.id,
-                                },
-                            )
-                        ],
-                        generation_info=generation_info,
+        """Auto-advance through journey nodes when possible, skipping LLM inference.
+        
+        This optimization recursively advances through nodes that have deterministic
+        transitions (single unconditional edges) until reaching a node that requires:
+        - Tool execution (TOOL node)
+        - Condition evaluation (FORK with multiple conditional edges)
+        - Agent action (CHAT node)
+        - Journey exit (no outgoing edges)
+        """
+        if not self._previous_path or self._previous_path[-1] not in self._node_wrappers:
+            return None
+        
+        last_visited_node = self._node_wrappers[self._previous_path[-1]]
+        
+        # Only auto-advance from completed TOOL nodes
+        if last_visited_node.kind != JourneyNodeKind.TOOL:
+            return None
+        
+        # Recursively find the next actionable node
+        journey_path: list[str] = [last_visited_node.id]
+        target_node, target_guideline = self._find_next_actionable_node(
+            last_visited_node, 
+            journey_path,
+            visited=set()
+        )
+        
+        if target_node is None:
+            # Need LLM evaluation (FORK with conditions or complex branching)
+            return None
+        
+        generation_info = GenerationInfo(
+            schema_name="No inference performed (auto-advanced)",
+            model="No inference performed",
+            duration=0.0,
+            usage=UsageInfo(
+                input_tokens=0,
+                output_tokens=0,
+                extra={},
+            ),
+        )
+        
+        if target_guideline:
+            path_description = " → ".join(journey_path)
+            return GuidelineMatchingBatchResult(
+                matches=[
+                    GuidelineMatch(
+                        guideline=target_guideline,
+                        score=10,
+                        rationale=f"This guideline was auto-selected by advancing through deterministic transitions: {path_description}",
+                        metadata={
+                            "journey_path": journey_path,
+                            "step_selection_journey_id": self._examined_journey.id,
+                        },
                     )
-                else:
-                    return GuidelineMatchingBatchResult(matches=[], generation_info=generation_info)
-        return None
+                ],
+                generation_info=generation_info,
+            )
+        else:
+            # Journey exit (no outgoing edges)
+            return GuidelineMatchingBatchResult(matches=[], generation_info=generation_info)
+    
+    def _find_next_actionable_node(
+        self,
+        current_node: _JourneyNode,
+        journey_path: list[str],
+        visited: set[str],
+    ) -> tuple[_JourneyNode | None, Guideline | None]:
+        """Recursively find the next node that requires action or evaluation.
+        
+        Returns:
+            - (node, guideline): Found actionable node with its guideline
+            - (node, None): Journey exit (node with no outgoing edges)
+            - (None, None): Need LLM evaluation (FORK with conditions)
+        """
+        # Prevent infinite loops
+        if current_node.id in visited:
+            return (None, None)
+        visited.add(current_node.id)
+        
+        # No outgoing edges = journey exit
+        if len(current_node.outgoing_edges) == 0:
+            return (current_node, None)
+        
+        # Multiple outgoing edges with conditions = need LLM to evaluate
+        if len(current_node.outgoing_edges) > 1:
+            # Check if any edge has a condition (needs LLM evaluation)
+            has_conditions = any(
+                edge.condition is not None 
+                for edge in current_node.outgoing_edges
+            )
+            if has_conditions:
+                return (None, None)  # Need LLM to evaluate conditions
+        
+        # Single outgoing edge - can auto-advance
+        next_edge = current_node.outgoing_edges[0]
+        next_node_index = next_edge.target_node_index
+        
+        # Check if next node exists
+        if next_node_index not in self._node_wrappers:
+            return (None, None)
+        
+        next_node = self._node_wrappers[next_node_index]
+        journey_path.append(next_node_index)
+        
+        # TOOL node - stop here, needs tool execution
+        if next_node.kind == JourneyNodeKind.TOOL:
+            return (next_node, next_edge.target_guideline)
+        
+        # CHAT node - stop here, needs agent action
+        if next_node.kind == JourneyNodeKind.CHAT:
+            return (next_node, next_edge.target_guideline)
+        
+        # FORK node with single unconditional edge - continue advancing
+        if next_node.kind == JourneyNodeKind.FORK:
+            if len(next_node.outgoing_edges) == 1 and next_node.outgoing_edges[0].condition is None:
+                # Unconditional transition through FORK
+                return self._find_next_actionable_node(next_node, journey_path, visited)
+            else:
+                # FORK with multiple edges or conditional edge - need LLM
+                return (None, None)
+        
+        # Unknown node type - need LLM evaluation
+        return (None, None)
 
     @override
     async def process(self) -> GuidelineMatchingBatchResult:
         automatic_match = self.auto_return_match()
         if automatic_match:
-            return automatic_match  # TODO fix this
+            return automatic_match
 
         journey_conditions = list(
             await async_utils.safe_gather(

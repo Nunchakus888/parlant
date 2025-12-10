@@ -20,6 +20,7 @@ Journey结构分析Proposer
 
 import traceback
 from typing import Optional, Sequence
+from collections import defaultdict, deque
 from pydantic import Field
 
 from parlant.core.common import DefaultBaseModel
@@ -141,6 +142,12 @@ class JourneyStructureProposer:
                     journey_graph = None
                     if proposition.journey_graph:
                         journey_graph = self._convert_schema_to_graph(proposition.journey_graph)
+                        
+                        # 验证DAG，检测到环则触发重试
+                        # is_dag, error = self._validate_journey_is_dag(journey_graph)
+                        # if not is_dag:
+                        #     self._logger.warning(f"⚠️ {error}, retrying...")
+                        #     raise ValueError(f"Journey invalid: {error}")
                     
                     return JourneyStructureProposition(
                         is_journey_candidate=proposition.is_journey_candidate,
@@ -181,6 +188,36 @@ class JourneyStructureProposer:
                 for edge in schema.edges
             ],
         )
+    
+    def _validate_journey_is_dag(self, graph: JourneyGraph) -> tuple[bool, str]:
+        """验证Journey Graph是否为DAG（Kahn拓扑排序）"""
+        if not graph.nodes:
+            return True, ""
+        
+        all_nodes = {n.id for n in graph.nodes}
+        in_degree = {n: 0 for n in all_nodes}
+        adj = defaultdict(list)
+        
+        for e in graph.edges:
+            adj[e.from_node].append(e.to_node)
+            in_degree[e.to_node] += 1
+        
+        queue = deque(n for n in all_nodes if in_degree[n] == 0)
+        visited = 0
+        
+        while queue:
+            node = queue.popleft()
+            visited += 1
+            for neighbor in adj[node]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        
+        if visited != len(all_nodes):
+            cycle_nodes = [n for n in all_nodes if in_degree[n] > 0]
+            return False, f"cycle detected in nodes: {cycle_nodes}"
+        
+        return True, ""
     
     async def _generate_journey_structure(
         self,
@@ -363,13 +400,13 @@ A Journey Graph is a DAG (Directed Acyclic Graph) with:
 - Do NOT specify tool parameters - they are inferred automatically
 - The first node in your graph should be the first real step in the process
 
-**Prevent Infinite Loops:**
-- MUST ensure the journey graph has at least one terminal node (exit point)
-- DO NOT create circular paths where nodes loop back indefinitely
-- Every branch must eventually lead to a terminal state
-- If using conditional branches (fork nodes), ensure all paths can reach an end
-- Terminal nodes should be chat or tool nodes with no outgoing edges
-- Example: In a 4-step process, the last step (e.g., "respond_result") should have no outgoing edges
+**Graph Structure (CRITICAL):**
+- Journey MUST be a strict DAG (Directed Acyclic Graph) - NO cycles allowed
+- NO edge can point back to any earlier node (even with conditions)
+- Example violation: "ask_more → go_back_to_start" is FORBIDDEN
+- For "repeat" scenarios: end the journey and let system restart it naturally
+- MUST have at least one terminal node (no outgoing edges)
+- First defined node = entry point (system auto-connects from root)
 """,
         )
         

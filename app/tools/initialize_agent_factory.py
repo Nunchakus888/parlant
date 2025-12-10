@@ -17,7 +17,7 @@ from parlant.core.services.indexing.journey_structure_analysis import JourneyGra
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/case/journey-tool.json"
+        self.config_path = "app/case/online/12-04-journey/config.json"
         self.container = container
 
     def _load_config(self) -> Dict[str, Any]:
@@ -154,7 +154,7 @@ class CustomAgentFactory(AgentFactory):
                 chatbot_id=chatbot_id,
                 retrieve_url=retrieve_url,
                 logger=self._logger,
-                timeout=int(os.getenv("RETRIEVER_TIMEOUT", "10"))
+                timeout=int(os.getenv("RETRIEVER_TIMEOUT", "7"))
             )
             
             # register the retriever to the agent
@@ -335,10 +335,6 @@ class CustomAgentFactory(AgentFactory):
                                     journey=journey,
                                     journey_graph=journey_graph,
                                     available_tools=available_tools,
-                                )
-                                
-                                self._logger.info(
-                                    f"🚕 create journey successfully: {journey_graph.title}"
                                 )
                                 
                             except Exception as e:

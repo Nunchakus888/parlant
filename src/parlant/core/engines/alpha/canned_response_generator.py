@@ -1359,6 +1359,9 @@ in order to run tools. The tools needed to run at this stage would have run if t
 If it makes sense in the current state of the interaction, inform the user about this missing data: ###
 {formatted_missing_data}
 ###
+
+CRITICAL: Your response MUST request the exact fields listed above using their descriptions. Do NOT hallucinate or assume what information is needed based on the tool name.
+
 """,
                 props={
                     "formatted_missing_data": json.dumps(

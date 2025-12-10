@@ -119,6 +119,7 @@ class GenericGuidelineMatchingStrategy(GuidelineMatchingStrategy):
             journey_step_selection_schematic_generator
         )
         self._response_analysis_schematic_generator = response_analysis_schematic_generator
+        self._current_context: GuidelineMatchingContext | None = None
 
     @override
     async def create_matching_batches(
@@ -126,6 +127,7 @@ class GenericGuidelineMatchingStrategy(GuidelineMatchingStrategy):
         guidelines: Sequence[Guideline],
         context: GuidelineMatchingContext,
     ) -> Sequence[GuidelineMatchingBatch]:
+        self._current_context = context
         observational_guidelines: list[Guideline] = []
         previously_applied_actionable_guidelines: list[Guideline] = []
         previously_applied_actionable_customer_dependent_guidelines: list[Guideline] = []
@@ -239,15 +241,14 @@ class GenericGuidelineMatchingStrategy(GuidelineMatchingStrategy):
 
         for m in matches:
             if disambiguation := m.metadata.get("disambiguation"):
+                # 需要澄清：添加clarification guideline，排除冲突的guidelines
                 guidelines_to_skip.update(
                     cast(
                         list[GuidelineId],
                         cast(dict[str, JSONSerializable], disambiguation).get("targets"),
                     )
                 )
-
                 guidelines_to_skip.add(m.guideline.id)
-
                 result.append(
                     GuidelineMatch(
                         guideline=Guideline(
@@ -271,6 +272,62 @@ class GenericGuidelineMatchingStrategy(GuidelineMatchingStrategy):
                         metadata=m.metadata,
                     )
                 )
+
+        # 收集激活的 Journey 入口（冲突检测只在入口级别进行）
+        # journey nodes 不参与冲突检测，它们是执行层，在入口确定后才处理
+        journey_entries: dict[str, GuidelineMatch] = {}  # journey_id -> 入口 match
+        
+        for m in matches:
+            if m.guideline.id in guidelines_to_skip:
+                continue
+            for tag in m.guideline.tags:
+                if tag.startswith("journey:") and m.score >= 10:
+                    journey_id = tag[8:]
+                    # 保留最高分的入口 guideline
+                    if journey_id not in journey_entries or m.score > journey_entries[journey_id].score:
+                        journey_entries[journey_id] = m
+        
+        # 冲突检测（只在入口级别）
+        conflict_targets = self._collect_conflict_targets(matches, guidelines_to_skip, journey_entries)
+        
+        if len(conflict_targets) >= 2 and self._current_context:
+            self._logger.debug(f"🤔 {len(conflict_targets)} conflicting options detected, using disambiguation batch")
+            disambiguation_result = await self._process_disambiguation(conflict_targets)
+            
+            if disambiguation_result:
+                result.append(disambiguation_result)
+                if disambiguation_result.metadata.get("disambiguation"):
+                    # 排除所有冲突相关的 guidelines（入口 + nodes）
+                    conflict_ids = {g.id for g in conflict_targets}
+                    conflict_journey_ids = set(journey_entries.keys())
+                    for m in matches:
+                        if m.guideline.id in conflict_ids:
+                            guidelines_to_skip.add(m.guideline.id)
+                        elif m.metadata.get("step_selection_journey_id") in conflict_journey_ids:
+                            guidelines_to_skip.add(m.guideline.id)
+                        elif any(t.startswith("journey:") for t in m.guideline.tags):
+                            guidelines_to_skip.add(m.guideline.id)
+        elif len(journey_entries) == 1:
+            # 单 Journey 无冲突，排除其他 journey 相关的 guidelines
+            journey_id = next(iter(journey_entries.keys()))
+            for m in matches:
+                if m.guideline.id in guidelines_to_skip:
+                    continue
+                if not m.guideline.content.action:
+                    continue
+                # 保留当前 journey 的 nodes
+                if m.metadata.get("step_selection_journey_id") == journey_id:
+                    continue
+                # 保留当前 journey 的入口
+                if any(t == f"journey:{journey_id}" for t in m.guideline.tags):
+                    continue
+                # 排除其他 journey 的入口和非 journey guidelines
+                if any(t.startswith("journey:") for t in m.guideline.tags):
+                    guidelines_to_skip.add(m.guideline.id)
+                    continue
+                # 排除其他普通 actionable guidelines
+                guidelines_to_skip.add(m.guideline.id)
+            self._logger.debug(f"🎯 Single journey active: {journey_id}")
 
         result.extend(m for m in matches if m.guideline.id not in guidelines_to_skip)
 
@@ -594,3 +651,119 @@ class GenericGuidelineMatchingStrategy(GuidelineMatchingStrategy):
 
     def _get_optimal_batch_size(self, guidelines: dict[GuidelineId, Guideline]) -> int:
         return self._optimization_policy.get_guideline_matching_batch_size(len(guidelines))
+
+    def _collect_conflict_targets(
+        self,
+        matches: Sequence[GuidelineMatch],
+        guidelines_to_skip: set[GuidelineId],
+        journey_entries: dict[str, GuidelineMatch],  # journey_id -> 入口 match
+    ) -> list[Guideline]:
+        """收集需要用户澄清的冲突 targets（只在入口级别）
+        
+        设计原则：
+        - 冲突检测只在入口级别进行
+        - journey nodes 是执行层，不参与冲突检测
+        - 入口和 nodes 不是同一维度的数据
+        """
+        # 多 Journey 场景：所有 journey 入口都是冲突 targets
+        if len(journey_entries) > 1:
+            return [m.guideline for m in journey_entries.values()
+                    if m.guideline.id not in guidelines_to_skip]
+        
+        # 单 Journey 场景：检查 journey 入口和其他 actionable guidelines 是否冲突
+        if len(journey_entries) == 1:
+            journey_match = next(iter(journey_entries.values()))
+            journey_score = journey_match.score
+            journey_guideline = journey_match.guideline
+            
+            # 收集其他高分 actionable guidelines（排除所有 journey 相关）
+            other_high_score: list[tuple[Guideline, int]] = []
+            for m in matches:
+                if m.guideline.id in guidelines_to_skip or not m.guideline.content.action:
+                    continue
+                # 排除 journey 入口
+                if any(t.startswith("journey:") for t in m.guideline.tags):
+                    continue
+                # 排除 journey nodes
+                if m.metadata.get("step_selection_journey_id"):
+                    continue
+                if m.score >= 10:
+                    other_high_score.append((m.guideline, m.score))
+            
+            # 如果存在其他高分 guidelines 且 score 相近，需要澄清
+            if other_high_score and journey_guideline:
+                max_other = max(s for _, s in other_high_score)
+                if abs(journey_score - max_other) <= 2:
+                    return [journey_guideline] + [g for g, _ in other_high_score]
+        
+        return []
+
+    async def _process_disambiguation(
+        self,
+        conflict_targets: list[Guideline],
+    ) -> GuidelineMatch | None:
+        """使用disambiguation batch处理冲突，包含状态管理
+        
+        状态管理逻辑（由disambiguation batch处理）：
+        1. 如果之前已请求澄清且用户已回答 → is_ambiguous=false，不再澄清
+        2. 如果之前已请求澄清但用户未回答 → is_ambiguous=true，重新澄清
+        3. 如果是新的歧义 → is_ambiguous=true，请求澄清
+        """
+        if not self._current_context:
+            return None
+        
+        # 创建临时的disambiguation guideline
+        temp_guideline = Guideline(
+            id=cast(GuidelineId, f"<auto_disambig_{generate_id()}>"),
+            creation_utc=datetime.now(),
+            content=GuidelineContent(
+                condition="Multiple conflicting intents detected",
+                action=None,
+            ),
+            enabled=True,
+            tags=[],
+            metadata={},
+        )
+        
+        # 使用现有的disambiguation batch（包含状态管理）
+        batch = self._create_batch_disambiguation_guideline(
+            disambiguation_guideline=temp_guideline,
+            disambiguation_targets=conflict_targets,
+            context=self._current_context,
+        )
+        
+        try:
+            batch_result = await batch.process()
+            if batch_result.matches:
+                match = batch_result.matches[0]
+                # 检查disambiguation结果
+                if match.metadata.get("disambiguation"):
+                    # 需要澄清：返回带有action的guideline
+                    disambiguation_data = cast(dict[str, JSONSerializable], match.metadata["disambiguation"])
+                    enriched_action = disambiguation_data.get("enriched_action", "")
+                    if enriched_action:
+                        self._logger.debug(f"🤔 Disambiguation needed: {match.rationale}")
+                        return GuidelineMatch(
+                            guideline=Guideline(
+                                id=cast(GuidelineId, f"<disambig_{generate_id()}>"),
+                                creation_utc=datetime.now(),
+                                content=GuidelineContent(
+                                    condition=match.guideline.content.condition,
+                                    action=cast(str, enriched_action),
+                                ),
+                                enabled=True,
+                                tags=[],
+                                metadata={},
+                            ),
+                            score=10,
+                            rationale=match.rationale,
+                            metadata=match.metadata,
+                        )
+                else:
+                    # 不需要澄清（用户已回答或意图清晰）
+                    self._logger.debug(f"⏭️ No disambiguation needed: {match.rationale}")
+                    return None
+        except Exception as e:
+            self._logger.warning(f"Disambiguation batch failed: {e}")
+        
+        return None
