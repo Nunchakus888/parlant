@@ -241,6 +241,18 @@ class TransientDocumentCollection(DocumentCollection[TDocument]):
         return await self.delete_one(filters)
 
     @override
+    async def delete_many(
+        self,
+        filters: Where,
+    ) -> int:
+        """批量删除所有匹配的文档 - 单次遍历 O(n)"""
+        # 一次遍历，收集所有不匹配的文档（保留）
+        remaining = [d for d in self._documents if not matches_filters(filters, d)]
+        deleted_count = len(self._documents) - len(remaining)
+        self._documents = remaining
+        return deleted_count
+
+    @override
     async def count(
         self,
         filters: Where,

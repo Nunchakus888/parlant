@@ -484,6 +484,19 @@ class MongoDocumentCollection(DocumentCollection[TDocument]):
         )
 
     @override
+    async def delete_many(self, filters: Where) -> int:
+        """批量删除所有匹配的文档"""
+        try:
+            async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                result = await self._collection.delete_many(filters)
+                return result.deleted_count
+        except asyncio.TimeoutError:
+            self._database._logger.error(
+                f"❌ MongoDB delete_many() timeout after {self.DEFAULT_TIMEOUT}s, filters: {filters}"
+            )
+            raise TimeoutError(f"Database delete_many timeout after {self.DEFAULT_TIMEOUT}s")
+
+    @override
     async def count(
         self,
         filters: Where,

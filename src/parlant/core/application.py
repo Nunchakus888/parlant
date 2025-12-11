@@ -96,20 +96,22 @@ class Application:
         """
         级联删除 Agent 及其所有关联对象。
         
-        删除顺序：
-        1. Sessions (直接引用 agent_id)
-        2. Guidelines (通过 agent tag 关联)
-        3. Journeys (通过 agent tag 关联)
-        4. Context Variables (通过 agent tag 关联)
-        5. Capabilities (通过 agent tag 关联)
-        6. Canned Responses (通过 agent tag 关联)
-        7. Glossary Terms (通过 agent tag 关联)
-        8. Relationships (涉及该 agent 的关系)
-        9. Evaluations (与该 agent 相关的评估)
-        10. Cached Evaluations (清理缓存)
-        11. Agent 本身
+        删除顺序（按依赖关系）：
+        1. Journeys → 级联删除 Journey 的 nodes、edges、关联的 guidelines
+        2. Guidelines → 级联删除 GuidelineToolAssociations（在 GuidelineModule.delete 中处理）
+        3. Context Variables
+        4. Capabilities
+        5. Canned Responses
+        6. Glossary Terms
+        7. Relationships（涉及该 agent 的 guidelines 和 tag 的关系）
+        8. Agent 工具
+        9. Retrievers 和 Hooks (SDK模式)
+        10. Agent 本身
         
-        注意：此操作不可逆，请谨慎使用。
+        注意：
+        - Evaluations 没有删除接口（设计上保留历史记录）
+        - GuidelineToolAssociations 在 GuidelineModule.delete() 中级联删除
+        - 此操作不可逆，请谨慎使用
         
         Args:
             agent_id: 要删除的 Agent ID
@@ -118,7 +120,7 @@ class Application:
             ItemNotFoundError: 如果 Agent 不存在
             Exception: 如果删除过程中出现错误
         """
-        # 首先验证 Agent 是否存在
+        # 验证 Agent 是否存在
         try:
             await self.agents.read(agent_id)
         except Exception as e:
@@ -126,79 +128,45 @@ class Application:
         
         agent_tag = Tag.for_agent_id(agent_id)
         
-        # 定义删除任务，按依赖关系排序
-        # ⚠️  重要：删除顺序很关键！
-        # Journey依赖Guidelines（作为conditions），所以必须先删除Journey
-        deletion_tasks = [
-            # 1. Sessions (直接引用 agent_id)
-            # self._delete_sessions_for_agent(agent_id),
-            
-            # 2. 🔧 FIX: 先删除Journeys（会级联删除关联的guidelines和tools）
-            # Journey.delete() 会处理：
-            # - Journey的nodes和edges
-            # - Journey关联的tools
-            # - Journey的condition guidelines（如果不被其他journey使用）
-            self._delete_journeys_for_agent(agent_tag),
-            
-            # 3. 再删除剩余的Guidelines（那些不属于任何journey的独立guidelines）
-            self._delete_guidelines_for_agent(agent_tag),
-            
-            # 4. Context Variables (通过 agent tag 关联)
+        # 第一阶段：删除依赖于 Guidelines 的对象
+        # Journey 依赖 Guidelines（作为 conditions），必须先删除
+        await self._delete_journeys_for_agent(agent_tag)
+        
+        # 第二阶段：删除 Guidelines 和收集需要清理的 Relationship IDs
+        # GuidelineModule.delete() 会级联删除：
+        # - GuidelineToolAssociations
+        # - 部分 Relationships（guideline-guideline 之间的）
+        guidelines = await self.guidelines.find(tag_id=agent_tag)
+        guideline_ids = [g.id for g in guidelines]
+        
+        # 收集涉及这些 guidelines 的 relationship IDs（在删除 guidelines 前）
+        relationship_ids_to_delete = await self._collect_relationships_for_guidelines(guideline_ids)
+        
+        # 删除 guidelines
+        await self._delete_guidelines_for_agent(agent_tag)
+        
+        # 第三阶段：并行删除无依赖关系的对象
+        await safe_gather(
             self._delete_variables_for_agent(agent_tag),
-            
-            # 5. Capabilities (通过 agent tag 关联)
             self._delete_capabilities_for_agent(agent_tag),
-            
-            # 6. Canned Responses (通过 agent tag 关联)
             self._delete_canned_responses_for_agent(agent_tag),
-            
-            # 7. Glossary Terms (通过 agent tag 关联)
             self._delete_terms_for_agent(agent_tag),
-            
-            # 8. 清理Agent的工具
             self._cleanup_agent_tools(agent_id),
-        ]
+        )
         
-        # 批量异步执行所有删除任务
-        await safe_gather(*deletion_tasks)
+        # 第四阶段：删除 Relationships（涉及 agent tag 的关系）
+        await self._delete_relationships_for_agent(agent_tag, relationship_ids_to_delete)
         
-        # 8. 删除所有相关的 Relationships
-        # 注意：这里需要根据实际的 RelationshipModule 接口调整
-        # await self._delete_relationships_for_agent(agent_id)
-        
-        # 9. 清理相关的 Evaluations
-        # 注意：这里需要根据实际的 EvaluationModule 接口调整
-        # await self._delete_evaluations_for_agent(agent_id)
-        
-        # 注意：不再清理评估缓存，因为现在基于 chatbot_id 共享缓存
-        # 同一个 chatbot 的其他 agent 可能还在使用这些缓存
-        # 如果需要清理 chatbot 的缓存，应该在 chatbot 配置变更时使用新的 chatbot_id
-        
-        # 10. 清理 Retrievers 和 Hooks (SDK模式)
+        # 第五阶段：清理 Retrievers 和 Hooks (SDK模式)
         if self._retriever_cleanup_callback:
             try:
                 await self._retriever_cleanup_callback(agent_id)
             except Exception as e:
                 self._logger.error(f"❌ Failed to cleanup retrievers via callback: {e}")
         
-        # 11. 最后删除 Agent 本身
+        # 最后：删除 Agent 本身
         await self.agents.delete(agent_id)
-
-    async def _delete_customer_from_memory_for_session(self, session_id: SessionId) -> None:
-        """清理指定 Session 关联的 Session 和 Customer 内存"""
-        self._logger.debug(f"👤 Deleting session and customer from memory for session {session_id}")
-        try:
-            session = await self.sessions.read(session_id)
-            if session:
-                # 清理 customer 内存
-                await self.customers.delete(session.customer_id)
-                self._logger.debug(f"👤 Deleted customer {session.customer_id} from memory")
-
-                # 清理 session 内存
-                await self.sessions.delete_from_memory_only(session_id)
-                self._logger.debug(f"📋 Deleted session {session_id} from memory")
-        except Exception as e:
-            self._logger.error(f"Failed to delete session and customer from memory for session {session_id}: {e}")
+        self._logger.info(f"✅ Agent {agent_id} and all related data deleted successfully")
 
     async def _delete_guidelines_for_agent(self, agent_tag: TagId) -> None:
         """删除指定Agent的所有Guidelines"""
@@ -265,3 +233,71 @@ class Application:
             self._logger.info(f"🗑️ Successfully cleaned up tools for agent {agent_id}")
         except Exception as e:
             self._logger.error(f"❌ Failed to cleanup tools for agent {agent_id}: {e}")
+
+    async def _collect_relationships_for_guidelines(
+        self, 
+        guideline_ids: Sequence[str],
+    ) -> set[str]:
+        """收集涉及指定 guidelines 的 relationship IDs"""
+        relationship_ids: set[str] = set()
+        
+        for guideline_id in guideline_ids:
+            try:
+                relationships = await self.relationships.find(
+                    kind=None,
+                    indirect=False,
+                    guideline_id=guideline_id,
+                    tag_id=None,
+                    tool_id=None,
+                )
+                for r in relationships:
+                    relationship_ids.add(r.id)
+            except Exception:
+                # Guideline 可能已被其他操作删除，忽略错误
+                pass
+        
+        return relationship_ids
+
+    async def _delete_relationships_for_agent(
+        self, 
+        agent_tag: TagId,
+        additional_relationship_ids: set[str],
+    ) -> None:
+        """删除涉及 agent tag 的 relationships"""
+        try:
+            # 1. 查找涉及 agent tag 的 relationships
+            tag_relationships = await self.relationships.find(
+                kind=None,
+                indirect=False,
+                guideline_id=None,
+                tag_id=agent_tag,
+                tool_id=None,
+            )
+            
+            # 2. 合并所有需要删除的 relationship IDs
+            all_relationship_ids = {r.id for r in tag_relationships}
+            all_relationship_ids.update(additional_relationship_ids)
+            
+            if not all_relationship_ids:
+                return
+            
+            self._logger.info(f"🧹 Deleting {len(all_relationship_ids)} relationships for agent tag: {agent_tag}")
+            
+            # 3. 批量删除
+            delete_tasks = [
+                self._safe_delete_relationship(rid) 
+                for rid in all_relationship_ids
+            ]
+            await safe_gather(*delete_tasks)
+            
+            self._logger.info(f"🗑️ Successfully deleted {len(all_relationship_ids)} relationships")
+        except Exception as e:
+            self._logger.error(f"❌ Failed to delete relationships for {agent_tag}: {e}")
+
+    async def _safe_delete_relationship(self, relationship_id: str) -> None:
+        """安全删除 relationship，忽略 NotFound 错误"""
+        try:
+            await self.relationships.delete(relationship_id)
+        except Exception:
+            # Relationship 可能已被级联删除，忽略错误
+            pass

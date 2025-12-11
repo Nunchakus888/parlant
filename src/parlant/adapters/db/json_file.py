@@ -376,6 +376,20 @@ class JSONFileDocumentCollection(DocumentCollection[TDocument]):
         )
 
     @override
+    async def delete_many(
+        self,
+        filters: Where,
+    ) -> int:
+        """批量删除所有匹配的文档 - 单次遍历 O(n)"""
+        async with self._lock.writer_lock:
+            remaining = [d for d in self.documents if not matches_filters(filters, d)]
+            deleted_count = len(self.documents) - len(remaining)
+            if deleted_count > 0:
+                self.documents = remaining
+                await self._database.flush()
+            return deleted_count
+
+    @override
     async def count(
         self,
         filters: Where,

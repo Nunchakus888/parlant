@@ -63,6 +63,7 @@ def is_restful_api_request(request: Request) -> bool:
     # Define patterns for RESTful API endpoints
     restful_patterns = [
         "/sessions/chat",
+        "/sessions/chat_async",
         # Add more patterns as needed:
         # "/api/v2/chat",
         # "/conversation",

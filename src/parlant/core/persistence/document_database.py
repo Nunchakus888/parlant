@@ -188,6 +188,21 @@ class DocumentCollection(ABC, Generic[TDocument]):
         ...
 
     @abstractmethod
+    async def delete_many(
+        self,
+        filters: Where,
+    ) -> int:
+        """Deletes all documents that match the query criteria.
+        
+        Returns:
+            Number of documents deleted.
+        
+        This is more efficient than calling delete_one multiple times,
+        as it performs a single pass through the collection.
+        """
+        ...
+
+    @abstractmethod
     async def count(
         self,
         filters: Where,

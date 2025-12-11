@@ -124,14 +124,20 @@ class ResourceManager:
         # 批量清理 - O(k) where k = 不活跃session数量
         evicted_count = 0
         for session_id, agent_id in sessions_to_evict:
-            if session_id in self._session_order:
-                del self._session_order[session_id]
-            await self._evict_session(session_id, agent_id)
-            evicted_count += 1
+            try:
+                await self._evict_session(session_id, agent_id)
+                # 清理成功后才从 tracking 中删除
+                self._session_order.pop(session_id, None)
+                evicted_count += 1
+            except Exception as e:
+                # 清理失败，保留在 tracking 中，下次继续尝试
+                self._logger.warning(f"⚠️ Eviction failed for session {session_id}, will retry: {e}")
         
         if evicted_count > 0:
             self._logger.debug(f"Evicted {evicted_count} inactive sessions")
             self._eviction_count += evicted_count
+        elif sessions_to_evict:
+            self._logger.warning(f"All {len(sessions_to_evict)} eviction attempts failed")
         else:
             self._logger.warning("All sessions are active, cannot evict any session")
         
@@ -143,20 +149,33 @@ class ResourceManager:
     
     
     async def _evict_session(self, session_id: SessionId, agent_id: AgentId) -> None:
-        """执行session清理"""
+        """
+        执行 session 清理
+        
+        清理内容：
+        - Agent 及其配置数据（TransientDocumentDatabase）
+        - Customer（如果没有其他 Session 引用）
+        """
+        # 1. 获取 customer_id（在删除前）
         try:
-            # 检查 Agent 是否还有其他 Session
-            remaining = [s for s, a in self._session_order.items() if a == agent_id]
-            if not remaining:
-                # 级联删除 Agent
-                await self._app.delete_agent_cascade(agent_id)
-                
-                # delete customer from memory for agent/session
-                await self._app._delete_customer_from_memory_for_session(session_id)
-            
-            self._logger.debug(f"LRU evicted: session={session_id}, agent={agent_id}")
-        except Exception as e:
-            self._logger.error(f"LRU eviction failed: {e}")
+            session = await self._app.sessions.read(session_id)
+            customer_id = session.customer_id if session else None
+        except Exception:
+            customer_id = None
+        
+        # 2. 删除 Agent 配置数据
+        await self._app.delete_agent_cascade(agent_id)
+        
+        # 3. 检查 Customer 是否还被其他 Session 引用，没有就删除
+        if customer_id:
+            try:
+                other_sessions = await self._app.sessions.find(customer_id=customer_id, limit=1)
+                if not other_sessions:
+                    await self._app.customers.delete(customer_id)
+            except Exception as e:
+                self._logger.warning(f"⚠️ Customer cleanup skipped: {e}")
+        
+        self._logger.debug(f"✅ LRU evicted: session={session_id}, agent={agent_id}")
     
     async def _log_lru_effectiveness(self) -> None:
         """记录LRU管理效果观测"""
