@@ -262,7 +262,7 @@ class CustomAgentFactory(AgentFactory):
         
         action = (
             "Output ONLY in this exact format: ho000001:<your message>\n"
-            "Your message should convey: 'Got it! Let me connect you with one of our team members who'll be happy to help you further.'"
+            "Your message should: acknowledge the request and inform the customer they will be connected to a team member for further assistance."
         )
         
         self._logger.info(f"✋ Converted handover config to actionbook with {len(condition_parts)} rules")

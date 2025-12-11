@@ -1503,7 +1503,7 @@ Produce a valid JSON object according to the following spec. Use the values prov
     "guidelines": [{guidelines_list_text}],
     "insights": [<Up to 3 original insights to adhere to>]{business_context_field},
     "response_preamble_that_was_already_sent": "{agent_preamble}",
-    "response_body": "<Plain text ONLY - NO markdown (**, *, _, #, -, [], () forbidden). Use 'text: url' for links. MUST be in target_response_language>"
+    "response_body": "<Plain text ONLY - NO markdown (**, *, _, #, -, [], () forbidden). Use 'text: url' for links. MUST be in target_response_language. CRITICAL: If guideline contains template text in another language, TRANSLATE it to target_response_language>"
 }}
 ###
 
