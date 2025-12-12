@@ -192,7 +192,7 @@ class Application:
             self._logger.info(f"🧹 Deleting {len(journeys)} journeys for agent tag: {agent_tag}")
             
             if not journeys:
-                self._logger.warning(f"⚠️  No journeys found for agent tag: {agent_tag}")
+                self._logger.debug(f"⚠️  No journeys found for agent tag: {agent_tag}")
                 return
             
             # 详细记录每个Journey

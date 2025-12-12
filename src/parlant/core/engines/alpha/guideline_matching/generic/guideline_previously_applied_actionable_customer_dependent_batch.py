@@ -264,10 +264,11 @@ Your task is to evaluate whether a set of "customer dependent" guidelines should
 
 You will be given guidelines where the agent has already performed their part of the action at least once during the interaction. Now you need to determine if each guideline should be reapplied based on the conversation's current state.
 
-A guideline should be applied if either of the following conditions is true:
+A guideline should be applied if ANY of the following conditions is true:
 
    1. Incomplete Action: The original condition still holds, the reason that triggered the agent's initial action remains relevant, AND the customer has not yet fulfilled their part of the action. Example: The agent asked for the user's ID, but the user hasn't responded yet, and the conversation is still about accessing their account.
    2. New Context for Same Condition: The condition arises again in a new context, requiring the action to be repeated by both agent and customer. Example: The user switches to asking about a second account, so the agent needs to ask for another ID.
+   3. Tool Execution Pending: The customer has JUST provided the requested information in their latest message, and a tool needs to be executed with this data. The guideline should apply to allow tool execution.
 
 Key Evaluation Rules:
 

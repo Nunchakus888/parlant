@@ -124,14 +124,9 @@ class ResourceManager:
         # 批量清理 - O(k) where k = 不活跃session数量
         evicted_count = 0
         for session_id, agent_id in sessions_to_evict:
-            try:
-                await self._evict_session(session_id, agent_id)
-                # 清理成功后才从 tracking 中删除
-                self._session_order.pop(session_id, None)
-                evicted_count += 1
-            except Exception as e:
-                # 清理失败，保留在 tracking 中，下次继续尝试
-                self._logger.warning(f"⚠️ Eviction failed for session {session_id}, will retry: {e}")
+            self._session_order.pop(session_id, None)
+            evicted_count += 1
+            await self._evict_session(session_id, agent_id)
         
         if evicted_count > 0:
             self._logger.debug(f"Evicted {evicted_count} inactive sessions")
@@ -160,11 +155,13 @@ class ResourceManager:
         try:
             session = await self._app.sessions.read(session_id)
             customer_id = session.customer_id if session else None
-        except Exception:
+            # 2. 删除 Agent 配置数据
+            await self._app.delete_agent_cascade(agent_id)
+
+        except Exception as e:
+            self._logger.warning(f"⚠️ _evict_session {session_id} error: {e}")
             customer_id = None
         
-        # 2. 删除 Agent 配置数据
-        await self._app.delete_agent_cascade(agent_id)
         
         # 3. 检查 Customer 是否还被其他 Session 引用，没有就删除
         if customer_id:
