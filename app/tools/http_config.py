@@ -101,7 +101,7 @@ class AsyncHttpClient:
         try:
             async with aiohttp.ClientSession(timeout=final_timeout) as session:
                 self.logger.debug(f"📤 POST {url}")
-                self.logger.debug(f"📦 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+                self.logger.info(f"📦 Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
                 
                 async with session.post(url, json=payload, headers=final_headers) as response:
                     status = response.status

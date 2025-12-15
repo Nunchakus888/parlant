@@ -217,7 +217,9 @@ class ToolManager:
                     duration_info = f", duration={result.duration:.3f}s" if result.duration else ""
                     self.logger.error(f"[DynamicTool] Tool execution failed: {tool_config.name}, error={result.message or result.error or 'unknown'}{duration_info}")
                 
-                return p.ToolResult(data=result.dict())
+                # Keep tool results minimal (token-efficient) and avoid leaking arbitrary API payload
+                # into downstream LLM prompts. For most tools we only need success/status/duration.
+                return p.ToolResult(data=result.model_dump(exclude_none=True))
                 
             except Exception as e:
                 # 从函数属性获取配置
@@ -234,7 +236,7 @@ class ToolManager:
                     status_code=500,
                     duration=10
                 )
-                return p.ToolResult(data=error_response.dict())
+                return p.ToolResult(data=error_response.model_dump(exclude_none=True))
         
         # 🔧 设置元数据和配置属性（避免闭包）
         dynamic_tool_func.__name__ = config.name
