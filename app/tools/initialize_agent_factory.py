@@ -17,7 +17,7 @@ from parlant.core.services.indexing.journey_structure_analysis import JourneyGra
 class CustomAgentFactory(AgentFactory):
     def __init__(self, agent_store: AgentStore, logger, container):
         super().__init__(agent_store, logger)
-        self.config_path = "app/case/online/12-04-journey/config.json"
+        self.config_path = "app/case/journey-tool.json"
         self.container = container
 
     def _load_config(self) -> Dict[str, Any]:
@@ -62,6 +62,7 @@ class CustomAgentFactory(AgentFactory):
         http_loader = HttpConfigLoader(self._logger)
         config = await http_loader.load_config_from_http(config_request)
         # config = self._load_config()
+        self._logger.info(f"✅ AgentConfig loaded successfully: {json.dumps(config, indent=2, ensure_ascii=False)}")
 
         basic_settings = config.get("basic_settings", {})
 
@@ -69,6 +70,7 @@ class CustomAgentFactory(AgentFactory):
             "k_language": basic_settings.get("language", "English"),
             "communication_style": basic_settings.get("communication_style", []),
             "tone": basic_settings.get("tone", "Friendly and professional"),
+            "handover": basic_settings.get("handover", []),
             "chatbot_id": config_request.chatbot_id,
             "tenant_id": config_request.tenant_id,
             "md5_checksum": config_request.md5_checksum,
@@ -92,11 +94,8 @@ class CustomAgentFactory(AgentFactory):
         tools = await self._setup_tools(agent, config.get("tools", []))
         
         start_time = time.time()
-        # get action_books and merge handover config
+        # get action_books (handover is now handled via system prompt in metadata)
         action_books = config.get("action_books", [])
-        handover_actionbook = self._convert_handover_to_actionbook(basic_settings)
-        if handover_actionbook:
-            action_books.append(handover_actionbook)
         
         # create guidelines
         guidelines = await self._create_guidelines(agent, action_books, tools)
@@ -237,41 +236,6 @@ class CustomAgentFactory(AgentFactory):
             f"📖 successfully created {len(created_guidelines)}/{len(action_books)} guidelines"
         )
         return created_guidelines
-
-    def _convert_handover_to_actionbook(self, basic_settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        将handover配置转换为actionbook格式
-        
-        Args:
-            basic_settings: 基础配置，可能包含handover配置
-            
-        Returns:
-            actionbook格式的字典，如果没有配置则返回None
-        """
-        handover_config = basic_settings.get("handover")
-        
-        if not handover_config or not isinstance(handover_config, list) or len(handover_config) == 0:
-            return None
-        
-        condition_parts = [rule.strip() for rule in handover_config if isinstance(rule, str) and rule.strip()]
-        
-        if not condition_parts:
-            return None
-        
-        condition = "\n".join(condition_parts)
-        
-        action = (
-            "Output ONLY in this exact format: ho000001:<your message>\n"
-            "Your message should: acknowledge the request and inform the customer they will be connected to a team member for further assistance."
-        )
-        
-        self._logger.info(f"✋ Converted handover config to actionbook with {len(condition_parts)} rules")
-        
-        return {
-            "condition": condition,
-            "action": action,
-            "tools": []
-        }
         
     async def _process_journey_conversions(
         self, 

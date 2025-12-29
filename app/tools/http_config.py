@@ -174,7 +174,6 @@ class HttpConfigLoader:
                 self.logger.error(f"❌ business request failed: code={error_code}, msg={error_message}")
                 raise AgentConfigError(error_message, error_code)
             
-            self.logger.info(f"✅ AgentConfig loaded successfully: {json.dumps(response.get('data'), indent=2, ensure_ascii=False)}")
             return response.get("data")
             
         except HttpRequestError:

@@ -79,6 +79,7 @@ class BuiltInSection(Enum):
     OBSERVATIONS = auto()
     CAPABILITIES = auto()
     LANGUAGE_CONSTRAINTS = auto()
+    HANDOVER_INSTRUCTIONS = auto()
 
 
 class SectionStatus(Enum):
@@ -344,6 +345,49 @@ Do NOT ignore language switching requests!
                 "enable_auto_detection": lang_config.enable_auto_detection,
                 "communication_style": communication_style,
             },
+            status=SectionStatus.ACTIVE,
+        )
+        
+        return self
+
+    def add_handover_instructions(
+        self,
+        agent: Agent,
+    ) -> "PromptBuilder":
+        """
+        Add handover instructions to the prompt (conditional).
+        
+        Only adds the section if handover rules are configured in agent.metadata.
+        Handover rules define when to transfer the conversation to a human agent.
+        """
+        handover_rules = agent.metadata.get("handover", []) if agent.metadata else []
+        
+        if not handover_rules or not isinstance(handover_rules, list):
+            return self
+        
+        valid_rules = [rule.strip() for rule in handover_rules if isinstance(rule, str) and rule.strip()]
+        if not valid_rules:
+            return self
+        
+        escaped_rules = [escape_format_string(rule) for rule in valid_rules]
+        rules_text = "\n".join(f"   - {rule}" for rule in escaped_rules)
+        
+        template = f"""
+HANDOVER INSTRUCTIONS
+---------------------
+When ANY of the following conditions is met, you MUST initiate a handover to a human agent:
+
+{rules_text}
+
+HANDOVER OUTPUT FORMAT:
+When initiating a handover, output ONLY in this exact format: ho000001:<your message>
+Your message should acknowledge the request and inform the customer they will be connected to a team member.
+"""
+        
+        self.add_section(
+            name=BuiltInSection.HANDOVER_INSTRUCTIONS,
+            template=template,
+            props={},
             status=SectionStatus.ACTIVE,
         )
         

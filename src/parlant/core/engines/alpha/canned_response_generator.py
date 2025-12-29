@@ -1168,6 +1168,7 @@ Later in this prompt, you'll be provided with behavioral guidelines and other co
 
         builder.add_agent_identity(agent)
         builder.add_customer_identity(customer)
+        builder.add_handover_instructions(agent)
         builder.add_language_constraints(agent)
 
         builder.add_section(
@@ -1496,7 +1497,7 @@ Produce a valid JSON object according to the following spec. Use the values prov
 {{
     "last_message_of_user": "{last_user_message}",
     "detected_user_language": "<MANDATORY: ISO 639-1 code (en|zh|es|pt|ar|fr|de|ja|ko|it|ru|hi|etc) or 'mixed'>",
-    "language_detection_reasoning": "<Explain: 1) Remove punctuation from last_message_of_user 2) Identify the language of the WORDS (not punctuation) 3) State the detected language>",
+    "language_detection_reasoning": "<Explain: 1) Remove punctuation from last_message_of_user 2) Identify the language of the WORDS (not punctuation) 3) If language-neutral (e.g. email/phone/numbers) → use conversation context 4) State result>",
     "target_response_language": "<MUST be the FULL language name matching detected_user_language code (e.g., en→English, zh→Chinese, es→Spanish). If 'mixed' or unclear → use '{fallback_language}'>",
     "guidelines": [{guidelines_list_text}],
     "insights": [<Up to 3 original insights to adhere to>]{business_context_field},
@@ -1543,6 +1544,7 @@ VERIFICATION:
 
         builder.add_agent_identity(context.agent)
         builder.add_customer_identity(context.customer)
+        builder.add_handover_instructions(context.agent)
         builder.add_language_constraints(context.agent)
         builder.add_glossary(context.terms)
         max_history = self._optimization_policy.get_max_history_for_message_generation()
@@ -2121,6 +2123,7 @@ EXAMPLES
 
         builder.add_agent_identity(context.agent)
         builder.add_customer_identity(context.customer)
+        builder.add_handover_instructions(context.agent)
         builder.add_language_constraints(context.agent)
         max_history = self._optimization_policy.get_max_history_for_message_generation()
         builder.add_interaction_history(

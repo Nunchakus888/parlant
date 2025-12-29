@@ -330,6 +330,7 @@ Later in this prompt, you'll be provided with behavioral guidelines and other co
 
         builder.add_agent_identity(agent)
         builder.add_customer_identity(customer)
+        builder.add_handover_instructions(agent)
         builder.add_language_constraints(agent)
         builder.add_section(
             name="message-generator-task-description",
