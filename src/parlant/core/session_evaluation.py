@@ -71,9 +71,14 @@ class MessageStats:
 
 
 def analyze_messages(events: Sequence[Event]) -> MessageStats:
-    """Analyze conversation for statistics."""
+    """Analyze conversation for statistics.
+    
+    Note: Conversations don't need to be 1:1. It's valid for users to send
+    multiple messages before the AI responds. The key requirement is that
+    the last message should be from the AI. If not, it's considered unanswered.
+    """
     stats = MessageStats()
-    last_was_user = False
+    last_source: Optional[EventSource] = None
     
     for event in events:
         if event.kind != EventKind.MESSAGE or event.deleted:
@@ -87,19 +92,19 @@ def analyze_messages(events: Sequence[Event]) -> MessageStats:
         
         if event.source == EventSource.CUSTOMER:
             stats.user_messages += 1
-            if last_was_user:
-                stats.unanswered_count += 1
-            last_was_user = True
+            last_source = EventSource.CUSTOMER
         elif event.source == EventSource.AI_AGENT:
             stats.agent_messages += 1
-            last_was_user = False
+            last_source = EventSource.AI_AGENT
             if message.startswith(HANDOVER_PREFIX):
                 stats.handover_count += 1
             elif message.startswith(UNKNOWN_PREFIX):
                 stats.unknown_count += 1
     
-    if last_was_user:
-        stats.unanswered_count += 1
+    # Only count as unanswered if the last message is from the user
+    # (meaning the AI hasn't responded to the final user message(s))
+    if last_source == EventSource.CUSTOMER:
+        stats.unanswered_count = 1
     
     return stats
 
@@ -200,7 +205,9 @@ class SessionEvaluator:
 **Markers** (these are NORMAL operations, not errors):
 - ho000001: Human handover request (appropriate escalation, not a failure)
 - un000001: Knowledge boundary acknowledgment (honest limitation, not a failure)
-- Unanswered: No agent response (THIS IS A FAILURE - score 1-3)
+- Unanswered: Last message is from user without AI response (THIS IS A FAILURE - score 1-3)
+
+**Note**: Conversations don't need to be 1:1. Users can send multiple messages before AI responds - this is normal. Only considered unanswered if the conversation ends with user message(s) that the AI hasn't responded to.
 
 ---
 
