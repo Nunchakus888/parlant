@@ -246,6 +246,21 @@ class MongoDocumentDatabase(DocumentDatabase):
                     "background": True,
                 },
             ],
+            
+            # Evaluation Cache - 平铺结构，兼容 JSON 文件格式
+            # 结构：{ id: hash, chatbot_id: "1212", version, properties: {...} }
+            "evaluation_cache": [
+                # 复合唯一索引：(chatbot_id, id)
+                {
+                    "keys": [
+                        ("chatbot_id", ASCENDING),
+                        ("id", ASCENDING),
+                    ],
+                    "name": "idx_chatbot_id_unique",
+                    "unique": True,
+                    "background": True,
+                },
+            ],
         }
     
     async def _ensure_indexes(self, collection_name: str, collection: AsyncCollection[Any]) -> None:

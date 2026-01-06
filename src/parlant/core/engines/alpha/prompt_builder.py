@@ -359,6 +359,7 @@ Do NOT ignore language switching requests!
         
         Only adds the section if handover rules are configured in agent.metadata.
         Handover rules define when to transfer the conversation to a human agent.
+        The ho000001: prefix is bound to each condition to prevent misuse.
         """
         handover_rules = agent.metadata.get("handover", []) if agent.metadata else []
         
@@ -369,19 +370,16 @@ Do NOT ignore language switching requests!
         if not valid_rules:
             return self
         
+        # Bind ho000001: format directly to each condition
         escaped_rules = [escape_format_string(rule) for rule in valid_rules]
-        rules_text = "\n".join(f"   - {rule}" for rule in escaped_rules)
+        rules_text = "\n".join(f"   - Condition: {rule}\n     → Response: ho000001:<your message>" for rule in escaped_rules)
         
         template = f"""
-HANDOVER INSTRUCTIONS
----------------------
-When ANY of the following conditions is met, you MUST initiate a handover to a human agent:
-
+HANDOVER INSTRUCTIONS (ONLY for conditions below)
+-------------------------------------------------
 {rules_text}
 
-HANDOVER OUTPUT FORMAT:
-When initiating a handover, output ONLY in this exact format: ho000001:<your message>
-Your message should acknowledge the request and inform the customer they will be connected to a team member.
+Note: The ho000001: prefix is EXCLUSIVELY for the above conditions. Never use it elsewhere.
 """
         
         self.add_section(

@@ -18,6 +18,7 @@ import asyncio
 from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import enum
 from hashlib import md5
 import importlib.util
@@ -122,7 +123,7 @@ from parlant.core.nlp.generation import (
 )
 from parlant.core.nlp.tokenization import EstimatingTokenizer
 from parlant.core.persistence.common import ObjectId
-from parlant.core.persistence.document_database import DocumentDatabase, identity_loader_for
+from parlant.core.persistence.document_database import DocumentCollection, DocumentDatabase, identity_loader_for
 from parlant.core.relationships import (
     RelationshipKind,
     RelationshipDocumentStore,
@@ -365,45 +366,67 @@ class NLPServices:
         return SnowflakeCortexService(container[Logger])
 
 
-class _CachedGuidelineEvaluation(TypedDict, total=False):
+class _EvaluationCacheDoc(TypedDict, total=False):
+    """评估缓存文档 - 与 JSON 文件格式一致
+    
+    结构（平铺，无需区分 guideline/journey）：
+    {
+        "id": "hash...",              # 评估请求的 hash
+        "chatbot_id": "1212",         # 分区键（多租户）
+        "version": "3.0.2",
+        "creation_utc": "2025-01-06T10:00:00Z",
+        "properties": {               # AI 评估结果（动态存储）
+            "continuous": false,
+            "is_journey_candidate": true/false,
+            "journey_graph": null 或 {...},  # 有值=journey
+            ...
+        }
+    }
+    
+    索引：(chatbot_id, id) 复合唯一索引
+    """
     id: ObjectId
+    chatbot_id: str
     version: Version.String
+    creation_utc: str
     properties: dict[str, JSONSerializable]
 
 
-class _CachedJourneyEvaluation(TypedDict, total=False):
-    id: ObjectId
-    version: Version.String
-    node_properties: dict[JourneyStateId, dict[str, JSONSerializable]]
-    edge_properties: dict[JourneyTransitionId, dict[str, JSONSerializable]]
-
-
 class _CachedEvaluator:
+    """评估结果缓存管理器
+    
+    设计特点：
+    1. 平铺结构，与 JSON 文件格式兼容
+    2. properties 动态存储，灵活适应 AI 输出变化
+    3. journey_graph 本身标识类型（null=guideline, 有值=journey）
+    """
+    
     @dataclass(frozen=True)
-    class JourneyEvaluation:
-        node_properties: dict[JourneyStateId, dict[str, JSONSerializable]]
-        edge_properties: dict[JourneyTransitionId, dict[str, JSONSerializable]]
-        evaluation_id: EvaluationId | None = None
-
-    @dataclass(frozen=True)
-    class GuidelineEvaluation:
+    class Evaluation:
+        """统一的评估结果"""
         properties: dict[str, JSONSerializable]
         evaluation_id: EvaluationId | None = None
+        
+        @property
+        def is_journey(self) -> bool:
+            """通过 journey_graph 判断类型"""
+            return self.properties.get("journey_graph") is not None
+
+    # 兼容旧接口
+    GuidelineEvaluation = Evaluation
+    JourneyEvaluation = Evaluation
 
     def __init__(
         self,
-        db: JSONFileDocumentDatabase,
+        db: DocumentDatabase,
         container: Container,
     ) -> None:
-        self._db: JSONFileDocumentDatabase = db
-        # 按 chatbot_id 缓存集合，实现多租户隔离
-        self._guideline_collections: dict[str, JSONFileDocumentCollection[_CachedGuidelineEvaluation]] = {}
-        self._journey_collections: dict[str, JSONFileDocumentCollection[_CachedJourneyEvaluation]] = {}
-
+        self._db: DocumentDatabase = db
         self._container = container
         self._logger = container[Logger]
         self._exit_stack = AsyncExitStack()
         self._progress: dict[str, float] = {}
+        self._collection: DocumentCollection[_EvaluationCacheDoc] | None = None
 
     def _set_progress(self, key: str, pct: float) -> None:
         self._progress[key] = max(0.0, min(pct, 100.0))
@@ -419,32 +442,77 @@ class _CachedEvaluator:
                 return str(agent.metadata["chatbot_id"])
         except Exception as e:
             self._logger.warning(f"Failed to get chatbot_id from agent {agent_id}: {e}")
-        
-        # 默认使用 agent_id 作为 chatbot_id
         return str(agent_id)
 
-    async def _get_guideline_collection(self, chatbot_id: str) -> JSONFileDocumentCollection[_CachedGuidelineEvaluation]:
-        """根据 chatbot_id 获取或创建 guideline 集合"""
-        if chatbot_id not in self._guideline_collections:
-            self._guideline_collections[chatbot_id] = await self._db.get_or_create_collection(
-                name=f"guideline_evaluations_{chatbot_id}",
-                schema=_CachedGuidelineEvaluation,
-                document_loader=identity_loader_for(_CachedGuidelineEvaluation),
+    async def _get_collection(self) -> DocumentCollection[_EvaluationCacheDoc]:
+        """获取评估缓存集合（在 sessions 数据库下）"""
+        if self._collection is None:
+            self._collection = await self._db.get_or_create_collection(
+                name="evaluation_cache",  # 集合名
+                schema=_EvaluationCacheDoc,
+                document_loader=identity_loader_for(_EvaluationCacheDoc),
             )
-        return self._guideline_collections[chatbot_id]
+        return self._collection
 
-    async def _get_journey_collection(self, chatbot_id: str) -> JSONFileDocumentCollection[_CachedJourneyEvaluation]:
-        """根据 chatbot_id 获取或创建 journey 集合"""
-        if chatbot_id not in self._journey_collections:
-            self._journey_collections[chatbot_id] = await self._db.get_or_create_collection(
-                name=f"journey_evaluations_{chatbot_id}",
-                schema=_CachedJourneyEvaluation,
-                document_loader=identity_loader_for(_CachedJourneyEvaluation),
-            )
-        return self._journey_collections[chatbot_id]
+    # ==================== CRUD 操作 ====================
+    
+    async def get(self, chatbot_id: str, hash_id: str) -> _EvaluationCacheDoc | None:
+        """读取单条缓存"""
+        collection = await self._get_collection()
+        return await collection.find_one({
+            "chatbot_id": {"$eq": chatbot_id},
+            "id": {"$eq": hash_id},
+        })
+    
+    async def set(
+        self, 
+        chatbot_id: str, 
+        hash_id: str, 
+        properties: dict[str, JSONSerializable],
+    ) -> None:
+        """创建/更新缓存（upsert）"""
+        collection = await self._get_collection()
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # 检查是否已存在（决定是创建还是更新）
+        existing = await collection.find_one({
+            "chatbot_id": {"$eq": chatbot_id},
+            "id": {"$eq": hash_id},
+        })
+        
+        doc: _EvaluationCacheDoc = {
+            "id": ObjectId(hash_id),
+            "chatbot_id": chatbot_id,
+            "version": Version.String(VERSION),
+            "creation_utc": existing["creation_utc"] if existing else now,
+            "properties": properties,
+        }
+        
+        self._logger.info(f"Evaluation cache set for chatbot: {chatbot_id}")
+        await collection.update_one(
+            {"chatbot_id": {"$eq": chatbot_id}, "id": {"$eq": hash_id}},
+            cast(_EvaluationCacheDoc, doc),
+            upsert=True,
+        )
+    
+    async def delete(self, chatbot_id: str, hash_id: str) -> bool:
+        """删除单条缓存"""
+        collection = await self._get_collection()
+        result = await collection.delete_one({
+            "chatbot_id": {"$eq": chatbot_id},
+            "id": {"$eq": hash_id},
+        })
+        return result.deleted_count > 0
+    
+    async def list_by_chatbot(self, chatbot_id: str) -> list[_EvaluationCacheDoc]:
+        """列出 chatbot 的所有缓存"""
+        collection = await self._get_collection()
+        return list(await collection.find({"chatbot_id": {"$eq": chatbot_id}}))
 
     async def __aenter__(self) -> _CachedEvaluator:
         await self._exit_stack.enter_async_context(self._db)
+        # 启动时立即初始化集合（确保表和索引创建）
+        await self._get_collection()
         return self
 
     async def __aexit__(
@@ -521,12 +589,9 @@ class _CachedEvaluator:
         journey_state_proposition: bool = False,
         properties_proposition: bool = True,
         agent_id: AgentId | None = None,
-    ) -> _CachedEvaluator.GuidelineEvaluation:
-        # 获取 chatbot_id 并获取对应的集合
+    ) -> _CachedEvaluator.Evaluation:
         chatbot_id = await self._get_chatbot_id_from_agent(agent_id) if agent_id else "default"
-        guideline_collection = await self._get_guideline_collection(chatbot_id)
         
-        # First check if we have a cached evaluation for this guideline
         _hash = self._hash_guideline_evaluation_request(
             g=g,
             tool_ids=tool_ids,
@@ -534,41 +599,30 @@ class _CachedEvaluator:
             properties_proposition=properties_proposition,
         )
 
-        if cached_evaluation := await guideline_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(
-                f"Cached: C:{(g.condition or '')[:30]} A:{(g.action or '')[:30]}"
-            )
-
-            return self.GuidelineEvaluation(
-                properties=cached_evaluation["properties"],
-                evaluation_id=None,  # 缓存的评估没有evaluation_id
-            )
+        # 查找缓存
+        if cached := await self.get(chatbot_id, _hash):
+            self._logger.trace(f"🎯 Cached: C:{(g.condition or '')[:30]} A:{(g.action or '')[:30]}")
+            return self.Evaluation(properties=cached["properties"], evaluation_id=None)
 
         evaluation_id = await self._container[BehavioralChangeEvaluator].create_evaluation_task(
             payload_descriptors=[
                 PayloadDescriptor(
                     PayloadKind.GUIDELINE,
                     GuidelinePayload(
-                        content=GuidelineContent(
-                            condition=g.condition,
-                            action=g.action,
-                        ),
+                        content=GuidelineContent(condition=g.condition, action=g.action),
                         tool_ids=tool_ids,
                         operation=PayloadOperation.ADD,
                         action_proposition=action_proposition,
                         properties_proposition=properties_proposition,
                         journey_node_proposition=journey_state_proposition,
-                        id=agent_id,  # 传递 agent_id 用于工具查找
+                        id=agent_id,
                     ),
                 )
             ],
         )
 
         while True:
-            evaluation = await self._container[EvaluationStore].read_evaluation(
-                evaluation_id=evaluation_id,
-            )
-
+            evaluation = await self._container[EvaluationStore].read_evaluation(evaluation_id)
             self._set_progress(entity_id, evaluation.progress)
 
             if evaluation.status in [EvaluationStatus.PENDING, EvaluationStatus.RUNNING]:
@@ -577,60 +631,31 @@ class _CachedEvaluator:
             elif evaluation.status == EvaluationStatus.FAILED:
                 raise SDKError(f"Evaluation failed: {evaluation.error}")
             elif evaluation.status == EvaluationStatus.COMPLETED:
-                if not evaluation.invoices:
-                    raise SDKError("Evaluation completed with no invoices.")
-                if not evaluation.invoices[0].approved:
-                    raise SDKError("Evaluation completed with unapproved invoice.")
-
+                if not evaluation.invoices or not evaluation.invoices[0].approved:
+                    raise SDKError("Evaluation completed with no approved invoice.")
                 invoice = evaluation.invoices[0]
-
                 if not invoice.data:
-                    raise SDKError(
-                        "Evaluation completed with no properties_proposition in the invoice."
-                    )
+                    raise SDKError("Evaluation completed with no properties_proposition.")
 
             assert invoice.data
+            props = cast(InvoiceGuidelineData, invoice.data).properties_proposition or {}
 
-            # Cache the evaluation result
-            await guideline_collection.insert_one(
-                {
-                    "id": ObjectId(_hash),
-                    "version": Version.String(VERSION),
-                    "properties": cast(InvoiceGuidelineData, invoice.data).properties_proposition
-                    or {},
-                }
-            )
-
-            # Return the evaluation result
-            return self.GuidelineEvaluation(
-                properties=cast(InvoiceGuidelineData, invoice.data).properties_proposition or {},
-                evaluation_id=evaluation_id,
-            )
+            # 缓存结果
+            await self.set(chatbot_id, _hash, props)
+            return self.Evaluation(properties=props, evaluation_id=evaluation_id)
 
     async def evaluate_journey(
         self,
         journey: Journey,
         agent_id: AgentId | None = None,
-    ) -> _CachedEvaluator.JourneyEvaluation:
-        # 获取 chatbot_id 并获取对应的集合
+    ) -> _CachedEvaluator.Evaluation:
         chatbot_id = await self._get_chatbot_id_from_agent(agent_id) if agent_id else "default"
-        journey_collection = await self._get_journey_collection(chatbot_id)
-        
-        # First check if we have a cached evaluation for this journey
-        _hash = self._hash_journey_evaluation_request(
-            journey=journey,
-        )
+        _hash = self._hash_journey_evaluation_request(journey=journey)
 
-        if cached_evaluation := await journey_collection.find_one({"id": {"$eq": _hash}}):
-            self._logger.trace(
-                f"Using cached evaluation for journey: Title: {journey.title or 'None'};"
-            )
-
-            return self.JourneyEvaluation(
-                node_properties=cached_evaluation["node_properties"],
-                edge_properties=cached_evaluation["edge_properties"],
-                evaluation_id=None,  # 缓存的评估没有evaluation_id
-            )
+        # 查找缓存
+        if cached := await self.get(chatbot_id, _hash):
+            self._logger.trace(f"Using cached evaluation for journey: {journey.title or 'None'}")
+            return self.Evaluation(properties=cached["properties"], evaluation_id=None)
 
         self._logger.trace(f"Evaluating journey: Title: {journey.title or 'None'}")
 
@@ -638,19 +663,13 @@ class _CachedEvaluator:
             payload_descriptors=[
                 PayloadDescriptor(
                     PayloadKind.JOURNEY,
-                    JourneyPayload(
-                        journey_id=journey.id,
-                        operation=PayloadOperation.ADD,
-                    ),
+                    JourneyPayload(journey_id=journey.id, operation=PayloadOperation.ADD),
                 )
             ],
         )
 
         while True:
-            evaluation = await self._container[EvaluationStore].read_evaluation(
-                evaluation_id=evaluation_id,
-            )
-
+            evaluation = await self._container[EvaluationStore].read_evaluation(evaluation_id)
             self._set_progress(journey.id, evaluation.progress)
 
             if evaluation.status in [EvaluationStatus.PENDING, EvaluationStatus.RUNNING]:
@@ -659,41 +678,22 @@ class _CachedEvaluator:
             elif evaluation.status == EvaluationStatus.FAILED:
                 raise SDKError(f"Journey Evaluation failed: {evaluation.error}")
             elif evaluation.status == EvaluationStatus.COMPLETED:
-                if not evaluation.invoices:
-                    raise SDKError("Journey Evaluation completed with no invoices.")
-                if not evaluation.invoices[0].approved:
-                    raise SDKError("Journey Evaluation completed with unapproved invoice.")
-
+                if not evaluation.invoices or not evaluation.invoices[0].approved:
+                    raise SDKError("Journey Evaluation completed with no approved invoice.")
                 invoice = evaluation.invoices[0]
-
                 if not invoice.data:
-                    raise SDKError("Journey Evaluation completed with no data in the invoice.")
+                    raise SDKError("Journey Evaluation completed with no data.")
 
             assert invoice.data
+            # 平铺存储 node_properties 和 edge_properties
+            props: dict[str, JSONSerializable] = {
+                "node_properties": cast(InvoiceJourneyData, invoice.data).node_properties_proposition or {},
+                "edge_properties": cast(InvoiceJourneyData, invoice.data).edge_properties_proposition or {},
+            }
 
-            # Cache the evaluation result
-            await journey_collection.insert_one(
-                {
-                    "id": ObjectId(_hash),
-                    "version": Version.String(VERSION),
-                    "node_properties": cast(
-                        InvoiceJourneyData, invoice.data
-                    ).node_properties_proposition,
-                    "edge_properties": cast(
-                        InvoiceJourneyData, invoice.data
-                    ).edge_properties_proposition
-                    or {},
-                }
-            )
-
-            # Return the evaluation result
-            return self.JourneyEvaluation(
-                node_properties=cast(InvoiceJourneyData, invoice.data).node_properties_proposition
-                or {},
-                edge_properties=cast(InvoiceJourneyData, invoice.data).edge_properties_proposition
-                or {},
-                evaluation_id=evaluation_id,
-            )
+            # 缓存结果
+            await self.set(chatbot_id, _hash, props)
+            return self.Evaluation(properties=props, evaluation_id=evaluation_id)
 
 
 @dataclass(frozen=True)
@@ -3018,6 +3018,49 @@ class Server:
         return canrep.id
 
     def _get_startup_params(self) -> StartupParameters:
+        # MongoDB client shared across all database connections
+        mongo_client: object | None = None
+
+        async def make_mongo_db(url: str, name: str, logger: Logger) -> DocumentDatabase:
+            """创建 MongoDB 数据库连接（复用已有的 mongo_client）"""
+            nonlocal mongo_client
+
+            if importlib.util.find_spec("pymongo") is None:
+                raise SDKError(
+                    "MongoDB requires an additional package to be installed. "
+                    "Please install parlant[mongo] to use MongoDB."
+                )
+
+            from pymongo import AsyncMongoClient
+            from parlant.adapters.db.mongo_db import MongoDocumentDatabase
+
+            if mongo_client is None:
+                # 配置MongoDB超时参数（防止无限等待）
+                mongo_client = await self._exit_stack.enter_async_context(
+                    AsyncMongoClient[Any](
+                        url,
+                        serverSelectionTimeoutMS=30000,  # 30秒服务器选择超时
+                        connectTimeoutMS=20000,          # 20秒连接超时
+                        socketTimeoutMS=30000,           # 30秒socket超时（关键！）
+                        maxPoolSize=100,                 # 连接池大小
+                        minPoolSize=10,
+                        maxIdleTimeMS=60000,             # 60秒空闲连接回收
+                        heartbeatFrequencyMS=10000,      # 10秒心跳检查
+                    )
+                )
+
+            import os
+            database_name = os.getenv("MONGO_DATABASE_NAME", "omni_agent")
+            db = await self._exit_stack.enter_async_context(
+                MongoDocumentDatabase(
+                    mongo_client=cast(AsyncMongoClient[Any], mongo_client),
+                    database_name=f"{database_name}_{name}",
+                    logger=logger,
+                )
+            )
+
+            return db
+
         async def override_stores_with_transient_versions(c: Callable[[], Container]) -> None:
             c()[NLPService] = self._nlp_service_func(c())
 
@@ -3051,47 +3094,6 @@ class Server:
                     ),
                 )
 
-            mongo_client: object | None = None
-
-            async def make_mongo_db(url: str, name: str) -> DocumentDatabase:
-                nonlocal mongo_client
-
-                if importlib.util.find_spec("pymongo") is None:
-                    raise SDKError(
-                        "MongoDB requires an additional package to be installed. "
-                        "Please install parlant[mongo] to use MongoDB."
-                    )
-
-                from pymongo import AsyncMongoClient
-                from parlant.adapters.db.mongo_db import MongoDocumentDatabase
-
-                if mongo_client is None:
-                    # 配置MongoDB超时参数（防止无限等待）
-                    mongo_client = await self._exit_stack.enter_async_context(
-                        AsyncMongoClient[Any](
-                            url,
-                            serverSelectionTimeoutMS=30000,  # 30秒服务器选择超时
-                            connectTimeoutMS=20000,          # 20秒连接超时
-                            socketTimeoutMS=30000,           # 30秒socket超时（关键！）
-                            maxPoolSize=100,                 # 连接池大小
-                            minPoolSize=10,
-                            maxIdleTimeMS=60000,             # 60秒空闲连接回收
-                            heartbeatFrequencyMS=10000,      # 10秒心跳检查
-                        )
-                    )
-
-                import os
-                database_name = os.getenv("MONGO_DATABASE_NAME", "omni_agent")
-                db = await self._exit_stack.enter_async_context(
-                    MongoDocumentDatabase(
-                        mongo_client=cast(AsyncMongoClient[Any], mongo_client),
-                        database_name=f"{database_name}_{name}",
-                        logger=c()[Logger],
-                    )
-                )
-
-                return db
-
             async def make_persistable_store(t: type[T], spec: str, name: str, **kwargs: Any) -> T:
                 store: T
 
@@ -3116,7 +3118,7 @@ class Server:
                 elif spec.startswith("mongodb://") or spec.startswith("mongodb+srv://"):
                     store = await self._exit_stack.enter_async_context(
                         t(
-                            database=await make_mongo_db(spec, name),
+                            database=await make_mongo_db(spec, name, c()[Logger]),
                             allow_migration=self._migrate,
                             **kwargs,
                         )  # type: ignore
@@ -3228,8 +3230,20 @@ class Server:
             await self._exit_stack.enter_async_context(self._plugin_server)
             self._exit_stack.push_async_callback(self._plugin_server.shutdown)
 
+            # 使用 MongoDB 存储评估缓存（容器化环境防止数据丢失）
+            # 当 session_store 使用 MongoDB 时，evaluation_cache 也使用 MongoDB
+            if isinstance(self._session_store, str) and (
+                self._session_store.startswith("mongodb://") or 
+                self._session_store.startswith("mongodb+srv://")
+            ):
+                evaluation_cache_db = await make_mongo_db(self._session_store, "sessions", c[Logger])
+            else:
+                evaluation_cache_db = await self._exit_stack.enter_async_context(
+                    JSONFileDocumentDatabase(c[Logger], PARLANT_HOME_DIR / "evaluation_cache.json")
+                )
+            
             self._evaluator = _CachedEvaluator(
-                db=JSONFileDocumentDatabase(c[Logger], PARLANT_HOME_DIR / "evaluation_cache.json"),
+                db=evaluation_cache_db,
                 container=c,
             )
             await self._exit_stack.enter_async_context(self._evaluator)
