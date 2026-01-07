@@ -410,7 +410,55 @@ class SingleToolBatch(ToolCallBatch):
                     f"Inference::Completion::Skipped: {tool_id.to_string()}\n{tc.model_dump_json(indent=2)}"
                 )
 
-                evaluations.append((tool_id, ToolCallEvaluation.DATA_ALREADY_IN_CONTEXT))
+                # When tool is not applicable due to missing required params,
+                # still extract missing_data so response generator can guide user to provide them.
+                # This handles cases where guideline says "guide user to provide required fields"
+                # but tool evaluation returns is_applicable=false because data hasn't been provided yet.
+                if tc.are_non_optional_arguments_missing:
+                    if tc.argument_evaluations:
+                        # Use detailed evaluation if LLM provided it
+                        for evaluation in tc.argument_evaluations:
+                            if evaluation.parameter_name not in tool.parameters:
+                                continue
+                            tool_descriptor, tool_options = tool.parameters[evaluation.parameter_name]
+                            if (
+                                evaluation.valid_invalid_or_missing == ValidationStatus.MISSING
+                                and not evaluation.is_optional
+                                and not tool_options.hidden
+                            ):
+                                display_name = tool_options.display_name or evaluation.parameter_name
+                                if display_name not in [p.parameter for p in missing_data + invalid_data]:
+                                    missing_data.append(
+                                        MissingToolData(
+                                            parameter=display_name,
+                                            significance=tool_options.significance,
+                                            description=tool_descriptor.get("description"),
+                                            precedence=tool_options.precedence,
+                                            choices=tool_descriptor.get("enum", None),
+                                        )
+                                    )
+                    else:
+                        # Fallback: when argument_evaluations is null, assume all required params are missing
+                        for param_name in tool.required:
+                            if param_name not in tool.parameters:
+                                continue
+                            tool_descriptor, tool_options = tool.parameters[param_name]
+                            if not tool_options.hidden:
+                                display_name = tool_options.display_name or param_name
+                                if display_name not in [p.parameter for p in missing_data + invalid_data]:
+                                    missing_data.append(
+                                        MissingToolData(
+                                            parameter=display_name,
+                                            significance=tool_options.significance,
+                                            description=tool_descriptor.get("description"),
+                                            precedence=tool_options.precedence,
+                                            choices=tool_descriptor.get("enum", None),
+                                        )
+                                    )
+
+                    evaluations.append((tool_id, ToolCallEvaluation.CANNOT_RUN))
+                else:
+                    evaluations.append((tool_id, ToolCallEvaluation.DATA_ALREADY_IN_CONTEXT))
 
         return tool_calls, evaluations, missing_data, invalid_data
 
