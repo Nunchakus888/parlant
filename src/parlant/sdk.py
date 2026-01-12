@@ -2408,9 +2408,9 @@ class Server:
                         )
 
                 elif entity_type == "journey":
-                    for node_id, properties in cast(
-                        _CachedEvaluator.JourneyEvaluation, result
-                    ).node_properties.items():
+                    # node_properties 存储在 properties["node_properties"] 中
+                    node_props = result.properties.get("node_properties", {})
+                    for node_id, properties in node_props.items():
                         node = await self._container[JourneyStore].read_node(node_id)
                         properties_to_add = {
                             k: v
