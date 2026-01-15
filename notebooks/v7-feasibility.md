@@ -410,7 +410,8 @@ sequenceDiagram
 |----------|------|--------|----------|----------|
 | **SKILL** | 执行Guidelines (ARQs) | ✅ | ✅ 执行后生成 | ❌ |
 | **TOOL** | 调用工具获取数据 | ✅ | ✅ 执行后生成 | ❌ |
-| **FLOW** | 固定规则流程 | ❌ | ❌ 完全接管 | ✅ |
+| **FLOW** | 固定规则流程 | ❌ | ❌ 静默返回状态 | ✅ |
+| **SYSTEM** | 内置系统操作 | ❌ | ❌ 静默执行 | ❌ |
 | **NO_ACTION** | 无匹配动作 | ✅ | ✅ 直接生成 | ❌ |
 
 ### 6.2 完整执行流程
@@ -429,6 +430,7 @@ flowchart TB
     F -->|SKILL| G[SkillExecutor]
     F -->|TOOL| H[ToolExecutor]
     F -->|FLOW| I[FlowExecutor]
+    F -->|SYSTEM| R[SystemExecutor]
     F -->|NO_ACTION| J[直接消息生成]
     
     G --> K[结果写入Context]
@@ -439,12 +441,24 @@ flowchart TB
     M --> N[发送响应]
     
     I --> O[Flow函数执行]
-    O --> Q[返回状态给主流程<br/>静默不回复]
+    O --> Q[返回状态<br/>静默]
+    
+    R --> S{系统操作类型}
+    S -->|HANDOFF| S1[转接人工]
+    S -->|UPDATE_PROFILE| S2[更新客户资料]
+    S -->|CLOSE_SESSION| S3[关闭会话]
+    S -->|CUSTOM| S4[自定义扩展]
+    
+    S1 --> T[静默<br/>不参与上下文]
+    S2 --> T
+    S3 --> T
+    S4 --> T
     
     J --> L
     
     N --> P[结束/等待下一消息]
     Q --> P
+    T --> P
 ```
 
 ### 6.3 各动作类型详解
@@ -643,6 +657,139 @@ class NoActionHandler:
 NO_ACTION → KB检索 → MessageGenerator → 响应
 ```
 
+#### 6.3.5 SYSTEM - 内置系统操作
+
+```python
+class SystemAction(Enum):
+    """内置系统操作类型"""
+    # === 内置操作 ===
+    HANDOFF = "handoff"                 # 人工转接
+    CLOSE_SESSION = "close_session"     # 关闭会话
+    UPDATE_PROFILE = "update_profile"   # 更新客户资料
+    
+    # === 扩展操作 ===
+    CUSTOM = "custom"                   # 自定义扩展 (通过handler_id指定)
+
+@dataclass
+class SystemActionRequest:
+    type: Literal["SYSTEM"] = "SYSTEM"
+    action: SystemAction
+    params: dict | None = None    # 操作参数
+
+# 系统操作注册表
+SystemRegistry = dict[SystemAction, Callable[[SharedContext, dict], Awaitable[None]]]
+
+class SystemExecutor:
+    """
+    内置系统操作执行器
+    - 意图匹配触发
+    - 静默执行，不产生消息
+    - 不参与主流程上下文构建
+    """
+    
+    def __init__(self, registry: SystemRegistry):
+        self._registry = registry
+    
+    async def execute(
+        self, 
+        action: SystemAction, 
+        ctx: SharedContext,
+        params: dict | None = None
+    ) -> None:
+        handler = self._registry.get(action)
+        if handler:
+            await handler(ctx, params or {})
+        # 静默返回，无结果，不影响上下文
+```
+
+**内置操作详解:**
+
+| 操作 | 触发意图示例 | 参数 | 执行后 |
+|------|-------------|------|--------|
+| `HANDOFF` | "转人工"、"找真人" | reason, priority, skill_group | status=transferred |
+| `CLOSE_SESSION` | "结束对话"、"再见" | reason, satisfaction_score | status=closed |
+| `UPDATE_PROFILE` | "我换号码了"、"地址改了" | fields: {phone, address, ...} | 静默继续 |
+| `CUSTOM` | 业务自定义 | handler_id, params | 静默继续 |
+
+**实现代码:**
+```python
+# === 内置操作 ===
+
+async def handoff_handler(ctx: SharedContext, params: dict) -> None:
+    """人工转接"""
+    await ctx.session.transfer_to_human(
+        reason=params.get("reason"),
+        priority=params.get("priority", "normal"),
+        skill_group=params.get("skill_group"),
+    )
+    ctx.workflow_state.status = "transferred"
+
+async def close_session_handler(ctx: SharedContext, params: dict) -> None:
+    """关闭会话"""
+    await ctx.session.close(reason=params.get("reason"))
+    ctx.workflow_state.status = "closed"
+
+async def update_profile_handler(ctx: SharedContext, params: dict) -> None:
+    """更新客户资料 (静默)"""
+    if ctx.customer and params.get("fields"):
+        await ctx.customer.update(params["fields"])
+
+# === 扩展机制 ===
+
+# 自定义handler注册表 (业务按需注册)
+custom_handlers: dict[str, Callable] = {}
+
+def register_custom_handler(handler_id: str, handler: Callable):
+    """注册自定义系统操作"""
+    custom_handlers[handler_id] = handler
+
+async def custom_handler(ctx: SharedContext, params: dict) -> None:
+    """
+    自定义扩展操作
+    params: {handler_id: "xxx", ...其他参数}
+    """
+    handler_id = params.get("handler_id")
+    if handler_id and handler_id in custom_handlers:
+        await custom_handlers[handler_id](ctx, params)
+
+# === 注册表 ===
+system_registry: SystemRegistry = {
+    SystemAction.HANDOFF: handoff_handler,
+    SystemAction.CLOSE_SESSION: close_session_handler,
+    SystemAction.UPDATE_PROFILE: update_profile_handler,
+    SystemAction.CUSTOM: custom_handler,
+}
+
+# === 使用示例：注册自定义操作 ===
+# register_custom_handler("send_email", send_email_handler)
+# register_custom_handler("create_ticket", create_ticket_handler)
+# register_custom_handler("sync_crm", sync_crm_handler)
+```
+
+**执行流程:**
+```
+意图命中SYSTEM → 执行系统操作 → 静默(不回复，不影响上下文)
+```
+
+**与其他类型对比:**
+
+| 对比项 | SYSTEM | SKILL | FLOW |
+|--------|--------|-------|------|
+| 触发方式 | 意图匹配 | 意图匹配 | 意图匹配 |
+| 消息生成 | ❌ 无 | ✅ 有 | ❌ 无 |
+| 上下文影响 | ❌ 不参与 | ✅ 写入 | ✅ 可更新 |
+| 典型场景 | 转接/更新/关闭 | 业务技能 | 固定流程 |
+
+**为什么不用SKILL？**
+- SKILL执行后需要消息生成
+- SYSTEM操作是纯后台行为
+- 不应污染对话上下文
+
+**为什么不用FLOW？**
+- FLOW用于固定规则流程接管
+- SYSTEM是即时操作，不接管流程
+- SYSTEM执行后主流程继续
+
 ### 6.4 统一执行逻辑
 
 ```python
@@ -670,10 +817,21 @@ async def process(self, ctx: SharedContext, user_message: str):
                 
             case "FLOW":
                 result = await self._flow_executor.execute(action, ctx)
-                # Flow完全接管，不需要消息生成
+                # Flow接管，静默返回状态
                 need_message_gen = False
-                if result.jumped or result.ended:
-                    return  # Flow已处理完毕
+                # 根据返回状态决定后续
+                if result.next_node:
+                    ctx.workflow_state.current_node = result.next_node
+                
+            case "SYSTEM":
+                # 系统操作：静默执行，不影响上下文，不生成消息
+                await self._system_executor.execute(
+                    action.action, ctx, action.params
+                )
+                need_message_gen = False  # 静默
+                # 继续主流程（除非是关闭/转接）
+                if ctx.workflow_state.status in ("closed", "transferred"):
+                    return
                 
             case "NO_ACTION":
                 # 无动作，直接进入消息生成
@@ -712,10 +870,17 @@ flowchart LR
     end
     
     subgraph FLOW["FLOW执行"]
-        F1[flow_id] --> F2[FlowRegistry查找]
-        F2 --> F3[调用预注册函数]
-        F3 --> F4[返回结果]
-        F4 --> F5[无AI]
+        F1[flow_id] --> F2[调用预注册函数]
+        F2 --> F3[返回状态]
+        F3 --> F4[静默]
+    end
+    
+    subgraph SYSTEM["SYSTEM执行"]
+        Y1[系统操作] --> Y2{类型}
+        Y2 -->|HANDOFF/CLOSE| Y3[会话控制]
+        Y2 -->|UPDATE/CUSTOM| Y4[静默操作]
+        Y3 --> Y5[status变更]
+        Y4 --> Y6[不影响上下文]
     end
     
     subgraph NOACTION["NO_ACTION"]
