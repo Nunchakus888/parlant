@@ -278,28 +278,40 @@ class MessageGenerator:
 
 ```mermaid
 flowchart TB
-    subgraph Phase1["阶段1: 快速响应 + 规划 (单次调用)"]
+    subgraph Phase1["阶段1: 规划 (用户消息触发)"]
         A[用户消息] --> B[WorkflowPlanner]
         B --> C{解析结果}
-        C --> D[immediate_response: 立即回复内容]
-        C --> E[intent: 识别的意图]
-        C --> F[next_actions: 后续动作队列]
+        C --> D[immediate_response]
+        C --> E[intent]
+        C --> TM[timers]
+        E --> F[next_actions]
     end
     
-    subgraph Phase2["阶段2: 动作执行 (按需调用)"]
-        F --> G{遍历actions}
+    subgraph Phase2["阶段2: 动作执行"]
+        F --> G{动作类型}
         G -->|SKILL| H[GuidelinesEngine]
         G -->|TOOL| I[ToolExecutor]
         G -->|CHAT| J[MessageGenerator]
+        G -->|FLOW| O[FlowExecutor]
         H --> K[结果累积]
         I --> K
         J --> K
     end
     
     D -->|立即发送| L[用户]
+    O -->|固定模式返回| L
     K --> M{需要最终响应?}
     M -->|Yes| N[KB + MessageGen]
     N --> L
+    
+    subgraph Phase3["阶段3: 响应完成"]
+        L --> P{有timers?}
+        P -->|Yes| Q[注册TimerScheduler]
+        Q -.->|到期触发| G
+    end
+    
+    P -->|No| S[等待下一轮迭代]
+    S -.->|用户消息| A
 ```
 
 ### 5.4 WorkflowPlanner 设计
@@ -312,6 +324,16 @@ class PlanResult:
     intent: str                       # 识别的意图
     next_actions: list[Action]        # 后续动作队列
     need_final_response: bool         # 是否需要最终响应
+    timers: list[TimerConfig] | None  # 定时任务配置
+
+@dataclass
+class TimerConfig:
+    """定时任务配置"""
+    delay: int                        # 延迟秒数
+    action_type: str                  # 到期执行的动作类型
+    action_target: str | None         # 动作目标
+    action_params: dict | None        # 动作参数
+    condition: str | None = None      # 执行前条件检查
 
 class WorkflowPlanner:
     """
@@ -340,7 +362,16 @@ class WorkflowPlanner:
         {{"type": "TOOL", "tool_id": "...", "params": {{...}}}},
         ...
     ],
-    "need_final_response": true/false
+    "need_final_response": true/false,
+    "timers": [
+        {{
+            "delay": 300,
+            "action_type": "CHAT",
+            "action_target": null,
+            "action_params": {{"prompt": "请问还需要帮助吗?"}},
+            "condition": "用户未回复"
+        }}
+    ]
 }}
 """
         
@@ -351,9 +382,13 @@ class WorkflowPlanner:
 ### 5.5 执行流程
 
 ```python
-async def process(self, ctx: SharedContext, user_message: str):
+async def process(self, ctx: SharedContext, trigger: WorkflowTrigger):
+    """
+    统一处理入口
+    trigger: 用户消息 或 定时事件
+    """
     # ========== 阶段1: 规划 (单次调用) ==========
-    plan = await self._planner.plan(ctx, self._workflow_prompt, user_message)
+    plan = await self._planner.plan(ctx, self._workflow_prompt, trigger)
     
     # 立即回复 (如有)
     if plan.immediate_response:
@@ -366,15 +401,58 @@ async def process(self, ctx: SharedContext, user_message: str):
                 await self._guidelines.execute_as_skill(action, ctx)
             case "TOOL":
                 await self._tools.execute(action, ctx)
+            case "FLOW":
+                await self._flow_executor.execute(action.flow_id, ctx)
+                return  # Flow接管，直接返回
+            case "SYSTEM":
+                await self._system_executor.execute(action.action, ctx, action.params)
             case "CHAT":
-                # 中间响应
                 await self._msg_gen.generate(ctx, action.prompt)
     
     # ========== 阶段3: 最终响应 (如需) ==========
     if plan.need_final_response:
-        # KB检索 + 生成
         kb_results = await self._kb.retrieve(ctx) if self._kb else []
         await self._msg_gen.generate(ctx, plan.intent, kb_results)
+    
+    # ========== 阶段4: 响应后注册定时任务 ==========
+    if plan.timers:
+        for timer in plan.timers:
+            await self._timer_scheduler.schedule(
+                session_id=ctx.session.id,
+                timer=timer,
+                callback=self._on_timer_trigger
+            )
+
+async def _on_timer_trigger(self, session_id: str, timer: TimerConfig):
+    """
+    定时任务触发回调 - 直接执行预定动作
+    无需再次规划，动作类型在首次解析时已确定
+    """
+    ctx = await self._load_context(session_id)
+    
+    # 检查会话状态
+    if ctx.session.status != "active":
+        return  # 会话已结束，取消
+    
+    # 检查条件 (如有)
+    if timer.condition:
+        if not await self._evaluate_condition(timer.condition, ctx):
+            return  # 条件不满足，取消
+    
+    # 直接执行预定动作 (无需再次规划)
+    match timer.action_type:
+        case "CHAT":
+            await self._msg_gen.generate(ctx, timer.action_params.get("prompt"))
+        case "SKILL":
+            await self._guidelines.execute_as_skill(timer.action_target, ctx)
+        case "TOOL":
+            await self._tools.execute(timer.action_target, ctx)
+        case "FLOW":
+            await self._flow_executor.execute(timer.action_target, ctx)
+        case "SYSTEM":
+            await self._system_executor.execute(
+                timer.action_target, ctx, timer.action_params
+            )
 ```
 
 ### 5.6 知识库时序保证
@@ -418,47 +496,47 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    A[用户消息] --> B[WorkflowPlanner.plan]
+    U[用户] -->|消息| A[WorkflowPlanner.plan]
     
-    B --> C{immediate_response?}
-    C -->|Yes| D[立即发送]
-    C -->|No| E[跳过]
+    A --> B{immediate_response?}
+    B -->|Yes| C[立即发送] --> U
+    B -->|No| D{next_actions类型?}
+    C --> D
     
-    D --> F{next_actions类型?}
-    E --> F
+    D -->|SKILL| E[SkillExecutor]
+    D -->|TOOL| F[ToolExecutor]
+    D -->|FLOW| G[FlowExecutor]
+    D -->|SYSTEM| H[SystemExecutor]
+    D -->|NO_ACTION| I[KB检索]
     
-    F -->|SKILL| G[SkillExecutor]
-    F -->|TOOL| H[ToolExecutor]
-    F -->|FLOW| I[FlowExecutor]
-    F -->|SYSTEM| R[SystemExecutor]
-    F -->|NO_ACTION| J[直接消息生成]
+    E --> J[结果写入Context]
+    F --> J
+    J --> I
     
-    G --> K[结果写入Context]
-    H --> K
+    I --> K[MessageGenerator]
+    K --> L[发送响应] --> U
     
-    K --> L[KB检索]
-    L --> M[MessageGenerator<br/>AI生成响应]
-    M --> N[发送响应]
+    G --> M[Flow函数执行] --> N[静默]
     
-    I --> O[Flow函数执行]
-    O --> Q[返回状态<br/>静默]
+    H --> O{系统操作}
+    O -->|HANDOFF| O1[转接人工]
+    O -->|UPDATE_PROFILE| O2[更新资料]
+    O -->|CLOSE_SESSION| O3[关闭会话]
+    O -->|CUSTOM| O4[自定义]
+    O1 --> N
+    O2 --> N
+    O3 --> N
+    O4 --> N
     
-    R --> S{系统操作类型}
-    S -->|HANDOFF| S1[转接人工]
-    S -->|UPDATE_PROFILE| S2[更新客户资料]
-    S -->|CLOSE_SESSION| S3[关闭会话]
-    S -->|CUSTOM| S4[自定义扩展]
+    L --> P{有timers?}
+    N --> P
     
-    S1 --> T[静默<br/>不参与上下文]
-    S2 --> T
-    S3 --> T
-    S4 --> T
+    P -->|Yes| Q[注册TimerScheduler]
+    P -->|No| R[等待下一轮]
     
-    J --> L
-    
-    N --> P[结束/等待下一消息]
-    Q --> P
-    T --> P
+    Q --> R
+    Q -.->|到期触发| D
+    R -.->|下一消息| A
 ```
 
 ### 6.3 各动作类型详解
@@ -790,6 +868,123 @@ system_registry: SystemRegistry = {
 - SYSTEM是即时操作，不接管流程
 - SYSTEM执行后主流程继续
 
+#### 6.3.6 TIMER - 定时任务调度
+
+```python
+@dataclass
+class TimerAction:
+    type: Literal["TIMER"] = "TIMER"
+    delay: int                        # 延迟时间 (秒)
+    action: Action                    # 到期执行的动作
+    condition: str | None = None      # 可选: 执行前检查条件
+
+class TimerType(Enum):
+    """定时器类型"""
+    DELAY = "delay"                   # 延迟执行: X秒后执行
+    TIMEOUT = "timeout"               # 超时触发: 用户X秒无响应时执行
+    SCHEDULE = "schedule"             # 定点执行: 指定时间执行
+
+@dataclass
+class TimerTask:
+    """定时任务"""
+    id: str
+    session_id: str
+    timer_type: TimerType
+    delay_seconds: int
+    trigger_at: datetime              # 触发时间
+    action: Action                    # 到期动作
+    condition: str | None             # 执行前条件检查
+    status: str = "pending"           # pending | executed | cancelled
+
+class TimerScheduler:
+    """
+    定时任务调度器
+    - 响应后注册定时任务
+    - 到期后回调主流程
+    - 支持条件检查
+    """
+    
+    async def schedule(
+        self,
+        session_id: str,
+        timer: TimerConfig,
+        callback: Callable[[str, TimerConfig], Awaitable[None]]
+    ) -> str:
+        """注册定时任务，返回task_id"""
+        task = TimerTask(
+            id=generate_id(),
+            session_id=session_id,
+            timer_type=TimerType.DELAY,
+            delay_seconds=timer.delay,
+            trigger_at=datetime.now() + timedelta(seconds=timer.delay),
+            timer_config=timer,
+            callback=callback,
+        )
+        await self._store.save(task)
+        await self._queue.enqueue(task)
+        return task.id
+    
+    async def on_trigger(self, task: TimerTask) -> None:
+        """定时任务触发 - 回调主流程"""
+        # 更新状态
+        task.status = "triggered"
+        await self._store.update(task)
+        
+        # 回调主流程，由主流程处理条件检查和执行
+        await task.callback(task.session_id, task.timer_config)
+```
+
+**典型场景:**
+
+| 场景 | 配置示例 | 说明 |
+|------|----------|------|
+| **延迟提醒** | `delay: 300, action: {type: CHAT, prompt: "请问还需要帮助吗?"}` | 5分钟后追问 |
+| **超时转接** | `delay: 600, action: {type: SYSTEM, action: HANDOFF}` | 10分钟无响应转人工 |
+| **定时通知** | `delay: 3600, action: {type: FLOW, flow_id: send_summary}` | 1小时后发送摘要 |
+| **条件执行** | `delay: 60, condition: "用户未确认", action: {type: CHAT}` | 1分钟后检查并提醒 |
+
+**执行流程:**
+```
+响应用户 → 检查timers → 注册定时任务 → 等待
+                              ↓
+                        [后台调度器]
+                              ↓
+                        到期触发 → 检查条件 → 直接执行预定动作
+```
+
+**与主流程关系:**
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant W as WorkflowEngine
+    participant T as TimerScheduler
+    participant Q as TaskQueue
+    
+    U->>W: 消息
+    W->>W: Plan规划 (解析出timer配置)
+    W->>W: 执行动作
+    W-->>U: 响应用户
+    
+    W->>T: schedule(timer, callback)
+    T->>Q: enqueue(task)
+    Note over W: 等待下一消息
+    
+    Note over Q: 等待delay时间
+    
+    Q->>T: on_trigger(task)
+    T->>W: callback(session_id, timer)
+    W->>W: 检查session状态
+    W->>W: 检查condition
+    W->>W: 直接执行timer.action_type
+    W-->>U: 定时动作响应
+```
+
+**关键点:**
+1. 定时任务在**响应用户后**注册
+2. 动作类型在**首次规划时已确定** (timer.action_type)
+3. 到期触发时**直接执行**，无需再次规划
+4. 执行完成后可继续注册新的定时任务
+
 ### 6.4 统一执行逻辑
 
 ```python
@@ -832,6 +1027,11 @@ async def process(self, ctx: SharedContext, user_message: str):
                 # 继续主流程（除非是关闭/转接）
                 if ctx.workflow_state.status in ("closed", "transferred"):
                     return
+            
+            case "TIMER":
+                # 定时任务：注册后立即返回，非阻塞
+                await self._timer_scheduler.schedule(ctx, action)
+                # 继续主流程，不影响当前消息生成
                 
             case "NO_ACTION":
                 # 无动作，直接进入消息生成
@@ -971,11 +1171,12 @@ class PlanResult:
     模型输出结果 - 最小化结构
     模型自主决定如何处理各种情况
     """
-    action_type: str              # "SKILL" | "TOOL" | "FLOW" | "CHAT"
+    action_type: str              # "SKILL" | "TOOL" | "FLOW" | "CHAT" | "SYSTEM" | "TIMER"
     action_target: str | None     # 目标节点/技能/工具ID
     response: str | None          # 需要立即回复的内容
     next_node: str | None         # 下一节点 (如需跳转)
     context_update: dict | None   # 上下文更新
+    timers: list[TimerConfig] | None  # 定时任务 (可与其他动作并行)
 ```
 
 ### 7.4 Workflow Prompt 承担决策
